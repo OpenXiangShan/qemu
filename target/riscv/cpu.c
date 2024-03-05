@@ -520,6 +520,24 @@ static void rv64_sifive_e_cpu_init(Object *obj)
     cpu->cfg.pmp = true;
 }
 
+static void rv64_bosc_nanhu_cpu_init(Object *obj)
+{
+    RISCVCPU *cpu = RISCV_CPU(obj);
+    CPURISCVState *env = &cpu->env;
+    riscv_cpu_set_misa(env, MXL_RV64,
+                       RVI | RVM | RVA | RVF | RVD | RVC | RVS | RVU);
+    env->priv_ver = PRIV_VERSION_1_10_0;
+#ifndef CONFIG_USER_ONLY
+    set_satp_mode_max_supported(RISCV_CPU(obj), VM_1_10_SV39);
+#endif
+
+    /* inherited from parent obj via riscv_cpu_init() */
+    cpu->cfg.ext_zifencei = true;
+    cpu->cfg.ext_zicsr = true;
+    cpu->cfg.mmu = true;
+    cpu->cfg.pmp = true;
+}
+
 static void rv64_thead_c906_cpu_init(Object *obj)
 {
     CPURISCVState *env = &RISCV_CPU(obj)->env;
@@ -2555,6 +2573,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
     DEFINE_BARE_CPU(TYPE_RISCV_CPU_RV64E,        MXL_RV64,  rv64e_bare_cpu_init),
     DEFINE_PROFILE_CPU(TYPE_RISCV_CPU_RVA22U64,  MXL_RV64,  rva22u64_profile_cpu_init),
     DEFINE_PROFILE_CPU(TYPE_RISCV_CPU_RVA22S64,  MXL_RV64,  rva22s64_profile_cpu_init),
+    DEFINE_CPU(TYPE_RISCV_CPU_BOSC_NanHu,        MXL_RV64,  rv64_bosc_nanhu_cpu_init),
 #endif
 };
 
