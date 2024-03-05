@@ -1,0 +1,30 @@
+diff a/hw/riscv/Kconfig b/hw/riscv/Kconfig	(rejected hunks)
+@@ -46,6 +46,28 @@ config RISCV_VIRT
+     select PLATFORM_BUS
+     select ACPI
+ 
++config RISCV_BOSC_NH
++    bool
++    imply PCI_DEVICES
++    imply VIRTIO_VGA
++    imply TEST_DEVICES
++    imply TPM_TIS_SYSBUS
++    select RISCV_NUMA
++    select GOLDFISH_RTC
++    select PCI
++    select PCI_EXPRESS_GENERIC_BRIDGE
++    select PFLASH_CFI01
++    select SERIAL
++    select RISCV_ACLINT
++    select RISCV_APLIC
++    select RISCV_IMSIC
++    select SIFIVE_PLIC
++    select SIFIVE_TEST
++    select VIRTIO_MMIO
++    select FW_CFG_DMA
++    select PLATFORM_BUS
++    select ACPI
++
+ config SHAKTI_C
+     bool
+     select RISCV_ACLINT
