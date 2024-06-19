@@ -1515,7 +1515,7 @@ static void virt_machine_init(MachineState *machine)
     create_platform_bus(s, mmio_irqchip);
 
     serial_mm_init(system_memory, memmap[VIRT_UART0].base,
-        0, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
+        2, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
         serial_hd(0), DEVICE_LITTLE_ENDIAN);
 
     for (i = 0; i < ARRAY_SIZE(s->flash); i++) {
