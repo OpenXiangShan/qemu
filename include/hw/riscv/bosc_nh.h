@@ -86,10 +86,10 @@ enum {
 };
 
 enum {
-    UART0_IRQ = 10,
     VIRTIO_IRQ = 1, /* 1 to 8 */
     VIRTIO_COUNT = 8,
     PCIE_IRQ = 0x20, /* 32 to 35 */
+    UART0_IRQ = 40,
     VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
 };
 
