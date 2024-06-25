@@ -100,7 +100,7 @@ static void serialize(uint64_t icount) {
     MachineState *ms = MACHINE(qdev_get_machine());
     NEMUState *ns = NEMU_MACHINE(ms);
     serializeRegs(0, ns->memory, &single_core_rvgcvh_default_memlayout, 1, 0);
-    serialize_pmem(icount, false, NULL, 0);
+    serialize_pmem(icount, false, NULL, 0, NULL);
 }
 
 static bool could_take_checkpoint(uint64_t icount){

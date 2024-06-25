@@ -328,7 +328,7 @@ serialize(uint64_t memory_addr, int cpu_index, int cpus, uint64_t inst_count)
                                   cpt_header.cpt_offset + 1024 * 1024 * cpus);
     }
     serialize_pmem(inst_count, false, hardware_status_buffer,
-                   cpt_header.cpt_offset + 1024 * 1024 * cpus);
+                   cpt_header.cpt_offset + 1024 * 1024 * cpus, &q2d_buf);
 }
 
 static bool all_cpu_exit(uint64_t cpu_idx)
