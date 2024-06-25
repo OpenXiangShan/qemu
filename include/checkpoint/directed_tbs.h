@@ -4,13 +4,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define FILEPATH_BUF_SIZE 256
 #define MAX_HARTS 8
 
 typedef struct Qemu2Detail {
     bool cpt_ready;
     uint32_t cpt_id;
     uint64_t total_inst_count;
-    char checkpoint_path[256];
+    char checkpoint_path[FILEPATH_BUF_SIZE];
 } Qemu2Detail;
 
 typedef struct Detail2Qemu {

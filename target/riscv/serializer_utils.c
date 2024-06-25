@@ -29,7 +29,6 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
         gcpt_mmio_pmem_size += buffer_size;
     }
 
-#define FILEPATH_BUF_SIZE 256
     char filepath[FILEPATH_BUF_SIZE];
 
     //prepare path
@@ -42,7 +41,7 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
     printf("prepare for generate checkpoint path %s pmem_size %ld\n",filepath,guest_pmem_size);
     assert(g_mkdir_with_parents(g_path_get_dirname(filepath), 0775)==0);
     if (q2d_buf != NULL)
-        memcpy(q2d_buf->checkpoint_path, filepath, sizeof(filepath));
+        memcpy(q2d_buf->checkpoint_path, filepath, sizeof(FILEPATH_BUF_SIZE));
 
 #ifdef USE_ZSTD_COMPRESS
     //zstd compress
