@@ -109,3 +109,12 @@ config RISCV_BOSC_NH
     select FW_CFG_DMA
     select PLATFORM_BUS
     select ACPI
+
+config RISCV_BOSC_KMH
+	bool
+	select RISCV_ACLINT
+	select SERIAL
+	select SIFIVE_PLIC
+	select UNIMP
+	select PCI_EXPRESS_XILINX
+
