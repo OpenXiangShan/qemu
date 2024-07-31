@@ -1,7 +1,7 @@
 /*
  * BOSC KunMingHu SoC emulation
  *
- * Copyright (c) 2024 BOSC, Inst.
+ * Copyright (c) 2024 Beijing Institute of Open Source Chip (BOSC)
  *
  * Provides a board compatible with the BOSC KunMingHu SDK:
  *
