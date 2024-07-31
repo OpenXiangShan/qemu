@@ -1,7 +1,7 @@
 /*
- * BOSC KunMingHu SoC emulation
+ * BOSC Kunminghu SoC emulation
  *
- * Copyright (c) 2024 BOSC, Inc.
+ * Copyright (c) 2024 BOSC, Inst.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -36,14 +36,13 @@ typedef struct BoscKmhSoCState {
     /*< public >*/
     RISCVHartArrayState cpus;
     DeviceState *plic;
-	XilinxPCIEHost pcie;
+    XilinxPCIEHost pcie;
     MemoryRegion rom;
 
 } BoscKmhSoCState;
 
 #define TYPE_RISCV_KMH_MACHINE MACHINE_TYPE_NAME("bosc-kmh")
-#define RISCV_SHAKTI_MACHINE(obj) \
-    OBJECT_CHECK(BoscKmhMachineState, (obj), TYPE_RISCV_KMH_MACHINE)
+
 typedef struct BoscKmhMachineState {
     /*< private >*/
     MachineState parent_obj;
@@ -56,21 +55,21 @@ enum {
     BOSC_KMH_DEV_DEBUG,
     BOSC_KMH_DEV_MROM,
     BOSC_KMH_DEV_FLASH,
-	BOSC_KMH_DEV_VIRTIO,
-	BOSC_KMH_DEV_FW_CFG,
-	BOSC_KMH_DEV_UART0,
-	BOSC_KMH_DEV_CLINT,
-	BOSC_KMH_DEV_PLIC,
-	BOSC_KMH_DEV_PCIE_CFG,
-	BOSC_KMH_DEV_PCIE_MMIO,
-	BOSC_KMH_DEV_DRAM
+    BOSC_KMH_DEV_VIRTIO,
+    BOSC_KMH_DEV_FW_CFG,
+    BOSC_KMH_DEV_UART0,
+    BOSC_KMH_DEV_CLINT,
+    BOSC_KMH_DEV_PLIC,
+    BOSC_KMH_DEV_PCIE_CFG,
+    BOSC_KMH_DEV_PCIE_MMIO,
+    BOSC_KMH_DEV_DRAM
 };
 
 enum {
-	BOSC_KMH_UART0_IRQ = 40,
-	BOSC_KMH_PCIE0_IRQ0 = 51,
-	BOSC_KMH_PCIE0_IRQ1 = 52,
-	BOSC_KMH_PCIE0_IRQ2 = 53,
+    BOSC_KMH_UART0_IRQ = 40,
+    BOSC_KMH_PCIE0_IRQ0 = 51,
+    BOSC_KMH_PCIE0_IRQ1 = 52,
+    BOSC_KMH_PCIE0_IRQ2 = 53,
 };
 
 
@@ -87,4 +86,3 @@ enum {
 #define BOSC_KMH_PLIC_CONTEXT_STRIDE 0x1000
 
 #endif
-
