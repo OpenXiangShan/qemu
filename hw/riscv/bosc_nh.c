@@ -1,7 +1,7 @@
 /*
  * QEMU RISC-V VirtIO Board
  *
- * Copyright (c) 2017 SiFive, Inc.
+ * Copyright (c) 2024 Beijing Institute of Open Source Chip (BOSC)
  *
  * RISC-V machine with 16550a UART and VirtIO MMIO
  *

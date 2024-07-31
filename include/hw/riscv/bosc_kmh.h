@@ -1,7 +1,7 @@
 /*
  * BOSC Kunminghu SoC emulation
  *
- * Copyright (c) 2024 BOSC, Inst.
+ * Copyright (c) 2024 Beijing Institute of Open Source Chip (BOSC)
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
