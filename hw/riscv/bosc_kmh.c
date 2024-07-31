@@ -1,7 +1,7 @@
 /*
  * BOSC KunMingHu SoC emulation
  *
- * Copyright (c) 2024 BOSC, Inc.
+ * Copyright (c) 2024 BOSC, Inst.
  *
  * Provides a board compatible with the BOSC KunMingHu SDK:
  *
@@ -10,6 +10,15 @@
  * 2) PLIC (Platform Level Interrupt Controller)
  * 3) PCIE
  * 4) Flash memory emulated as RAM
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2 or later, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  *
  * You should have received a copy of the GNU General Public License along with
  * this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -32,24 +41,23 @@
 
 
 static const MemMapEntry bosc_kmh_memmap[] = {
-    [BOSC_KMH_DEV_DEBUG] 	=	{       0x0,		0x100 },
-    [BOSC_KMH_DEV_MROM] 	=	{    0x1000,        0xf000 },
-	[BOSC_KMH_DEV_FLASH] 	=	{ 0x10000000,     	0x4000000 },
-    [BOSC_KMH_DEV_UART0] 	=	{ 0x310B0000,       0x10000 },
-    [BOSC_KMH_DEV_CLINT] 	=	{ 0x38000000,       0x10000 },
-    [BOSC_KMH_DEV_PLIC]      =       { 0x3c000000,           0x4000000},
-    [BOSC_KMH_DEV_PCIE_MMIO] 	=	{ 0x40000000, 		0x8000000},
-    [BOSC_KMH_DEV_PCIE_CFG] 	=	{ 0x48000000, 		0x2000000},
-    [BOSC_KMH_DEV_DRAM] 	=	{ 0x80000000,       0x0 },
-
+    [BOSC_KMH_DEV_DEBUG] 	=	{       0x0,    0x100 },
+    [BOSC_KMH_DEV_MROM] 	=	{    0x1000,    0xf000 },
+    [BOSC_KMH_DEV_FLASH] 	=	{ 0x10000000,   0x4000000 },
+    [BOSC_KMH_DEV_UART0] 	=	{ 0x310B0000,   0x10000 },
+    [BOSC_KMH_DEV_CLINT] 	=	{ 0x38000000,   0x10000 },
+    [BOSC_KMH_DEV_PLIC]         =       { 0x3c000000,   0x4000000},
+    [BOSC_KMH_DEV_PCIE_MMIO] 	=	{ 0x40000000,   0x8000000},
+    [BOSC_KMH_DEV_PCIE_CFG] 	=	{ 0x48000000,   0x2000000},
+    [BOSC_KMH_DEV_DRAM] 	=	{ 0x80000000,   0x0 },
 };
 
 
-static void shakti_c_machine_state_init(MachineState *mstate)
+static void bosc_kmh_machine_state_init(MachineState *mstate)
 {
-    BoscKmhMachineState *sms = RISCV_SHAKTI_MACHINE(mstate);
+    BoscKmhMachineState *sms = OBJECT_CHECK(BoscKmhMachineState, mstate,
+                                            TYPE_RISCV_KMH_MACHINE);
     MemoryRegion *system_memory = get_system_memory();
-	int size;
 
     /* Initialize SoC */
     object_initialize_child(OBJECT(mstate), "soc", &sms->soc,
@@ -72,30 +80,24 @@ static void shakti_c_machine_state_init(MachineState *mstate)
                             NULL);
     }
 
-	if (mstate->dtb) {
-        mstate->fdt = load_device_tree(mstate->dtb, &size);
-        if (!mstate->fdt) {
-            error_report("load_device_tree() failed");
-            exit(1);
-        }
-    }
+    /* Note: dtb has been integrated into firmware(OpenSBI) when compiling */
 }
 
 static void bosc_kmh__machine_instance_init(Object *obj)
 {
 }
 
-static void bosc_kmh_machine_class_init(ObjectClass *klass, void *data)
+static void bosc_kmh_machine_class_init(ObjectClass *oc, void *data)
 {
-    MachineClass *mc = MACHINE_CLASS(klass);
+    MachineClass *mc = MACHINE_CLASS(oc);
     static const char * const valid_cpu_types[] = {
         RISCV_CPU_TYPE_NAME("bosc-kmh"),
 		RISCV_CPU_TYPE_NAME("rv64"),
         NULL
     };
 
-    mc->desc = "RISC-V Board compatible with NanHu SDK";
-    mc->init = shakti_c_machine_state_init;
+    mc->desc = "RISC-V Board compatible with Kunminghu SDK";
+    mc->init = bosc_kmh_machine_state_init;
     mc->default_cpu_type = TYPE_RISCV_CPU_BOSC_KMH;
     mc->valid_cpu_types = valid_cpu_types;
     mc->default_ram_id = "riscv.bosc.kmh.ram";
@@ -216,9 +218,7 @@ static void bosc_kmh_soc_instance_init(Object *obj)
     object_initialize_child(obj, "cpus", &state->cpus, TYPE_RISCV_HART_ARRAY);
 
     /*
-     * CPU type is fixed and we are not supporting passing from commandline yet.
-     * So let it be in instance_init. When supported should use ms->cpu_type
-     * instead of TYPE_RISCV_CPU_BOSC_KMH
+     * CPU type is fixed and we are not supporting passing from commandline so far.
      */
     object_property_set_str(OBJECT(&state->cpus), "cpu-type",
                             TYPE_RISCV_CPU_BOSC_KMH, &error_abort);
@@ -239,4 +239,3 @@ static void bosc_kmh_type_info_register(void)
     type_register_static(&bosc_kmh_type_info);
 }
 type_init(bosc_kmh_type_info_register)
-

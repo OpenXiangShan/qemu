@@ -117,4 +117,3 @@ config RISCV_BOSC_KMH
 	select SIFIVE_PLIC
 	select UNIMP
 	select PCI_EXPRESS_XILINX
-
