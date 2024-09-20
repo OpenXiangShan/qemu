@@ -5,6 +5,8 @@
 #include "qemu/module.h"
 #include "sysemu/kvm.h"
 #include "qom/object.h"
+#include "hw/pci/msi.h"
+#include "hw/pci/msix.h"
 
 #define PCI_VENDOR_ID_BOSC 0x1234
 #define PCI_DEVICE_ID_BOSC_DMAENGINE 0x0001
@@ -23,6 +25,12 @@
 
 #define MY_DMAENGINE_CHANNEL_NUM 2
 
+#define MY_DMAENGINE_MMIO_IDX   0
+#define MY_DMAENGINE_MSIX_IDX   1
+
+#define MY_DMAENGINE_MSIX_TABLE 0x0000
+#define MY_DMAENGINE_MSIX_PBA   0x2000
+
 struct my_dmaengine_channels {
     uint64_t src;
     uint64_t dst;
@@ -37,12 +45,21 @@ typedef struct __PCIMyDmaEngineState {
     PCIDevice parent_obj;
     /*< public >*/
     MemoryRegion mmio;
+    MemoryRegion msix;
     struct my_dmaengine_channels channels[MY_DMAENGINE_CHANNEL_NUM];
     qemu_irq irq;
     Object *obj;
 } PCIMyDmaEngineState;
 
 #define TO_DMAENGINE_STATE(obj) OBJECT_CHECK(PCIMyDmaEngineState, obj, "my_dmaengine")
+
+static void pci_my_dmaengine_use_msix_vectors(PCIDevice *pdev, int num)
+{
+    int i;
+
+    for (i = 0; i < num; i++)
+        msix_vector_use(pdev, i);
+}
 
 static void my_dmaengine_uninit(PCIMyDmaEngineState *s)
 {
@@ -90,6 +107,7 @@ static void my_dmaengine_start(PCIMyDmaEngineState *s, int nr)
     }
 
     smp_wmb();
+    msix_notify(pdev, nr);
 
     chn->done = 1;
 }
@@ -188,30 +206,28 @@ static const MemoryRegionOps pci_my_dmaengine_mmio_ops = {
 static void pci_my_dmaengine_realize(PCIDevice *pci_dev, Error **errp)
 {
     PCIMyDmaEngineState *s = TO_DMAENGINE_STATE(pci_dev);
-    uint8_t *pci_conf = pci_dev->config;
-#if 0
-    Error *err = NULL;
 
-    pci_conf[PCI_INTERRUPT_PIN] = 1;
-    if (msi_init(pdev, 0, 1, true, false, &err))
-	error_free(err);
-#else
-    pci_conf[PCI_INTERRUPT_PIN] = 0;
-#endif
-    pci_register_bar(pci_dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mmio);
+    memory_region_init(&s->msix, OBJECT(pci_dev), "my-dmaengine-msix", 16*1024);
+    memory_region_init_io(&s->mmio, OBJECT(pci_dev), &pci_my_dmaengine_mmio_ops, s,
+                          "pci-mydmaengine-mmio", 4096 * 4);
+
+    if (msix_init(pci_dev, 2,
+                  &s->msix,
+                  MY_DMAENGINE_MSIX_IDX, MY_DMAENGINE_MSIX_TABLE,
+                  &s->msix,
+                  MY_DMAENGINE_MSIX_IDX, MY_DMAENGINE_MSIX_PBA,
+                  0x40, NULL) >= 0) {
+    }
+
+    pci_register_bar(pci_dev, MY_DMAENGINE_MMIO_IDX, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mmio);
+    pci_register_bar(pci_dev, MY_DMAENGINE_MSIX_IDX, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->msix);
+
+    pci_my_dmaengine_use_msix_vectors(pci_dev, 2);
+
     pcie_endpoint_cap_init(pci_dev, 0xe0);
 
     my_dmaengine_init(s);
-}
-
-static void pci_my_dmaengine_init(Object *obj)
-{
-    PCIMyDmaEngineState *s = TO_DMAENGINE_STATE(obj);
-
-    memory_region_init_io(&s->mmio, OBJECT(obj), &pci_my_dmaengine_mmio_ops, s,
-                          "pci-mydmaengine-mmio", 4096 * 4);
-
-    s->obj = obj;
+    s->obj = OBJECT(pci_dev);
 }
 
 static void
@@ -247,7 +263,6 @@ static const TypeInfo pci_my_dmaengine_info = {
     .name          = "my_dmaengine",
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(PCIMyDmaEngineState),
-    .instance_init = pci_my_dmaengine_init,
     .class_init    = pci_my_dmaengine_class_init,
     .interfaces = (InterfaceInfo[]) {
         { INTERFACE_PCIE_DEVICE },
