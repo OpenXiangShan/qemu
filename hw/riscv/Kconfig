@@ -133,6 +133,7 @@ config RISCV_BOSC_NH
     select FW_CFG_DMA
     select PLATFORM_BUS
     select ACPI
+    select ACPI_PCI
 
 config RISCV_BOSC_KMH
 	bool
