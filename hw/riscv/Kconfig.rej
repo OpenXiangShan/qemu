@@ -24,6 +24,7 @@ diff a/hw/riscv/Kconfig b/hw/riscv/Kconfig	(rejected hunks)
 +    select FW_CFG_DMA
 +    select PLATFORM_BUS
 +    select ACPI
++    select ACPI_PCI
 +
  config SHAKTI_C
      bool
