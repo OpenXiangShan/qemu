@@ -85,8 +85,8 @@ static const MemMapEntry virt_memmap[] = {
     [VIRT_FLASH] =        { 0x10000000,     0x4000000 },
     [VIRT_IMSIC_M] =      { 0x3a800000, VIRT_IMSIC_MAX_SIZE },
     [VIRT_IMSIC_S] =      { 0x3b000000, VIRT_IMSIC_MAX_SIZE },
-   // [VIRT_PCIE_ECAM] =    { 0x30000000,    0x10000000 },
-    [VIRT_PCIE_MMIO] =    { 0x40000000,    0x40000000 },
+    [VIRT_PCIE_ECAM] =    { 0x32000000,    0x1000000 },
+    [VIRT_PCIE_MMIO] =    { 0x60000000,    0x20000000 },
     [VIRT_DRAM] =         { 0x80000000,           0x0 },
     [VIRT_UART1] =        { 0x310b0000,         0x100 },
 };
