@@ -178,7 +178,7 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
     riscv_aclint_mtimer_create(bosc_kmh_memmap[BOSC_KMH_DEV_CLINT].base +
         RISCV_ACLINT_SWI_SIZE, RISCV_ACLINT_DEFAULT_MTIMER_SIZE, 0, 1,
         RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
-        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);
+        RISCV_ACLINT_KMH_TIMEBASE_FREQ, true);
 
     /*
      * PCIe

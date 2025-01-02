@@ -85,4 +85,7 @@ enum {
 #define BOSC_KMH_PLIC_CONTEXT_BASE 0x200000
 #define BOSC_KMH_PLIC_CONTEXT_STRIDE 0x1000
 
+/* Indicating Timebase-freq (1MHZ) */
+#define RISCV_ACLINT_KMH_TIMEBASE_FREQ 1000000
+
 #endif
