@@ -23,11 +23,22 @@
 #include "hw/boards.h"
 #include "hw/char/serial.h"
 #include "hw/pci-host/xilinx-pcie.h"
+#include "hw/intc/riscv_imsic.h"
 
+#define BOSC_KMH_CPUS_MAX_BITS             4
+#define BOSC_KMH_CPUS_MAX                  (1 << BOSC_KMH_CPUS_MAX_BITS)
+#define BOSC_KMH_SOCKETS_MAX_BITS          2
+#define BOSC_KMH_SOCKETS_MAX               (1 << BOSC_KMH_SOCKETS_MAX_BITS)
 
 #define TYPE_RISCV_KMH_SOC "riscv.bosc.kmh.soc"
 #define RISCV_KMH_SOC(obj) \
     OBJECT_CHECK(BoscKmhSoCState, (obj), TYPE_RISCV_KMH_SOC)
+
+typedef enum RISCVKmhAIAType {
+    BOSC_KMH_AIA_TYPE_NONE = 0,
+    BOSC_KMH_AIA_TYPE_APLIC,
+    BOSC_KMH_AIA_TYPE_APLIC_IMSIC,
+} RISCVKmhAIAType;
 
 typedef struct BoscKmhSoCState {
     /*< private >*/
@@ -35,9 +46,11 @@ typedef struct BoscKmhSoCState {
 
     /*< public >*/
     RISCVHartArrayState cpus;
-    DeviceState *plic;
+    DeviceState *irqchip;
     XilinxPCIEHost pcie;
     MemoryRegion rom;
+
+    RISCVKmhAIAType aia_type;
 
 } BoscKmhSoCState;
 
@@ -60,13 +73,17 @@ enum {
     BOSC_KMH_DEV_UART0,
     BOSC_KMH_DEV_CLINT,
     BOSC_KMH_DEV_PLIC,
+    BOSC_KMH_APLIC_M,
+    BOSC_KMH_APLIC_S,
+    BOSC_KMH_IMSIC_M,
+    BOSC_KMH_IMSIC_S,
     BOSC_KMH_DEV_PCIE_CFG,
     BOSC_KMH_DEV_PCIE_MMIO,
     BOSC_KMH_DEV_DRAM
 };
 
 enum {
-    BOSC_KMH_UART0_IRQ = 40,
+    BOSC_KMH_UART0_IRQ = 10,
     BOSC_KMH_PCIE0_IRQ0 = 51,
     BOSC_KMH_PCIE0_IRQ1 = 52,
     BOSC_KMH_PCIE0_IRQ2 = 53,
@@ -88,4 +105,30 @@ enum {
 /* Indicating Timebase-freq (1MHZ) */
 #define RISCV_ACLINT_KMH_TIMEBASE_FREQ 1000000
 
+#define BOSC_KMH_IRQCHIP_NUM_MSIS 255
+#define BOSC_KMH_IRQCHIP_NUM_SOURCES 96
+#define BOSC_KMH_IRQCHIP_NUM_PRIO_BITS 3
+#define BOSC_KMH_IRQCHIP_MAX_GUESTS_BITS 3
+#define BOSC_KMH_IRQCHIP_MAX_GUESTS ((1U << BOSC_KMH_IRQCHIP_MAX_GUESTS_BITS) - 1U)
+/*
+ * The bosc-kmh machine physical address space used by some of the devices
+ * namely ACLINT, PLIC, APLIC, and IMSIC depend on number of Sockets,
+ * number of CPUs, and number of IMSIC guest files.
+ *
+ * Various limits defined by BOSC_KMH_SOCKETS_MAX_BITS, BOSC_KMH_CPUS_MAX_BITS,
+ * and BOSC_KMH_IRQCHIP_MAX_GUESTS_BITS are tuned for maximum utilization
+ * of bosc-kmh machine physical address space.
+ */
+
+#define BOSC_KMH_IMSIC_GROUP_MAX_SIZE      (1U << IMSIC_MMIO_GROUP_MIN_SHIFT)
+#if BOSC_KMH_IMSIC_GROUP_MAX_SIZE < \
+    IMSIC_GROUP_SIZE(BOSC_KMH_CPUS_MAX_BITS, BOSC_KMH_IRQCHIP_MAX_GUESTS_BITS)
+#error "Can't accommodate single IMSIC group in address space"
+#endif
+
+#define BOSC_KMH_IMSIC_MAX_SIZE            (BOSC_KMH_SOCKETS_MAX * \
+                                        BOSC_KMH_IMSIC_GROUP_MAX_SIZE)
+#if 0x4000000 < BOSC_KMH_IMSIC_MAX_SIZE
+#error "Can't accommodate all IMSIC groups in address space"
+#endif
 #endif

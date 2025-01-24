@@ -31,12 +31,17 @@
 #include "qemu/error-report.h"
 #include "hw/intc/sifive_plic.h"
 #include "hw/intc/riscv_aclint.h"
+#include "hw/intc/riscv_aplic.h"
+#include "hw/char/serial-mm.h"
 #include "sysemu/sysemu.h"
 #include "hw/qdev-properties.h"
 #include "exec/address-spaces.h"
 #include "hw/riscv/boot.h"
 #include "sysemu/device_tree.h"
 #include "hw/pci-host/xilinx-pcie.h"
+#include "kvm/kvm_riscv.h"
+#include "sysemu/kvm.h"
+#include "hw/riscv/numa.h"
 
 
 
@@ -47,11 +52,83 @@ static const MemMapEntry bosc_kmh_memmap[] = {
     [BOSC_KMH_DEV_UART0] 	=	{ 0x310B0000,   0x10000 },
     [BOSC_KMH_DEV_CLINT] 	=	{ 0x38000000,   0x10000 },
     [BOSC_KMH_DEV_PLIC]         =       { 0x3c000000,   0x4000000},
+    [BOSC_KMH_APLIC_M] =      {  0x31100000, APLIC_SIZE(BOSC_KMH_CPUS_MAX) },
+    [BOSC_KMH_APLIC_S] =      {  0x31120000, APLIC_SIZE(BOSC_KMH_CPUS_MAX) },
+    [BOSC_KMH_IMSIC_M] =      { 0x3a800000, BOSC_KMH_IMSIC_MAX_SIZE },
+    [BOSC_KMH_IMSIC_S] =      { 0x3b000000, BOSC_KMH_IMSIC_MAX_SIZE },
     [BOSC_KMH_DEV_PCIE_MMIO] 	=	{ 0x40000000,   0x8000000},
     [BOSC_KMH_DEV_PCIE_CFG] 	=	{ 0x48000000,   0x2000000},
     [BOSC_KMH_DEV_DRAM] 	=	{ 0x80000000,   0x0 },
 };
 
+static uint32_t imsic_num_bits(uint32_t count)
+{
+    uint32_t ret = 0;
+
+    while (BIT(ret) < count) {
+        ret++;
+    }
+
+    return ret;
+}
+
+static DeviceState *bosc_kmh_create_aia(RISCVKmhAIAType aia_type, int aia_guests,
+                                    const MemMapEntry *memmap, int socket,
+                                    int base_hartid, int hart_count)
+{
+    int i;
+    hwaddr addr;
+    uint32_t guest_bits;
+    DeviceState *aplic_s = NULL;
+    DeviceState *aplic_m = NULL;
+    bool msimode = aia_type == BOSC_KMH_AIA_TYPE_APLIC_IMSIC;
+
+    if (msimode) {
+        if (!kvm_enabled()) {
+            /* Per-socket M-level IMSICs */
+            addr = memmap[BOSC_KMH_IMSIC_M].base +
+                   socket * BOSC_KMH_IMSIC_GROUP_MAX_SIZE;
+            for (i = 0; i < hart_count; i++) {
+                riscv_imsic_create(addr + i * IMSIC_HART_SIZE(0),
+                                   base_hartid + i, true, 1,
+                                   BOSC_KMH_IRQCHIP_NUM_MSIS);
+            }
+        }
+
+        /* Per-socket S-level IMSICs */
+        guest_bits = imsic_num_bits(aia_guests + 1);
+        addr = memmap[BOSC_KMH_IMSIC_S].base + socket * BOSC_KMH_IMSIC_GROUP_MAX_SIZE;
+        for (i = 0; i < hart_count; i++) {
+            riscv_imsic_create(addr + i * IMSIC_HART_SIZE(guest_bits),
+                               base_hartid + i, false, 1 + aia_guests,
+                               BOSC_KMH_IRQCHIP_NUM_MSIS);
+        }
+    }
+
+    if (!kvm_enabled()) {
+        /* Per-socket M-level APLIC */
+        aplic_m = riscv_aplic_create(memmap[BOSC_KMH_APLIC_M].base +
+                                     socket * memmap[BOSC_KMH_APLIC_M].size,
+                                     memmap[BOSC_KMH_APLIC_M].size,
+                                     (msimode) ? 0 : base_hartid,
+                                     (msimode) ? 0 : hart_count,
+                                     BOSC_KMH_IRQCHIP_NUM_SOURCES,
+                                     BOSC_KMH_IRQCHIP_NUM_PRIO_BITS,
+                                     msimode, true, NULL);
+    }
+
+    /* Per-socket S-level APLIC */
+    aplic_s = riscv_aplic_create(memmap[BOSC_KMH_APLIC_S].base +
+                                 socket * memmap[BOSC_KMH_APLIC_S].size,
+                                 memmap[BOSC_KMH_APLIC_S].size,
+                                 (msimode) ? 0 : base_hartid,
+                                 (msimode) ? 0 : hart_count,
+                                 BOSC_KMH_IRQCHIP_NUM_SOURCES,
+                                 BOSC_KMH_IRQCHIP_NUM_PRIO_BITS,
+                                 msimode, false, aplic_m);
+
+    return kvm_enabled() ? aplic_s : aplic_m;
+}
 
 static void bosc_kmh_machine_state_init(MachineState *mstate)
 {
@@ -76,7 +153,7 @@ static void bosc_kmh_machine_state_init(MachineState *mstate)
                               bosc_kmh_memmap[BOSC_KMH_DEV_MROM].size, 0, 0);
     if (mstate->firmware) {
         riscv_load_firmware(mstate->firmware,
-                            bosc_kmh_memmap[BOSC_KMH_DEV_DRAM].base,
+                            (target_ulong *)&bosc_kmh_memmap[BOSC_KMH_DEV_DRAM].base,
                             NULL);
     }
 
@@ -98,6 +175,7 @@ static void bosc_kmh_machine_class_init(ObjectClass *oc, void *data)
 
     mc->desc = "RISC-V Board compatible with Kunminghu SDK";
     mc->init = bosc_kmh_machine_state_init;
+    mc->max_cpus = BOSC_KMH_CPUS_MAX;
     mc->default_cpu_type = TYPE_RISCV_CPU_BOSC_KMH;
     mc->valid_cpu_types = valid_cpu_types;
     mc->default_ram_id = "riscv.bosc.kmh.ram";
@@ -150,33 +228,28 @@ xilinx_pcie_init(MemoryRegion *sys_mem, uint32_t bus_nr,
 
 static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
 {
+    int hart_count;
+    const MemMapEntry *memmap = bosc_kmh_memmap;
     MachineState *ms = MACHINE(qdev_get_machine());
     BoscKmhSoCState *state = RISCV_KMH_SOC(dev);
     MemoryRegion *system_memory = get_system_memory();
 
     sysbus_realize(SYS_BUS_DEVICE(&state->cpus), &error_abort);
 
-    state->plic = sifive_plic_create(bosc_kmh_memmap[BOSC_KMH_DEV_PLIC].base,
-        (char *)BOSC_KMH_PLIC_HART_CONFIG, ms->smp.cpus, 0,
-        96,
-        7,
-        BOSC_KMH_PLIC_PRIORITY_BASE,
-        BOSC_KMH_PLIC_PENDING_BASE,
-        BOSC_KMH_PLIC_ENABLE_BASE,
-        BOSC_KMH_PLIC_ENABLE_STRIDE,
-        BOSC_KMH_PLIC_CONTEXT_BASE,
-        BOSC_KMH_PLIC_CONTEXT_STRIDE,
-        bosc_kmh_memmap[BOSC_KMH_DEV_PLIC].size);
+    state->aia_type =  BOSC_KMH_AIA_TYPE_APLIC_IMSIC;
+
+    hart_count = riscv_socket_hart_count(ms, 0);
+    state->irqchip = bosc_kmh_create_aia(state->aia_type, BOSC_KMH_IRQCHIP_MAX_GUESTS, memmap, 0, 0, hart_count);
 
     serial_mm_init(get_system_memory(), bosc_kmh_memmap[BOSC_KMH_DEV_UART0].base, 2,
-               qdev_get_gpio_in(DEVICE(state->plic), BOSC_KMH_UART0_IRQ),
+               qdev_get_gpio_in(DEVICE(state->irqchip), BOSC_KMH_UART0_IRQ),
                115200, serial_hd(0), DEVICE_LITTLE_ENDIAN);
 
 
     riscv_aclint_swi_create(bosc_kmh_memmap[BOSC_KMH_DEV_CLINT].base,
-        0, 1, false);
+        0, hart_count, false);
     riscv_aclint_mtimer_create(bosc_kmh_memmap[BOSC_KMH_DEV_CLINT].base +
-        RISCV_ACLINT_SWI_SIZE, RISCV_ACLINT_DEFAULT_MTIMER_SIZE, 0, 1,
+        RISCV_ACLINT_SWI_SIZE, RISCV_ACLINT_DEFAULT_MTIMER_SIZE, 0, hart_count,
         RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
         RISCV_ACLINT_KMH_TIMEBASE_FREQ, true);
 
@@ -188,8 +261,7 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
                      bosc_kmh_memmap[BOSC_KMH_DEV_PCIE_CFG].size,
                      bosc_kmh_memmap[BOSC_KMH_DEV_PCIE_MMIO].base,
                      bosc_kmh_memmap[BOSC_KMH_DEV_PCIE_MMIO].size,
-                     qdev_get_gpio_in(DEVICE(state->plic), BOSC_KMH_PCIE0_IRQ0));
-
+                     qdev_get_gpio_in(DEVICE(state->irqchip), BOSC_KMH_PCIE0_IRQ0));
 
     /* ROM */
     memory_region_init_rom(&state->rom, OBJECT(dev), "riscv.bosc.kmh.rom",
@@ -213,6 +285,16 @@ static void bosc_kmh_soc_class_init(ObjectClass *klass, void *data)
 
 static void bosc_kmh_soc_instance_init(Object *obj)
 {
+    int hart_count;
+
+    MachineState *ms = MACHINE(qdev_get_machine());
+
+    hart_count = riscv_socket_hart_count(ms, 0);
+    if (hart_count < 0) {
+	    error_report("can't find hart count");
+	    exit(1);
+    }
+
     BoscKmhSoCState *state = RISCV_KMH_SOC(obj);
 
     object_initialize_child(obj, "cpus", &state->cpus, TYPE_RISCV_HART_ARRAY);
@@ -222,7 +304,7 @@ static void bosc_kmh_soc_instance_init(Object *obj)
      */
     object_property_set_str(OBJECT(&state->cpus), "cpu-type",
                             TYPE_RISCV_CPU_BOSC_KMH, &error_abort);
-    object_property_set_int(OBJECT(&state->cpus), "num-harts", 1,
+    object_property_set_int(OBJECT(&state->cpus), "num-harts", hart_count,
                             &error_abort);
 }
 
