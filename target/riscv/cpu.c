@@ -603,6 +603,7 @@ static void rv64_bosc_kmh_cpu_init(Object *obj)
 	cpu->cfg.ext_zvksg = true;
 	cpu->cfg.ext_smaia = true;
 	cpu->cfg.ext_ssaia = true;
+	cpu->cfg.ext_svpbmt = true;
 
 #ifndef CONFIG_USER_ONLY
 		set_satp_mode_max_supported(cpu, VM_1_10_SV48);
