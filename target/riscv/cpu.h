@@ -160,12 +160,19 @@ extern RISCVCPUImpliedExtsRule *riscv_multi_ext_implied_rules[];
 #define RV_MAX_MHPMEVENTS 32
 #define RV_MAX_MHPMCOUNTERS 32
 
+#define RV_MLEN_MAX 1024
+#define RV_MACC_LEN 32
+
 FIELD(VTYPE, VLMUL, 0, 3)
 FIELD(VTYPE, VSEW, 3, 3)
 FIELD(VTYPE, VTA, 6, 1)
 FIELD(VTYPE, VMA, 7, 1)
 FIELD(VTYPE, VEDIV, 8, 2)
 FIELD(VTYPE, RESERVED, 10, sizeof(target_ulong) * 8 - 11)
+
+FIELD(MSIZE, SIZEM, 0, 8)
+FIELD(MSIZE, SIZEN, 8, 8)
+FIELD(MSIZE, SIZEK, 16, 16)
 
 typedef struct PMUCTRState {
     /* Current value of a counter */
@@ -201,6 +208,17 @@ struct CPUArchState {
     target_ulong vstart;
     target_ulong vtype;
     bool vill;
+
+    /* matrix state */
+    uint64_t mreg[8 * RV_MLEN_MAX / RV_MACC_LEN  * RV_MLEN_MAX / 64] QEMU_ALIGNED(16);
+    target_ulong sizem;
+    target_ulong sizen;
+    target_ulong sizek;
+    target_ulong mrstart;
+    target_ulong mcsr;
+    target_ulong mxsat;
+    target_ulong mxrm;
+    target_ulong xmisa;
 
     target_ulong pc;
     target_ulong load_res;

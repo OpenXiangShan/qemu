@@ -1013,6 +1013,17 @@ static void riscv_cpu_reset_hold(Object *obj, ResetType type)
 
     pmp_unlock_entries(env);
 #endif
+    if (cpu->cfg.ext_matrix) {
+            env->xmisa = MATRIX_MULT_F16F16
+                         | MATRIX_MULT_F32F32
+                         | MATRIX_MULT_F64F64
+                         | MATRIX_MULT_I16I64
+                         | MATRIX_MULT_I4I32
+                         | MATRIX_PW_I32
+                         | MATRIX_PW_I64
+                         | MATRIX_MULT_I8I32;
+        printf("============= ext_matrix open! =============\n");
+    }
     env->xl = riscv_cpu_mxl(env);
     riscv_cpu_update_mask(env);
     cs->exception_index = RISCV_EXCP_NONE;
@@ -2693,6 +2704,7 @@ static Property riscv_cpu_properties[] = {
      * it with -x and default to 'false'.
      */
     DEFINE_PROP_BOOL("x-misa-w", RISCVCPU, cfg.misa_w, false),
+    DEFINE_PROP_BOOL("x-matrix", RISCVCPU, cfg.ext_matrix, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 

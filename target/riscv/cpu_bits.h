@@ -32,6 +32,16 @@
 #define FSR_NXA             (FPEXC_NX << FSR_AEXC_SHIFT)
 #define FSR_AEXC            (FSR_NVA | FSR_OFA | FSR_UFA | FSR_DZA | FSR_NXA)
 
+/* Matrix Sub Extension */
+#define MATRIX_PW_I32       0x80
+#define MATRIX_PW_I64       0x40
+#define MATRIX_MULT_F64F64  0x20
+#define MATRIX_MULT_F32F32  0x10
+#define MATRIX_MULT_F16F16  0x8
+#define MATRIX_MULT_I8I32   0x4
+#define MATRIX_MULT_I16I64  0x2
+#define MATRIX_MULT_I4I32   0x1
+
 /* Control and Status Registers */
 
 /* User Trap Setup */
