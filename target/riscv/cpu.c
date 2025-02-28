@@ -2704,7 +2704,10 @@ static Property riscv_cpu_properties[] = {
      * it with -x and default to 'false'.
      */
     DEFINE_PROP_BOOL("x-misa-w", RISCVCPU, cfg.misa_w, false),
+    /* matrix extension as experimental */
     DEFINE_PROP_BOOL("x-matrix", RISCVCPU, cfg.ext_matrix, false),
+    DEFINE_PROP_UINT16("rlen", RISCVCPU, cfg.mrowlen, 128),
+    DEFINE_PROP_UINT16("datapath", RISCVCPU, cfg.datapath, 256),
     DEFINE_PROP_END_OF_LIST(),
 };
 

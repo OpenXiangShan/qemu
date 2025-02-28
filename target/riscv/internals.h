@@ -136,6 +136,24 @@ static inline float16 check_nanbox_h(CPURISCVState *env, uint64_t f)
     }
 }
 
+static inline target_ulong get_rlenb(CPURISCVState *env)
+{
+    return env_archcpu(env)->cfg.mrowlen >> 3;
+}
+
+static inline target_ulong get_mrows(CPURISCVState *env)
+{
+    return env_archcpu(env)->cfg.mrowlen / RV_MACC_LEN;
+}
+
+static inline target_ulong get_mlenb(CPURISCVState *env)
+{
+    return get_mrows(env) * get_rlenb(env);
+}
+
+/* rounding incremental calculation */
+uint8_t get_round(int rm, uint64_t v, uint8_t shift);
+
 /* Our implementation of CPUClass::has_work */
 bool riscv_cpu_has_work(CPUState *cs);
 

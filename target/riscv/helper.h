@@ -1282,4 +1282,151 @@ DEF_HELPER_5(vsm4k_vi, void, ptr, ptr, i32, env, i32)
 DEF_HELPER_4(vsm4r_vv, void, ptr, ptr, env, i32)
 DEF_HELPER_4(vsm4r_vs, void, ptr, ptr, env, i32)
 
+/* Matrix v0.2 functions */
+DEF_HELPER_5(madd_s_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msub_s_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msra_s_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mmul_s_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mmulh_s_mv_i, void, ptr, ptr, ptr, tl, env)
+
+DEF_HELPER_5(madd_d_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msub_d_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msra_d_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mmul_d_mv_i, void, ptr, ptr, ptr, tl, env)
+
+DEF_HELPER_5(madd_s_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msub_s_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msra_s_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mmul_s_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mmulh_s_mv_x, void, ptr, ptr, ptr, tl, env)
+
+DEF_HELPER_5(madd_d_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msub_d_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(msra_d_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mmul_d_mv_x, void, ptr, ptr, ptr, tl, env)
+
+DEF_HELPER_4(madd_s_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(msub_s_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(msra_s_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(mmul_s_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(mmulh_s_mx, void, ptr, ptr, tl, env)
+
+DEF_HELPER_4(madd_d_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(msub_d_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(msra_d_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(mmul_d_mx, void, ptr, ptr, tl, env)
+
+DEF_HELPER_4(mmov_mv_x, void, ptr, ptr, tl, env)
+DEF_HELPER_4(madd_s_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(msub_s_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(msra_s_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmul_s_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmulh_s_mm, void, ptr, ptr, ptr, env)
+
+DEF_HELPER_4(madd_d_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(msub_d_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(msra_d_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmul_d_mm, void, ptr, ptr, ptr, env)
+
+DEF_HELPER_4(mn4clip_s_mm,  void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mn4clipu_s_mm, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mn4clip_d_mm,  void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mn4clipu_d_mm, void, ptr, ptr, ptr, env)
+
+DEF_HELPER_5(mn4clip_s_mv_x,  void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mn4clipu_s_mv_x, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mn4clip_d_mv_x,  void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mn4clipu_d_mv_x, void, ptr, ptr, ptr, tl, env)
+
+DEF_HELPER_5(mn4clip_s_mv_i,  void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mn4clipu_s_mv_i, void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mn4clip_d_mv_i,  void, ptr, ptr, ptr, tl, env)
+DEF_HELPER_5(mn4clipu_d_mv_i, void, ptr, ptr, ptr, tl, env)
+
+DEF_HELPER_4(mn4clip_s_mx,  void, ptr, ptr, tl, env)
+DEF_HELPER_4(mn4clipu_s_mx, void, ptr, ptr, tl, env)
+DEF_HELPER_4(mn4clip_d_mx,  void, ptr, ptr, tl, env)
+DEF_HELPER_4(mn4clipu_d_mx, void, ptr, ptr, tl, env)
+
+DEF_HELPER_4(mmaqa_b,   void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmaqau_b,  void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmaqaus_b, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmaqasu_b, void, ptr, ptr, ptr, env)
+
+DEF_HELPER_4(pmmaqa_b,   void, ptr, ptr, ptr, env)
+DEF_HELPER_4(pmmaqau_b,  void, ptr, ptr, ptr, env)
+DEF_HELPER_4(pmmaqaus_b, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(pmmaqasu_b, void, ptr, ptr, ptr, env)
+
+DEF_HELPER_4(mmaqa_h,   void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmaqau_h,  void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmaqaus_h, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(mmaqasu_h, void, ptr, ptr, ptr, env)
+
+DEF_HELPER_5(fmmacc_h,  void, ptr, ptr, ptr, env, i32)
+DEF_HELPER_4(fmmacc_s,  void, ptr, ptr, ptr, env)
+DEF_HELPER_4(fmmacc_d,  void, ptr, ptr, ptr, env)
+DEF_HELPER_4(fwmmacc_h, void, ptr, ptr, ptr, env)
+DEF_HELPER_4(fwmmacc_s, void, ptr, ptr, ptr, env)
+
+DEF_HELPER_4(mld_b, void, ptr, tl, tl, env)
+DEF_HELPER_4(mld_h, void, ptr, tl, tl, env)
+DEF_HELPER_4(mld_w, void, ptr, tl, tl, env)
+DEF_HELPER_4(mld_d, void, ptr, tl, tl, env)
+
+DEF_HELPER_3(mld1m_b, void, ptr, tl, env)
+DEF_HELPER_3(mld2m_b, void, ptr, tl, env)
+DEF_HELPER_3(mld4m_b, void, ptr, tl, env)
+DEF_HELPER_3(mld8m_b, void, ptr, tl, env)
+
+DEF_HELPER_3(mld1m_h, void, ptr, tl, env)
+DEF_HELPER_3(mld2m_h, void, ptr, tl, env)
+DEF_HELPER_3(mld4m_h, void, ptr, tl, env)
+DEF_HELPER_3(mld8m_h, void, ptr, tl, env)
+
+DEF_HELPER_3(mld1m_w, void, ptr, tl, env)
+DEF_HELPER_3(mld2m_w, void, ptr, tl, env)
+DEF_HELPER_3(mld4m_w, void, ptr, tl, env)
+DEF_HELPER_3(mld8m_w, void, ptr, tl, env)
+
+DEF_HELPER_3(mld1m_d, void, ptr, tl, env)
+DEF_HELPER_3(mld2m_d, void, ptr, tl, env)
+DEF_HELPER_3(mld4m_d, void, ptr, tl, env)
+DEF_HELPER_3(mld8m_d, void, ptr, tl, env)
+
+DEF_HELPER_4(msld_b, void, ptr, tl, tl, env)
+DEF_HELPER_4(msld_h, void, ptr, tl, tl, env)
+DEF_HELPER_4(msld_w, void, ptr, tl, tl, env)
+DEF_HELPER_4(msld_d, void, ptr, tl, tl, env)
+
+DEF_HELPER_4(mst_b, void, ptr, tl, tl, env)
+DEF_HELPER_4(mst_h, void, ptr, tl, tl, env)
+DEF_HELPER_4(mst_w, void, ptr, tl, tl, env)
+DEF_HELPER_4(mst_d, void, ptr, tl, tl, env)
+
+DEF_HELPER_3(mst1m_b, void, ptr, tl, env)
+DEF_HELPER_3(mst2m_b, void, ptr, tl, env)
+DEF_HELPER_3(mst4m_b, void, ptr, tl, env)
+DEF_HELPER_3(mst8m_b, void, ptr, tl, env)
+
+DEF_HELPER_3(mst1m_h, void, ptr, tl, env)
+DEF_HELPER_3(mst2m_h, void, ptr, tl, env)
+DEF_HELPER_3(mst4m_h, void, ptr, tl, env)
+DEF_HELPER_3(mst8m_h, void, ptr, tl, env)
+
+DEF_HELPER_3(mst1m_w, void, ptr, tl, env)
+DEF_HELPER_3(mst2m_w, void, ptr, tl, env)
+DEF_HELPER_3(mst4m_w, void, ptr, tl, env)
+DEF_HELPER_3(mst8m_w, void, ptr, tl, env)
+
+DEF_HELPER_3(mst1m_d, void, ptr, tl, env)
+DEF_HELPER_3(mst2m_d, void, ptr, tl, env)
+DEF_HELPER_3(mst4m_d, void, ptr, tl, env)
+DEF_HELPER_3(mst8m_d, void, ptr, tl, env)
+
+DEF_HELPER_4(msst_b, void, ptr, tl, tl, env)
+DEF_HELPER_4(msst_h, void, ptr, tl, tl, env)
+DEF_HELPER_4(msst_w, void, ptr, tl, tl, env)
+DEF_HELPER_4(msst_d, void, ptr, tl, tl, env)
+
 DEF_HELPER_FLAGS_2(nemu_trap, TCG_CALL_NO_RWG, void, env, tl)

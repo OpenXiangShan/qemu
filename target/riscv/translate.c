@@ -38,6 +38,7 @@
 
 /* global register indices */
 static TCGv cpu_gpr[32], cpu_gprh[32], cpu_pc, cpu_vl, cpu_vstart;
+static TCGv sizem, sizen, sizek;
 static TCGv cpu_exec_count;
 static TCGv_i64 cpu_fpr[32]; /* assume F and D extensions */
 static TCGv load_res;
@@ -45,6 +46,17 @@ static TCGv load_val;
 /* globals for PM CSRs */
 static TCGv pm_mask;
 static TCGv pm_base;
+
+/**
+ * riscv_tbflags_from_tb:
+ * @tb: the TranslationBlock
+ *
+ * Extract the flag values from @tb.
+ */
+static inline CPURISCVTBFlags riscv_tbflags_from_tb(const TranslationBlock *tb)
+{
+    return (CPURISCVTBFlags){ tb->flags, tb->cs_base };
+}
 
 /*
  * If an operation is being performed on less than TARGET_LONG_BITS,
@@ -69,6 +81,7 @@ typedef struct DisasContext {
     uint32_t opcode;
     RISCVExtStatus mstatus_fs;
     RISCVExtStatus mstatus_vs;
+    uint32_t mcsr_ms;
     uint32_t mem_idx;
     uint32_t priv;
     /*
@@ -99,6 +112,20 @@ typedef struct DisasContext {
      */
     int8_t lmul;
     uint8_t sew;
+    bool bf16;
+    bool pwi32;
+    bool pwi64;
+    bool i4i32;
+    bool i8i32;
+    bool i16i64;
+    bool f16f16;
+    bool f32f32;
+    bool f64f64;
+    bool mill;
+    bool nill;
+    bool kill;
+    bool npill;
+    uint16_t mrowlen;
     uint8_t vta;
     uint8_t vma;
     bool cfg_vta_all_1s;
@@ -106,6 +133,9 @@ typedef struct DisasContext {
     bool vl_eq_vlmax;
     CPUState *cs;
     TCGv zero;
+    uint8_t ntemp;
+    /* Space for 3 operands plus 1 extra for address computation. */
+    TCGv temp[4];
     /* PointerMasking extension */
     bool pm_mask_enabled;
     bool pm_base_enabled;
@@ -310,6 +340,20 @@ static void gen_goto_tb(DisasContext *ctx, int n, target_long diff)
         gen_update_pc(ctx, diff);
         lookup_and_goto_ptr(ctx);
     }
+}
+
+/*
+ * Wrappers for getting reg values.
+ *
+ * The $zero register does not have cpu_gpr[0] allocated -- we supply the
+ * constant zero as a source, and an uninitialized sink as destination.
+ *
+ * Further, we may provide an extension for word operations.
+ */
+static TCGv temp_new(DisasContext *ctx)
+{
+    assert(ctx->ntemp < ARRAY_SIZE(ctx->temp));
+    return ctx->temp[ctx->ntemp++] = tcg_temp_new();
 }
 
 /*
@@ -715,6 +759,11 @@ static void gen_set_rm_chkfrm(DisasContext *ctx, int rm)
 static int ex_plus_1(DisasContext *ctx, int nf)
 {
     return nf + 1;
+}
+
+static int ex_plus_8(DisasContext *ctx, int rs)
+{
+    return rs + 8;
 }
 
 #define EX_SH(amount) \
@@ -1147,6 +1196,7 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #include "decode-xthead.c.inc"
 #include "insn_trans/trans_xthead.c.inc"
 #include "insn_trans/trans_xventanacondops.c.inc"
+#include "insn_trans/trans_rvmm.c.inc"
 
 /* Include the auto-generated decoder for 16 bit insn */
 #include "decode-insn16.c.inc"
@@ -1211,37 +1261,54 @@ static void riscv_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     CPURISCVState *env = cpu_env(cs);
     RISCVCPUClass *mcc = RISCV_CPU_GET_CLASS(cs);
     RISCVCPU *cpu = RISCV_CPU(cs);
-    uint32_t tb_flags = ctx->base.tb->flags;
+    //uint32_t tb_flags = ctx->base.tb->flags;
+    CPURISCVTBFlags tb_flags = riscv_tbflags_from_tb(dcbase->tb);
 
     ctx->pc_save = ctx->base.pc_first;
-    ctx->priv = FIELD_EX32(tb_flags, TB_FLAGS, PRIV);
-    ctx->mem_idx = FIELD_EX32(tb_flags, TB_FLAGS, MEM_IDX);
-    ctx->mstatus_fs = FIELD_EX32(tb_flags, TB_FLAGS, FS);
-    ctx->mstatus_vs = FIELD_EX32(tb_flags, TB_FLAGS, VS);
+    ctx->priv = FIELD_EX32(tb_flags.flags, TB_FLAGS, PRIV);
+    ctx->mem_idx = FIELD_EX32(tb_flags.flags, TB_FLAGS, MEM_IDX);
+    ctx->mstatus_fs = FIELD_EX32(tb_flags.flags, TB_FLAGS, FS);
+    ctx->mstatus_vs = FIELD_EX32(tb_flags.flags, TB_FLAGS, VS);
     ctx->priv_ver = env->priv_ver;
-    ctx->virt_enabled = FIELD_EX32(tb_flags, TB_FLAGS, VIRT_ENABLED);
+    ctx->virt_enabled = FIELD_EX32(tb_flags.flags, TB_FLAGS, VIRT_ENABLED);
     ctx->misa_ext = env->misa_ext;
     ctx->frm = -1;  /* unknown rounding mode */
     ctx->cfg_ptr = &(cpu->cfg);
-    ctx->vill = FIELD_EX32(tb_flags, TB_FLAGS, VILL);
-    ctx->sew = FIELD_EX32(tb_flags, TB_FLAGS, SEW);
-    ctx->lmul = sextract32(FIELD_EX32(tb_flags, TB_FLAGS, LMUL), 0, 3);
-    ctx->vta = FIELD_EX32(tb_flags, TB_FLAGS, VTA) && cpu->cfg.rvv_ta_all_1s;
-    ctx->vma = FIELD_EX32(tb_flags, TB_FLAGS, VMA) && cpu->cfg.rvv_ma_all_1s;
+    ctx->vill = FIELD_EX32(tb_flags.flags, TB_FLAGS, VILL);
+    ctx->sew = FIELD_EX32(tb_flags.flags, TB_FLAGS, SEW);
+    ctx->lmul = sextract32(FIELD_EX32(tb_flags.flags, TB_FLAGS, LMUL), 0, 3);
+    ctx->vta = FIELD_EX32(tb_flags.flags, TB_FLAGS, VTA) && cpu->cfg.rvv_ta_all_1s;
+    ctx->vma = FIELD_EX32(tb_flags.flags, TB_FLAGS, VMA) && cpu->cfg.rvv_ma_all_1s;
     ctx->cfg_vta_all_1s = cpu->cfg.rvv_ta_all_1s;
-    ctx->vstart_eq_zero = FIELD_EX32(tb_flags, TB_FLAGS, VSTART_EQ_ZERO);
-    ctx->vl_eq_vlmax = FIELD_EX32(tb_flags, TB_FLAGS, VL_EQ_VLMAX);
+    ctx->vstart_eq_zero = FIELD_EX32(tb_flags.flags, TB_FLAGS, VSTART_EQ_ZERO);
+    ctx->vl_eq_vlmax = FIELD_EX32(tb_flags.flags, TB_FLAGS, VL_EQ_VLMAX);
     ctx->misa_mxl_max = mcc->misa_mxl_max;
-    ctx->xl = FIELD_EX32(tb_flags, TB_FLAGS, XL);
-    ctx->address_xl = FIELD_EX32(tb_flags, TB_FLAGS, AXL);
+    ctx->xl = FIELD_EX32(tb_flags.flags, TB_FLAGS, XL);
+    ctx->address_xl = FIELD_EX32(tb_flags.flags, TB_FLAGS, AXL);
     ctx->cs = cs;
-    ctx->pm_mask_enabled = FIELD_EX32(tb_flags, TB_FLAGS, PM_MASK_ENABLED);
-    ctx->pm_base_enabled = FIELD_EX32(tb_flags, TB_FLAGS, PM_BASE_ENABLED);
+    ctx->pm_mask_enabled = FIELD_EX32(tb_flags.flags, TB_FLAGS, PM_MASK_ENABLED);
+    ctx->pm_base_enabled = FIELD_EX32(tb_flags.flags, TB_FLAGS, PM_BASE_ENABLED);
     ctx->ztso = cpu->cfg.ext_ztso;
-    ctx->itrigger = FIELD_EX32(tb_flags, TB_FLAGS, ITRIGGER);
+    ctx->itrigger = FIELD_EX32(tb_flags.flags, TB_FLAGS, ITRIGGER);
     ctx->zero = tcg_constant_tl(0);
     ctx->virt_inst_excp = false;
     ctx->decoders = cpu->decoders;
+    ctx->bf16 = EX_TBFLAGS_MATRIX(tb_flags, BF16);
+    ctx->pwi32 = EX_TBFLAGS_MATRIX(tb_flags, PWI32);
+    ctx->pwi64 = EX_TBFLAGS_MATRIX(tb_flags, PWI64);
+    ctx->i4i32 = EX_TBFLAGS_MATRIX(tb_flags, I4I32);
+    ctx->i8i32 = EX_TBFLAGS_MATRIX(tb_flags, I8I32);
+    ctx->i16i64 = EX_TBFLAGS_MATRIX(tb_flags, I16I64);
+    ctx->f16f16 = EX_TBFLAGS_MATRIX(tb_flags, F16F16);
+    ctx->f32f32 = EX_TBFLAGS_MATRIX(tb_flags, F32F32);
+    ctx->f64f64 = EX_TBFLAGS_MATRIX(tb_flags, F64F64);
+    ctx->mill = EX_TBFLAGS_MATRIX(tb_flags, MILL);
+    ctx->nill = EX_TBFLAGS_MATRIX(tb_flags, NILL);
+    ctx->kill = EX_TBFLAGS_MATRIX(tb_flags, KILL);
+    ctx->npill = EX_TBFLAGS_MATRIX(tb_flags, NPILL);
+    ctx->mrowlen = cpu->cfg.mrowlen;
+    ctx->ntemp = 0;
+    memset(ctx->temp, 0, sizeof(ctx->temp));
 }
 
 static void riscv_tr_tb_start(DisasContextBase *db, CPUState *cpu)
@@ -1361,4 +1428,7 @@ void riscv_translate_init(void)
                                  "pmmask");
     pm_base = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, cur_pmbase),
                                  "pmbase");
+    sizem = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizem), "sizem");
+    sizen = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizen), "sizen");
+    sizek = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizek), "sizek");
 }

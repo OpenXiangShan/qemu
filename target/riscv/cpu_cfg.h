@@ -166,6 +166,8 @@ struct RISCVCPUConfig {
     uint16_t cbom_blocksize;
     uint16_t cbop_blocksize;
     uint16_t cboz_blocksize;
+    uint16_t mrowlen;
+    uint16_t datapath;
     bool mmu;
     bool pmp;
     bool debug;

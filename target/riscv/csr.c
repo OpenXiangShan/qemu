@@ -29,6 +29,7 @@
 #include "sysemu/cpu-timers.h"
 #include "qemu/guest-random.h"
 #include "qapi/error.h"
+#include "internals.h"
 
 /* CSR function table public API */
 void riscv_get_csr_ops(int csrno, riscv_csr_operations *ops)
@@ -101,6 +102,22 @@ static RISCVException vs(CPURISCVState *env, int csrno)
         return RISCV_EXCP_NONE;
     }
     return RISCV_EXCP_ILLEGAL_INST;
+}
+
+static RISCVException ms(CPURISCVState *env, int csrno)
+{
+    CPUState *cs = env_cpu(env);
+    RISCVCPU *cpu = RISCV_CPU(cs);
+
+    if (cpu->cfg.ext_matrix) {
+#if !defined(CONFIG_USER_ONLY)
+        if (!env->debugger && !riscv_cpu_matrix_enabled(env)) {
+            return RISCV_EXCP_ILLEGAL_INST;
+        }
+#endif
+        return RISCV_EXCP_NONE;
+    }
+    return RISCV_EXCP_NONE;
 }
 
 static RISCVException ctr(CPURISCVState *env, int csrno)
@@ -784,6 +801,88 @@ static RISCVException write_vcsr(CPURISCVState *env, int csrno,
 #endif
     env->vxrm = (val & VCSR_VXRM) >> VCSR_VXRM_SHIFT;
     env->vxsat = (val & VCSR_VXSAT) >> VCSR_VXSAT_SHIFT;
+    return RISCV_EXCP_NONE;
+}
+
+static int read_mxstatus(CPURISCVState *env, int csrno, target_ulong *val)
+{
+    *val = env->mxstatus | (env->priv << 30);
+    return RISCV_EXCP_NONE;
+}
+
+static int write_mxstatus(CPURISCVState *env, int csrno, target_ulong val)
+{
+    env->mxstatus = val;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_mrstart(CPURISCVState *env, int csrno,
+                                   target_ulong *val)
+{
+    *val = env->mrstart;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_mrstart(CPURISCVState *env, int csrno,
+                                    target_ulong val)
+{
+    /*if (val < get_mrows(env)) {
+        env->mrstart = val;
+    }*/
+    qemu_log_mask(LOG_UNIMP, "No support for writing to mrstart.");
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_mcsr(CPURISCVState *env, int csrno,
+                                target_ulong *val)
+{
+    *val = env->mcsr;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_mcsr(CPURISCVState *env, int csrno,
+                                 target_ulong val)
+{
+    env->mcsr = val & (MCSR_RM | MCSR_SAT);
+    env->mxrm = get_field(val, MCSR_RM);
+    env->mxsat = get_field(val, MCSR_SAT);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_msize(CPURISCVState *env, int csrno,
+                                 target_ulong *val)
+{
+    *val = (env->sizek << 16) | (env->sizen << 8) | (env->sizem);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_msize(CPURISCVState *env, int csrno,
+                                 target_ulong val)
+{
+    env->sizek = get_field(val, 0xffff0000);
+    env->sizen = get_field(val, 0xff00);
+    env->sizem = get_field(val, 0xff);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_mlenb(CPURISCVState *env, int csrno,
+                                    target_ulong *val)
+{
+    *val = get_mlenb(env);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_rlenb(CPURISCVState *env, int csrno,
+                                 target_ulong *val)
+{
+    *val = get_rlenb(env);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_xmisa(CPURISCVState *env, int csrno,
+                                 target_ulong *val)
+{
+    *val = env->xmisa;
     return RISCV_EXCP_NONE;
 }
 
@@ -2908,6 +3007,9 @@ static RISCVException read_sstatus(CPURISCVState *env, int csrno,
     if (env->xl != MXL_RV32 || env->debugger) {
         mask |= SSTATUS64_UXL;
     }
+    if (env_archcpu(env)->cfg.ext_matrix) {
+        mask |= SSTATUS_MS;
+    }
     /* TODO: Use SXL not MXL. */
     *val = add_status_sd(riscv_cpu_mxl(env), env->mstatus & mask);
     return RISCV_EXCP_NONE;
@@ -2922,6 +3024,9 @@ static RISCVException write_sstatus(CPURISCVState *env, int csrno,
         if ((val & SSTATUS64_UXL) != 0) {
             mask |= SSTATUS64_UXL;
         }
+    }
+    if (env_archcpu(env)->cfg.ext_matrix) {
+        mask |= SSTATUS_MS;
     }
     target_ulong newval = (env->mstatus & ~mask) | (val & mask);
     return write_mstatus(env, CSR_MSTATUS, newval);
@@ -4915,6 +5020,17 @@ riscv_csr_operations csr_ops[CSR_TABLE_SIZE] = {
     [CSR_VL]       = { "vl",       vs,     read_vl                    },
     [CSR_VTYPE]    = { "vtype",    vs,     read_vtype                 },
     [CSR_VLENB]    = { "vlenb",    vs,     read_vlenb                 },
+
+    /* Matrix CSRs */
+    [CSR_MRSTART]  = { "mrstart",  ms,    read_mrstart, write_mrstart},
+    [CSR_MCSR]     = { "mcsr",     ms,    read_mcsr,    write_mcsr   },
+    [CSR_MSIZE]    = { "msize",    ms,    read_msize,   write_msize  },
+    [CSR_MREGSIZE] = { "mlenb",    ms,    read_mlenb                 },
+    [CSR_MLENB]    = { "rlenb",    ms,    read_rlenb                 },
+    [CSR_XMISA]    = { "xmisa",    ms,    read_xmisa                 },
+
+    [CSR_MXSTATUS] = { "mxstatus", any,   read_mxstatus, write_mxstatus},
+
     /* User Timers and Counters */
     [CSR_CYCLE]    = { "cycle",    ctr,    read_hpmcounter  },
     [CSR_INSTRET]  = { "instret",  ctr,    read_hpmcounter  },

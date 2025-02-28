@@ -42,6 +42,10 @@
 #define MATRIX_MULT_I16I64  0x2
 #define MATRIX_MULT_I4I32   0x1
 
+/* Matrix Status */
+#define MCSR_RM            0xC
+#define MCSR_SAT           0x10
+
 /* Control and Status Registers */
 
 /* User Trap Setup */
@@ -75,6 +79,17 @@
 #define VCSR_VXSAT          (0x1 << VCSR_VXSAT_SHIFT)
 #define VCSR_VXRM_SHIFT     1
 #define VCSR_VXRM           (0x3 << VCSR_VXRM_SHIFT)
+
+/* Matrix CSR */
+#define CSR_MRSTART         0x801
+#define CSR_MCSR            0x802
+#define CSR_MSIZE           0x803
+#define CSR_MREGSIZE        0xCC0
+#define CSR_MLENB           0xCC1
+#define CSR_XMISA           0xCC2
+#define MXSTATUS_MS         0x3
+/* X-Thead Extend registers */
+#define CSR_MXSTATUS        0x7c0
 
 /* User Timers and Counters */
 #define CSR_CYCLE           0xc00
@@ -592,6 +607,7 @@ typedef enum {
 #define SSTATUS_XS          0x00018000
 #define SSTATUS_SUM         0x00040000 /* since: priv-1.10 */
 #define SSTATUS_MXR         0x00080000
+#define SSTATUS_MS          0x01800000
 
 #define SSTATUS64_UXL       0x0000000300000000ULL
 

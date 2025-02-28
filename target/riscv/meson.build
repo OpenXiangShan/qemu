@@ -22,6 +22,7 @@ riscv_ss.add(files(
   'm128_helper.c',
   'crypto_helper.c',
   'zce_helper.c',
+  'matrix_helper.c',
   'vcrypto_helper.c',
   'serializer.c',
   'multicore.c',

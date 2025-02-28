@@ -160,7 +160,7 @@ extern RISCVCPUImpliedExtsRule *riscv_multi_ext_implied_rules[];
 #define RV_MAX_MHPMEVENTS 32
 #define RV_MAX_MHPMCOUNTERS 32
 
-#define RV_MLEN_MAX 1024
+#define RV_RLEN_MAX 4096
 #define RV_MACC_LEN 32
 
 FIELD(VTYPE, VLMUL, 0, 3)
@@ -173,6 +173,12 @@ FIELD(VTYPE, RESERVED, 10, sizeof(target_ulong) * 8 - 11)
 FIELD(MSIZE, SIZEM, 0, 8)
 FIELD(MSIZE, SIZEN, 8, 8)
 FIELD(MSIZE, SIZEK, 16, 16)
+
+/* New tbflags for matrix  */
+typedef struct CPURISCVTBFlags {
+    uint32_t flags;
+    target_ulong flags2;
+} CPURISCVTBFlags;
 
 typedef struct PMUCTRState {
     /* Current value of a counter */
@@ -210,7 +216,7 @@ struct CPUArchState {
     bool vill;
 
     /* matrix state */
-    uint64_t mreg[8 * RV_MLEN_MAX / RV_MACC_LEN  * RV_MLEN_MAX / 64] QEMU_ALIGNED(16);
+    uint64_t mreg[8 * RV_RLEN_MAX / RV_MACC_LEN  * RV_RLEN_MAX / 64] QEMU_ALIGNED(16);
     target_ulong sizem;
     target_ulong sizen;
     target_ulong sizek;
@@ -219,6 +225,8 @@ struct CPUArchState {
     target_ulong mxsat;
     target_ulong mxrm;
     target_ulong xmisa;
+
+    uint64_t mxstatus;
 
     target_ulong pc;
     target_ulong load_res;
@@ -562,6 +570,7 @@ bool riscv_cpu_fp_enabled(CPURISCVState *env);
 target_ulong riscv_cpu_get_geilen(CPURISCVState *env);
 void riscv_cpu_set_geilen(CPURISCVState *env, target_ulong geilen);
 bool riscv_cpu_vector_enabled(CPURISCVState *env);
+bool riscv_cpu_matrix_enabled(CPURISCVState *env);
 void riscv_cpu_set_virt_enabled(CPURISCVState *env, bool enable);
 int riscv_env_mmu_index(CPURISCVState *env, bool ifetch);
 G_NORETURN void  riscv_cpu_do_unaligned_access(CPUState *cs, vaddr addr,
@@ -636,6 +645,28 @@ FIELD(TB_FLAGS, ITRIGGER, 22, 1)
 FIELD(TB_FLAGS, VIRT_ENABLED, 23, 1)
 FIELD(TB_FLAGS, PRIV, 24, 2)
 FIELD(TB_FLAGS, AXL, 26, 2)
+
+FIELD(TB_FLAGS_MATRIX, PWI32, 0, 1)
+FIELD(TB_FLAGS_MATRIX, PWI64, 1, 1)
+FIELD(TB_FLAGS_MATRIX, I4I32, 2, 1)
+FIELD(TB_FLAGS_MATRIX, I8I32, 3, 1)
+FIELD(TB_FLAGS_MATRIX, I16I64, 4, 1)
+FIELD(TB_FLAGS_MATRIX, F16F16, 5, 1)
+FIELD(TB_FLAGS_MATRIX, F32F32, 6, 1)
+FIELD(TB_FLAGS_MATRIX, F64F64, 7, 1)
+FIELD(TB_FLAGS_MATRIX, MS, 8, 2)
+FIELD(TB_FLAGS_MATRIX, MILL, 10, 1)
+FIELD(TB_FLAGS_MATRIX, NILL, 11, 1)
+FIELD(TB_FLAGS_MATRIX, KILL, 12, 1)
+FIELD(TB_FLAGS_MATRIX, NPILL, 13, 1)
+FIELD(TB_FLAGS_MATRIX, BF16, 20, 1)
+
+/*
+ * Helpers for using the matrix.
+ */
+#define DP_TBFLAGS_MATRIX(DST, WHICH, VAL) \
+    (DST.flags2 = FIELD_DP32(DST.flags2, TB_FLAGS_MATRIX, WHICH, VAL))
+#define EX_TBFLAGS_MATRIX(IN, WHICH) FIELD_EX32(IN.flags2, TB_FLAGS_MATRIX, WHICH)
 
 #ifdef TARGET_RISCV32
 #define riscv_cpu_mxl(env)  ((void)(env), MXL_RV32)
