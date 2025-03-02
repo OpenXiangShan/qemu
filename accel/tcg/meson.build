@@ -10,8 +10,8 @@ tcg_specific_ss.add(files(
   'tcg-runtime.c',
   'translate-all.c',
   'translator.c',
-  'checkpoint-gen.c',
 ))
+tcg_specific_ss.add(when: 'CONFIG_SOFTMMU', if_true: files('checkpoint-gen.c'))
 tcg_specific_ss.add(when: 'CONFIG_USER_ONLY', if_true: files('user-exec.c'))
 tcg_specific_ss.add(when: 'CONFIG_SYSTEM_ONLY', if_false: files('user-exec-stub.c'))
 if get_option('plugins')

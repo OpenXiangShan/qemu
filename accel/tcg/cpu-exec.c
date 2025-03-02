@@ -41,7 +41,9 @@
 #include "tb-context.h"
 #include "internal-common.h"
 #include "internal-target.h"
+#ifdef CONFIG_SOFTMMU
 #include "checkpoint/checkpoint.h"
+#endif
 
 /* -icount align implementation. */
 

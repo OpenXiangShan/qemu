@@ -20,7 +20,9 @@
 #include "disas/disas.h"
 #include "tcg/tcg.h"
 #include <stdio.h>
+#ifdef CONFIG_SOFTMMU
 #include "checkpoint/checkpoint.h"
+#endif
 
 static TCGv_i64 *cpu_exec_count=NULL;
 
@@ -166,7 +168,9 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int *max_insns,
     plugin_enabled = plugin_gen_tb_start(cpu, db);
     db->plugin_enabled = plugin_enabled;
 
+#ifdef CONFIG_SOFTMMU
     checkpoint_gen_empty_callback();
+#endif
     cpu_exec_count=ops->cpu_exec_count;
     while (true) {
         *max_insns = ++db->num_insns;

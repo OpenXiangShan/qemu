@@ -1429,4 +1429,6 @@ DEF_HELPER_4(msst_h, void, ptr, tl, tl, env)
 DEF_HELPER_4(msst_w, void, ptr, tl, tl, env)
 DEF_HELPER_4(msst_d, void, ptr, tl, tl, env)
 
+#ifdef CONFIG_SOFTMMU
 DEF_HELPER_FLAGS_2(nemu_trap, TCG_CALL_NO_RWG, void, env, tl)
+#endif

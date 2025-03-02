@@ -1,3 +1,4 @@
+#ifdef CONFIG_SOFTMMU
 #include "checkpoint/checkpoint.h"
 #include "checkpoint/serializer_utils.h"
 #include "cpu_bits.h"
@@ -88,3 +89,4 @@ void single_core_try_take_cpt(NEMUState* ns, uint64_t icount, int cpu_idx, bool 
         update_cpt_limit_instructions(ns, workload_exec_insns);
     }
 }
+#endif

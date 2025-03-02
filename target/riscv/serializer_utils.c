@@ -1,3 +1,4 @@
+#ifdef CONFIG_SOFTMMU
 #include "checkpoint/checkpoint.h"
 #include "hw/boards.h"
 #include "hw/riscv/nemu.h"
@@ -333,3 +334,4 @@ int cpt_header_encode(void *gcpt_mmio, checkpoint_header *cpt_header, single_cor
 
   return cpt_header->cpt_offset;
 }
+#endif

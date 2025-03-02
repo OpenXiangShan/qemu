@@ -1,3 +1,4 @@
+#ifdef CONFIG_SOFTMMU
 #include "checkpoint/checkpoint.h"
 #include "cpu_bits.h"
 #include "exec/cpu-common.h"
@@ -414,3 +415,4 @@ inline void try_take_cpt(NEMUState *ns, uint64_t inst_count, int cpu_idx, bool e
 {
     return ns->cpt_func.try_take_cpt(ns, inst_count, cpu_idx, exit_sync_period);
 }
+#endif

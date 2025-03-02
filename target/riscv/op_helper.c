@@ -24,6 +24,7 @@
 #include "exec/cpu_ldst.h"
 #include "exec/helper-proto.h"
 #include "sysemu/runstate.h"
+#ifdef CONFIG_SOFTMMU
 #include "checkpoint/checkpoint.h"
 
 extern GMutex sync_lock;
@@ -78,6 +79,7 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
     }
 }
+#endif
 
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
