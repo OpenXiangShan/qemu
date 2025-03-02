@@ -128,7 +128,6 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
 #ifdef CONFIG_USER_ONLY
     fs = EXT_STATUS_DIRTY;
     vs = EXT_STATUS_DIRTY;
-    DP_TBFLAGS_MATRIX(flags, MS, MXSTATUS_MS);
 #else
     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, PRIV, env->priv);
 
@@ -150,10 +149,6 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
     if (!riscv_has_ext(env, RVF)) {
         fs = (smstateen_acc_ok(env, 0, SMSTATEEN0_FCSR) == RISCV_EXCP_NONE)
              ? EXT_STATUS_DIRTY : EXT_STATUS_DISABLED;
-    }
-
-    if (riscv_cpu_matrix_enabled(env)) {
-        DP_TBFLAGS_MATRIX(flags, MS, env->mxstatus & MXSTATUS_MS);
     }
 
     if (cpu->cfg.debug && !icount_enabled()) {
@@ -565,7 +560,8 @@ bool riscv_cpu_vector_enabled(CPURISCVState *env)
 /* Return true is matrix support is currently enabled */
 bool riscv_cpu_matrix_enabled(CPURISCVState *env)
 {
-    return env->mxstatus & MXSTATUS_MS;
+    return true;
+    // return env->mxstatus & MXSTATUS_MS;
 }
 
 void riscv_cpu_swap_hypervisor_regs(CPURISCVState *env)

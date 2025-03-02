@@ -84,12 +84,9 @@
 #define CSR_MRSTART         0x801
 #define CSR_MCSR            0x802
 #define CSR_MSIZE           0x803
-#define CSR_MREGSIZE        0xCC0
-#define CSR_MLENB           0xCC1
+#define CSR_MLENB           0xCC0
+#define CSR_MRLENB          0xCC1
 #define CSR_XMISA           0xCC2
-#define MXSTATUS_MS         0x3
-/* X-Thead Extend registers */
-#define CSR_MXSTATUS        0x7c0
 
 /* User Timers and Counters */
 #define CSR_CYCLE           0xc00

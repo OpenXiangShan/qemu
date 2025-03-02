@@ -804,18 +804,6 @@ static RISCVException write_vcsr(CPURISCVState *env, int csrno,
     return RISCV_EXCP_NONE;
 }
 
-static int read_mxstatus(CPURISCVState *env, int csrno, target_ulong *val)
-{
-    *val = env->mxstatus | (env->priv << 30);
-    return RISCV_EXCP_NONE;
-}
-
-static int write_mxstatus(CPURISCVState *env, int csrno, target_ulong val)
-{
-    env->mxstatus = val;
-    return RISCV_EXCP_NONE;
-}
-
 static RISCVException read_mrstart(CPURISCVState *env, int csrno,
                                    target_ulong *val)
 {
@@ -5025,11 +5013,9 @@ riscv_csr_operations csr_ops[CSR_TABLE_SIZE] = {
     [CSR_MRSTART]  = { "mrstart",  ms,    read_mrstart, write_mrstart},
     [CSR_MCSR]     = { "mcsr",     ms,    read_mcsr,    write_mcsr   },
     [CSR_MSIZE]    = { "msize",    ms,    read_msize,   write_msize  },
-    [CSR_MREGSIZE] = { "mlenb",    ms,    read_mlenb                 },
-    [CSR_MLENB]    = { "rlenb",    ms,    read_rlenb                 },
+    [CSR_MLENB]    = { "mlenb",    ms,    read_mlenb                 },
+    [CSR_MRLENB]   = { "rlenb",    ms,    read_rlenb                 },
     [CSR_XMISA]    = { "xmisa",    ms,    read_xmisa                 },
-
-    [CSR_MXSTATUS] = { "mxstatus", any,   read_mxstatus, write_mxstatus},
 
     /* User Timers and Counters */
     [CSR_CYCLE]    = { "cycle",    ctr,    read_hpmcounter  },

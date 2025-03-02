@@ -226,8 +226,6 @@ struct CPUArchState {
     target_ulong mxrm;
     target_ulong xmisa;
 
-    uint64_t mxstatus;
-
     target_ulong pc;
     target_ulong load_res;
     target_ulong load_val;

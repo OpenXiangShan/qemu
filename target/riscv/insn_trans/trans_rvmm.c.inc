@@ -836,10 +836,11 @@ static bool trans_mrelease(DisasContext *s, arg_mrelease *a)
         return true;
     }
     s->mcsr_ms = 1;
-    TCGv tmp = tcg_temp_new();
-    tcg_gen_ld_tl(tmp, tcg_env, offsetof(CPURISCVState, mxstatus));
-    tcg_gen_deposit_tl(tmp, tmp, tcg_constant_tl(1), 0, 2);
-    tcg_gen_st_tl(tmp, tcg_env, offsetof(CPURISCVState, mxstatus));
+    // TCGv tmp = tcg_temp_new();
+    // Mrelease Instruction sets MS to Initial state
+    // tcg_gen_ld_tl(tmp, tcg_env, offsetof(CPURISCVState, mxstatus));
+    // tcg_gen_deposit_tl(tmp, tmp, tcg_constant_tl(1), 0, 2);
+    // tcg_gen_st_tl(tmp, tcg_env, offsetof(CPURISCVState, mxstatus));
     // tcg_temp_free(tmp);
 #endif
     return true;
