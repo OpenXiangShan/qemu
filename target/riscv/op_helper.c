@@ -24,7 +24,8 @@
 #include "exec/cpu_ldst.h"
 #include "exec/helper-proto.h"
 #include "sysemu/runstate.h"
-#ifdef CONFIG_SOFTMMU
+
+#ifndef CONFIG_USER_ONLY
 #include "checkpoint/checkpoint.h"
 
 extern GMutex sync_lock;

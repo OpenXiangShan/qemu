@@ -1,4 +1,4 @@
-#ifdef CONFIG_SOFTMMU
+#ifndef CONFIG_USER_ONLY
 #include "checkpoint/checkpoint.h"
 #include "hw/boards.h"
 #include "hw/riscv/nemu.h"

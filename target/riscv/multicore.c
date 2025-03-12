@@ -1,4 +1,4 @@
-#ifdef CONFIG_SOFTMMU
+#ifndef CONFIG_USER_ONLY
 #include "checkpoint/checkpoint.h"
 #include "cpu_bits.h"
 #include "exec/cpu-common.h"

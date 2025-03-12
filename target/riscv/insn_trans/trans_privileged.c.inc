@@ -18,7 +18,7 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifdef CONFIG_SOFTMMU
+#ifndef CONFIG_USER_ONLY
 static bool trans_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
 {
     gen_helper_nemu_trap(tcg_env, cpu_gpr[10]);
@@ -40,7 +40,7 @@ static bool trans_old_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
 {
     return false;
 }
-#endif /* CONFIG_SOFTMMU */
+#endif /* CONFIG_USER_ONLY */
 
 static bool trans_ecall(DisasContext *ctx, arg_ecall *a)
 {
