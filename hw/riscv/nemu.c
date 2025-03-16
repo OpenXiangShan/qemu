@@ -54,8 +54,10 @@
 enum {
     UART0_IRQ = 10,
     RTC_IRQ = 11,
-    VIRTIO_IRQ = 1, /* 1 to 8 */
-    VIRTIO_COUNT = 8,
+    VIRTIO_IRQ = 5, /* 1 to 8 */
+    VIRTIO_COUNT = 1,
+    // VIRTIO_IRQ = 1, /* 1 to 8 */
+    // VIRTIO_COUNT = 8,
     PCIE_IRQ = 0x20,            /* 32 to 35 */
     VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
 };
@@ -65,6 +67,7 @@ enum {
     NEMU_PLIC,
     NEMU_CLINT,
     NEMU_UARTLITE,
+    NEMU_VIRTIO,
     NEMU_GCPT,
     NEMU_DRAM,
 };
@@ -74,8 +77,10 @@ enum {
  * Freedom E310 G000 supports 51 interrupt sources. We use the value
  * of G002 and G003, so it is 53 (including interrupt source 0).
  */
-#define PLIC_NUM_SOURCES 53
-#define PLIC_NUM_PRIORITIES 7
+#define PLIC_NUM_SOURCES 32
+#define PLIC_NUM_PRIORITIES 8
+// #define PLIC_NUM_SOURCES 53
+// #define PLIC_NUM_PRIORITIES 7
 #define PLIC_PRIORITY_BASE 0x00
 #define PLIC_PENDING_BASE 0x1000
 #define PLIC_ENABLE_BASE 0x2000
@@ -85,8 +90,10 @@ enum {
 
 static const MemMapEntry nemu_memmap[] = {
     [NEMU_MROM] = { 0x1000, 0xf000 },
-    [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
+    [NEMU_VIRTIO] ={ 0x10001000, 0x1000 },
     [NEMU_CLINT] = { 0x38000000, 0x10000 },
+    // [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
+    [NEMU_PLIC] = { 0x3c000000, 0x6000000 },
     [NEMU_UARTLITE] = { 0x40600000, 0x1000 },
     [NEMU_GCPT] = { 0x50000000, 0x8000000 },
     [NEMU_DRAM] = { 0x80000000, 0x0 },
@@ -559,8 +566,14 @@ static void nemu_machine_init(MachineState *machine)
     memory_region_add_subregion(system_memory, memmap[NEMU_UARTLITE].base,
                                 sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
 
-    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
-                       qdev_get_gpio_in(DEVICE(s->irqchip[0]), UART0_IRQ));
+    /* VirtIO MMIO devices */
+    for (i = 0; i < VIRTIO_COUNT; i++) {
+        sysbus_create_simple("virtio-mmio",
+            memmap[NEMU_VIRTIO].base + i * memmap[NEMU_VIRTIO].size,
+            qdev_get_gpio_in(s->irqchip[0], VIRTIO_IRQ + i));
+    }
+    // sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
+    //                    qdev_get_gpio_in(DEVICE(s->irqchip[0]), UART0_IRQ));
 
     simpoint_init(machine);
     nemu_load_firmware(machine);
