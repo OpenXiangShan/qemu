@@ -55,9 +55,7 @@ enum {
     UART0_IRQ = 10,
     RTC_IRQ = 11,
     VIRTIO_IRQ = 5, /* 1 to 8 */
-    VIRTIO_COUNT = 1,
-    // VIRTIO_IRQ = 1, /* 1 to 8 */
-    // VIRTIO_COUNT = 8,
+    VIRTIO_COUNT = 2,
     PCIE_IRQ = 0x20,            /* 32 to 35 */
     VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
 };
