@@ -47,6 +47,7 @@
 #include "hw/intc/sifive_plic.h"
 #include <libfdt.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <zstd.h>
 #include <zlib.h>
 #include "checkpoint/checkpoint.h"
@@ -101,10 +102,10 @@ static int load_checkpoint(MachineState *machine, const char *checkpoint_path)
 {
     NEMUState *s = NEMU_MACHINE(machine);
     int fd = -1;
-    int compressed_size;
-    int decompress_result;
+    int64_t compressed_size;
+    int64_t decompress_result;
     char *compress_file_buf = NULL;
-    int load_compressed_size;
+    int64_t load_compressed_size;
 
     uint64_t frame_content_size;
 
@@ -123,12 +124,30 @@ static int load_checkpoint(MachineState *machine, const char *checkpoint_path)
         lseek(fd, 0, SEEK_SET);
 
         compress_file_buf = g_malloc(compressed_size);
-        load_compressed_size = read(fd, compress_file_buf, compressed_size);
+
+        load_compressed_size = 0;
+        while (load_compressed_size < compressed_size) {
+            int64_t bytes_read = read(fd, compress_file_buf + load_compressed_size, compressed_size - load_compressed_size);
+            if (bytes_read < 0) {
+                error_report("Failed to read checkpoint file %s", checkpoint_path);
+                free(compress_file_buf);
+                close(fd);
+                return -1;
+            }
+
+            if (bytes_read == 0) {
+                info_report("Unexpected EOF: read %ld bytes, expected %ld\n", load_compressed_size, compressed_size);
+                break;
+            }
+
+            load_compressed_size += bytes_read;
+            info_report("Reading checkpoint file %s: %ld/%ld bytes\n", checkpoint_path, load_compressed_size, compressed_size);
+        }
 
         if (load_compressed_size != compressed_size) {
             close(fd);
             g_free(compress_file_buf);
-            error_report("File read error, file size: %d, read size %d",
+            error_report("File read error, file size: %ld, read size %ld",
                          compressed_size, load_compressed_size);
             return -1;
         }
