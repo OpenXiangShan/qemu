@@ -38,7 +38,6 @@
 #include "exec/address-spaces.h"
 #include "hw/riscv/boot.h"
 #include "sysemu/device_tree.h"
-#include "hw/pci-host/xilinx-pcie.h"
 #include "kvm/kvm_riscv.h"
 #include "sysemu/kvm.h"
 #include "hw/riscv/numa.h"
@@ -56,8 +55,6 @@ static const MemMapEntry bosc_kmh_memmap[] = {
     [BOSC_KMH_APLIC_S] =      {  0x31120000, APLIC_SIZE(BOSC_KMH_CPUS_MAX) },
     [BOSC_KMH_IMSIC_M] =      { 0x3a800000, BOSC_KMH_IMSIC_MAX_SIZE },
     [BOSC_KMH_IMSIC_S] =      { 0x3b000000, BOSC_KMH_IMSIC_MAX_SIZE },
-    [BOSC_KMH_DEV_PCIE_MMIO] 	=	{ 0x40000000,   0x8000000},
-    [BOSC_KMH_DEV_PCIE_CFG] 	=	{ 0x48000000,   0x2000000},
     [BOSC_KMH_DEV_DRAM] 	=	{ 0x80000000,   0x0 },
 };
 
@@ -195,37 +192,6 @@ static void bosc_kmh_machine_type_info_register(void)
 }
 type_init(bosc_kmh_machine_type_info_register)
 
-
-static inline XilinxPCIEHost *
-xilinx_pcie_init(MemoryRegion *sys_mem, uint32_t bus_nr,
-                 hwaddr cfg_base, uint64_t cfg_size,
-                 hwaddr mmio_base, uint64_t mmio_size,
-                 qemu_irq irq)
-{
-    DeviceState *dev;
-    MemoryRegion *cfg, *mmio;
-
-    dev = qdev_new(TYPE_XILINX_PCIE_HOST);
-
-    qdev_prop_set_uint32(dev, "bus_nr", bus_nr);
-    qdev_prop_set_uint64(dev, "cfg_base", cfg_base);
-    qdev_prop_set_uint64(dev, "cfg_size", cfg_size);
-    qdev_prop_set_uint64(dev, "mmio_base", mmio_base);
-    qdev_prop_set_uint64(dev, "mmio_size", mmio_size);
-
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    cfg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0);
-    memory_region_add_subregion_overlap(sys_mem, cfg_base, cfg, 0);
-
-    mmio = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 1);
-    memory_region_add_subregion_overlap(sys_mem, 0, mmio, 0);
-
-    qdev_connect_gpio_out_named(dev, "interrupt_out", 0, irq);
-
-    return XILINX_PCIE_HOST(dev);
-}
-
 static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
 {
     int hart_count;
@@ -252,16 +218,6 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
         RISCV_ACLINT_SWI_SIZE, RISCV_ACLINT_DEFAULT_MTIMER_SIZE, 0, hart_count,
         RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
         RISCV_ACLINT_KMH_TIMEBASE_FREQ, true);
-
-    /*
-     * PCIe
-     */
-    xilinx_pcie_init(get_system_memory(), 0,
-                     bosc_kmh_memmap[BOSC_KMH_DEV_PCIE_CFG].base,
-                     bosc_kmh_memmap[BOSC_KMH_DEV_PCIE_CFG].size,
-                     bosc_kmh_memmap[BOSC_KMH_DEV_PCIE_MMIO].base,
-                     bosc_kmh_memmap[BOSC_KMH_DEV_PCIE_MMIO].size,
-                     qdev_get_gpio_in(DEVICE(state->irqchip), BOSC_KMH_PCIE0_IRQ0));
 
     /* ROM */
     memory_region_init_rom(&state->rom, OBJECT(dev), "riscv.bosc.kmh.rom",

@@ -22,7 +22,6 @@
 #include "hw/riscv/riscv_hart.h"
 #include "hw/boards.h"
 #include "hw/char/serial.h"
-#include "hw/pci-host/xilinx-pcie.h"
 #include "hw/intc/riscv_imsic.h"
 
 #define BOSC_KMH_CPUS_MAX_BITS             4
@@ -47,7 +46,6 @@ typedef struct BoscKmhSoCState {
     /*< public >*/
     RISCVHartArrayState cpus;
     DeviceState *irqchip;
-    XilinxPCIEHost pcie;
     MemoryRegion rom;
 
     RISCVKmhAIAType aia_type;
@@ -77,16 +75,11 @@ enum {
     BOSC_KMH_APLIC_S,
     BOSC_KMH_IMSIC_M,
     BOSC_KMH_IMSIC_S,
-    BOSC_KMH_DEV_PCIE_CFG,
-    BOSC_KMH_DEV_PCIE_MMIO,
     BOSC_KMH_DEV_DRAM
 };
 
 enum {
-    BOSC_KMH_UART0_IRQ = 10,
-    BOSC_KMH_PCIE0_IRQ0 = 51,
-    BOSC_KMH_PCIE0_IRQ1 = 52,
-    BOSC_KMH_PCIE0_IRQ2 = 53,
+    BOSC_KMH_UART0_IRQ = 10
 };
 
 
