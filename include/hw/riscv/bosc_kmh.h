@@ -75,11 +75,13 @@ enum {
     BOSC_KMH_APLIC_S,
     BOSC_KMH_IMSIC_M,
     BOSC_KMH_IMSIC_S,
+    BOSC_KMH_DEV_UART1,
     BOSC_KMH_DEV_DRAM
 };
 
 enum {
-    BOSC_KMH_UART0_IRQ = 10
+    BOSC_KMH_UART0_IRQ = 10,
+    BOSC_KMH_UART1_IRQ = 11,
 };
 
 

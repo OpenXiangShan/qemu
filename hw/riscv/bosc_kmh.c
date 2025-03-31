@@ -33,6 +33,7 @@
 #include "hw/intc/riscv_aclint.h"
 #include "hw/intc/riscv_aplic.h"
 #include "hw/char/serial-mm.h"
+#include "hw/char/xilinx_uartlite.h"
 #include "sysemu/sysemu.h"
 #include "hw/qdev-properties.h"
 #include "exec/address-spaces.h"
@@ -55,6 +56,7 @@ static const MemMapEntry bosc_kmh_memmap[] = {
     [BOSC_KMH_APLIC_S] =      {  0x31120000, APLIC_SIZE(BOSC_KMH_CPUS_MAX) },
     [BOSC_KMH_IMSIC_M] =      { 0x3a800000, BOSC_KMH_IMSIC_MAX_SIZE },
     [BOSC_KMH_IMSIC_S] =      { 0x3b000000, BOSC_KMH_IMSIC_MAX_SIZE },
+    [BOSC_KMH_DEV_UART1] 	=	{ 0x40600000,   0x1000 },
     [BOSC_KMH_DEV_DRAM] 	=	{ 0x80000000,   0x0 },
 };
 
@@ -192,6 +194,18 @@ static void bosc_kmh_machine_type_info_register(void)
 }
 type_init(bosc_kmh_machine_type_info_register)
 
+static XilinxUARTLite *uartlite_init(hwaddr base, qemu_irq irq, Chardev *chr)
+{
+    XilinxUARTLite *uartlite = XILINX_UARTLITE(qdev_new(TYPE_XILINX_UARTLITE));
+
+    qdev_prop_set_chr(DEVICE(uartlite), "chardev", chr);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(uartlite), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(uartlite), 0, base);
+    sysbus_connect_irq(SYS_BUS_DEVICE(uartlite), 0, irq);
+
+    return uartlite;
+}
+
 static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
 {
     int hart_count;
@@ -207,10 +221,15 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
     hart_count = riscv_socket_hart_count(ms, 0);
     state->irqchip = bosc_kmh_create_aia(state->aia_type, BOSC_KMH_IRQCHIP_MAX_GUESTS, memmap, 0, 0, hart_count);
 
+    /* UART0: 16550A */
     serial_mm_init(get_system_memory(), bosc_kmh_memmap[BOSC_KMH_DEV_UART0].base, 2,
                qdev_get_gpio_in(DEVICE(state->irqchip), BOSC_KMH_UART0_IRQ),
                115200, serial_hd(0), DEVICE_LITTLE_ENDIAN);
 
+    /* UART1: Xilinx UART Lite */
+    uartlite_init(bosc_kmh_memmap[BOSC_KMH_DEV_UART1].base,
+                  qdev_get_gpio_in(DEVICE(state->irqchip), BOSC_KMH_UART1_IRQ),
+                  serial_hd(0)); // Share the same serial port with UART0
 
     riscv_aclint_swi_create(bosc_kmh_memmap[BOSC_KMH_DEV_CLINT].base,
         0, hart_count, false);
