@@ -229,7 +229,7 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
     /* UART1: Xilinx UART Lite */
     uartlite_init(bosc_kmh_memmap[BOSC_KMH_DEV_UART1].base,
                   qdev_get_gpio_in(DEVICE(state->irqchip), BOSC_KMH_UART1_IRQ),
-                  serial_hd(0)); // Share the same serial port with UART0
+                  serial_hd(1));
 
     riscv_aclint_swi_create(bosc_kmh_memmap[BOSC_KMH_DEV_CLINT].base,
         0, hart_count, false);
