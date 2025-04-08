@@ -34,6 +34,8 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
 #define DISABLE_TIME_INTR 0x100
 #define NOTIFY_PROFILER 0x101
 #define NOTIFY_WORKLOAD_EXIT 0x102
+#define NOTIFY_INST_START 0x103
+#define PRINT_INST_CNT 0x104
     
     // nemu trap -> nemu_singal(GOOD_TRAP)
 #define GOOD_TRAP 0x0
@@ -75,6 +77,11 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
         printf("Hit GOOD TRAP\n");
         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
 
+    } else if(a0 == NOTIFY_INST_START){
+        env->sync_skip_mode = true;
+    } else if(a0 == PRINT_INST_CNT){
+        env->sync_skip_mode = false;
+        //printf("-------------- [qemu]: nemu_trap get insts %ld ------------\n", env->profiling_insns);
     } else {
         printf("Hit BAD TRAP %ld\n", a0);
         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);

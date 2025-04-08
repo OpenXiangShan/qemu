@@ -1429,6 +1429,8 @@ DEF_HELPER_4(msst_h, void, ptr, tl, tl, env)
 DEF_HELPER_4(msst_w, void, ptr, tl, tl, env)
 DEF_HELPER_4(msst_d, void, ptr, tl, tl, env)
 
+/* special insts for control function */
+DEF_HELPER_1(sync_skip, void, env)
 #ifndef CONFIG_USER_ONLY
 DEF_HELPER_FLAGS_2(nemu_trap, TCG_CALL_NO_RWG, void, env, tl)
 #endif
