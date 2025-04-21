@@ -285,23 +285,6 @@ typedef struct InstructionCount {
 } InstructionCount_t;
 InstructionCount_t vset_counter;
 
-#ifdef VSET_COUNT
-static void __attribute__((unused))
-check_vset(unsigned int vcpu_index, void *userdata) {
-    assert(vset_counter.log_file != NULL);
-
-    char buf[256];
-    vset_counter.vset_counter += 1;
-    g_mutex_lock(&vset_counter.lock);
-    sprintf(buf, "Execute width %ld\n",
-            vset_counter.all_exec_insns - vset_counter.last_instuction);
-    vset_counter.last_instuction = profiling_info.all_exec_insns;
-    g_mutex_unlock(&vset_counter.lock);
-
-    fwrite(buf, strlen(buf), 1, vset_counter.log_file);
-}
-#endif
-
 static void __attribute__((unused))
 instruction_check(unsigned int vcpu_index, void *userdata) {
     uint64_t data = (uint64_t)userdata;
@@ -545,9 +528,6 @@ static void profiling_exit(qemu_plugin_id_t id, void *userdata) {
     // g_hash_table_foreach_remove(profiling_info.bbv,hash_table_remove,NULL);
     g_mutex_unlock(&profiling_info.lock);
 
-#ifdef VSET_COUNT
-    gzclose(vset_counter.log_file);
-#endif
     //  printf("simpoint profiling exit all insns %ld\n",
     //         profiling_info.all_exec_insns);
 
@@ -648,17 +628,6 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
         state, VCPUScoreBoard, last_pc_next_insn_addr);
     middle_exit_flag = qemu_plugin_scoreboard_u64_in_struct(
         state, VCPUScoreBoard, middle_exit_flag);
-
-#ifdef VSET_COUNT
-    // vsetcounter init
-    vset_counter.last_instuction = 0;
-    vset_counter.vset_counter = 0;
-    char vset_count_path[128];
-    strcat(vset_count_path, profiling_info.args.workload_path);
-    strcat(vset_count_path, "_vset_counter.log");
-
-    vset_counter.log_file = gzopen(vset_count_path, "w");
-#endif
 
     qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
 
