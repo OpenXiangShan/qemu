@@ -588,6 +588,9 @@ static void nemu_machine_init(MachineState *machine)
     simpoint_init(machine);
     nemu_load_firmware(machine);
     multicore_checkpoint_init(machine);
+    if (s->nemu_args.limit_instrucitons == 0) {
+        s->nemu_args.limit_instrucitons = LONG_LONG_MAX;
+    }
 }
 
 static void nemu_machine_instance_init(Object *obj) {}
@@ -663,6 +666,13 @@ static void nemu_machine_set_skip_boot(Object *obj, bool value,
     ns->nemu_args.skip_boot = value;
 }
 
+static void nemu_machine_set_limit_instructions(Object *obj, const char* value,
+                                                   Error **errp)
+{
+    NEMUState *ns = NEMU_MACHINE(obj);
+    ns->nemu_args.limit_instrucitons = atol(value);
+}
+
 static void nemu_machine_set_checkpoint_mode(Object *obj, const char *value,
                                              Error **errp)
 {
@@ -724,6 +734,8 @@ static void nemu_machine_class_init(ObjectClass *oc, void *data)
                                   nemu_machine_set_checkpoint_mode);
     object_class_property_add_bool(oc, "skip-boot", NULL,
                                   nemu_machine_set_skip_boot);
+    object_class_property_add_str(oc, "limit-instructions", NULL,
+                                  nemu_machine_set_limit_instructions);
 }
 
 static const TypeInfo nemu_machine_typeinfo = {
