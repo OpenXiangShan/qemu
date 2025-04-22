@@ -122,6 +122,8 @@ typedef struct{
     uint64_t warmup_interval;
     uint64_t checkpoint_mode;
     bool skip_boot;
+
+    uint64_t limit_instrucitons;
 }NEMUArgs_t;
 
 struct NEMUState{

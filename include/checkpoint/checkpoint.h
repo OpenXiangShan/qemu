@@ -45,4 +45,5 @@ void multicore_checkpoint_init(MachineState *ns);
 void checkpoint_gen_empty_callback(void);
 uint64_t simpoint_get_next_instructions(NEMUState *ns);
 void set_simpoint_checkpoint_exit(void);
+void check_exit(void);
 #endif

@@ -292,6 +292,13 @@ static void try_sync(NEMUState* ns, uint64_t icount, int cpu_idx,
     }
 }
 
+void check_exit(void) {
+    if (simpoint_checkpoint_exit) {
+        // exit;
+        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+    }
+}
+
 __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* ns, uint64_t icount, int cpu_idx,
                              bool exit_sync_period){
     bool sync_end = false;
@@ -324,10 +331,7 @@ __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* 
         cpu_enable_ticks();
     }
 
-    if (simpoint_checkpoint_exit) {
-        // exit;
-        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
-    }
+    check_exit();
 }
 
 static void sync_init(NEMUState *ns, gint cpus){
