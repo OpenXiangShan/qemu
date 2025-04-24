@@ -50,7 +50,7 @@ static void serialize(NEMUState *ns, uint64_t icount) {
 static bool could_take_checkpoint(NEMUState *ns, uint64_t icount){
     if (icount >= ns->nemu_args.limit_instrucitons) {
         set_simpoint_checkpoint_exit();
-        check_exit();
+        check_exit(icount);
     }
     if (ns->nemu_args.checkpoint_mode==NoCheckpoint) {
         return false;
