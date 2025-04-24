@@ -10,6 +10,7 @@ contrib_plugins = [
 'hwprofile.c',
 'ips.c',
 'profiling.c',
+'profilingv2.c',
 'stoptrigger.c',
 'traps.c',
 'uftrace.c',
