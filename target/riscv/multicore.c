@@ -298,9 +298,10 @@ static void try_sync(NEMUState* ns, uint64_t icount, int cpu_idx,
     }
 }
 
-void check_exit(void) {
+void check_exit(uint64_t icount) {
     if (simpoint_checkpoint_exit) {
         // exit;
+        printf("icount instructions = %ld\n", icount);
         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
     }
 }
@@ -337,7 +338,7 @@ __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* 
         cpu_enable_ticks();
     }
 
-    check_exit();
+    check_exit(icount);
 }
 
 static void sync_init(NEMUState *ns, gint cpus){
