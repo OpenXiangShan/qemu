@@ -26,6 +26,7 @@ NAMES += drcov
 NAMES += ips
 NAMES += stoptrigger
 NAMES += profiling
+NAMES += profilingv2
 
 ifeq ($(CONFIG_WIN32),y)
 SO_SUFFIX := .dll
