@@ -218,6 +218,9 @@ void cpu_restore_state_from_tb(CPUState *cpu, TranslationBlock *tb,
         cpu->neg.icount_decr.u16.low += insns_left;
     }
 
+    /* fix checkpoint instruction count */
+    cpu_env(cpu)->profiling_insns -= 1;
+
     cpu->cc->tcg_ops->restore_state_to_opc(cpu, tb, data);
 }
 
