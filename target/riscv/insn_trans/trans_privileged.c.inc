@@ -30,6 +30,14 @@ static bool trans_old_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
     gen_helper_nemu_trap(tcg_env, cpu_gpr[10]);
     return true;
 }
+
+static bool trans_qemu_sync(DisasContext *ctx, arg_qemu_sync *a)
+{
+    TCGv dest = dest_gpr(ctx, a->rd);
+    gen_helper_qemu_sync(dest, tcg_env, cpu_gpr[a->rs1]);
+    gen_set_gpr(ctx, a->rd, dest);
+    return true;
+}
 #else
 static bool trans_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
 {
@@ -37,6 +45,11 @@ static bool trans_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
 }
 
 static bool trans_old_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
+{
+    return false;
+}
+
+static bool trans_qemu_sync(DisasContext *ctx, arg_qemu_sync *a)
 {
     return false;
 }

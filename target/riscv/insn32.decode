@@ -89,6 +89,7 @@
 &mm_dup       md rs2 mo
 &mm_mov       md rs1 rs2 mo
 &mm_mxm       ms2 rs1 rd mo
+&qemu_sync    rd rs1 rs2
 
 # Formats 32:
 @r       .......   ..... ..... ... ..... ....... &r                %rs2 %rs1 %rd
@@ -151,6 +152,7 @@
 @mm_dup     .... ... ..... ..... ... .. ...  ....... &mm_dup     md=%md_ld %rs2 %mo
 @mm_mov     .... ... ..... ..... ... .. ...  ....... &mm_mov     md=%md_ld %rs1 %rs2 %mo
 @mm_mxm     .... ... ..... ..... ... .. ...  ....... &mm_mxm     %ms2 %rs1 %rd mo=%imm_mxm
+@qemu_sync  .......   ..... ..... ... ..... .......  &qemu_sync  %rs2 %rs1 %rd
 
 # Formats 64:
 @sh5     .......  ..... .....  ... ..... ....... &shift  shamt=%sh5      %rs1 %rd
@@ -1228,3 +1230,4 @@ mmov_x_m          0000 110 . ... . ..... 000 ..... 0101011 @mm_mxm   # mmov_x_m
 # *** NEMU trap ***
 nemu_trap       0000 0000 0000 0000 0000 0000 0110 1011
 old_nemu_trap   0000 0000 0000 0101 0000 0000 0110 1011
+qemu_sync       0000 000 ..... ..... 001 ..... 1101011 @qemu_sync

@@ -1433,4 +1433,5 @@ DEF_HELPER_4(msst_d, void, ptr, tl, tl, env)
 DEF_HELPER_1(sync_skip, void, env)
 #ifndef CONFIG_USER_ONLY
 DEF_HELPER_FLAGS_2(nemu_trap, TCG_CALL_NO_RWG, void, env, tl)
+DEF_HELPER_2(qemu_sync, i64, env, tl)
 #endif
