@@ -280,7 +280,7 @@ static void prepare_bbl(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
     assert(size == sizeof(uint32_t) || size == sizeof(uint16_t));
     if (*data == 0x6b) {
       qemu_plugin_register_vcpu_insn_exec_cb(insn, nemu_trap_check,
-                                             QEMU_PLUGIN_CB_NO_REGS, *data);
+                                             QEMU_PLUGIN_CB_NO_REGS, (void*)(long)*data);
     } 
     // else
     // if((((*data)&0x80007057)==0x80007057||((*data)&0xc0007057)==0xc0007057||((*data)&0x7057)==0x7057)){
