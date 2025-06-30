@@ -42,7 +42,7 @@
 #include "kvm/kvm_riscv.h"
 #include "sysemu/kvm.h"
 #include "hw/riscv/numa.h"
-
+#include "hw/misc/unimp.h"
 
 
 static const MemMapEntry bosc_kmh_memmap[] = {
@@ -206,6 +206,39 @@ static XilinxUARTLite *uartlite_init(hwaddr base, qemu_irq irq, Chardev *chr)
     return uartlite;
 }
 
+static void bosc_kmh_dw_pcie_init(BoscKmhSoCState *s)
+{
+    DesignwarePCIEHost *pcie0 = &s->pcie0;
+    qemu_irq irq;
+
+    /*
+     * PCIE
+     */
+    sysbus_realize(SYS_BUS_DEVICE(pcie0), &error_abort);
+    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0, 0x32000000);
+    create_unimplemented_device("pcie0-phy", 0x60000000, 512 * MiB);
+
+    irq = qdev_get_gpio_in(DEVICE(s->irqchip), BOSC_KMH_RC_MSI0_IRQ); //MSI
+    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), 0, irq);
+    irq = qdev_get_gpio_in(DEVICE(s->irqchip), BOSC_KMH_RC_HP_IRQ); //HP
+    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), 0, irq);
+    //DESIGNWARE_PCIE_IRQ_MSI
+    pcie0->pci.irqs[3] = qdev_get_gpio_in(DEVICE(s->irqchip), BOSC_KMH_RC_MSI0_IRQ);
+    //FIXME: How to add imisc_s mr on pci.address_space ,  Does have other api???
+    pcie0->pci.address_space.root = get_system_memory();
+}
+
+static void bosc_kmh_fill_pcie_memmap(void)
+{
+       create_unimplemented_device("pcie0-cfg1", 0x48000000, 128 * MiB);
+       create_unimplemented_device("pcie0-phy1", 0x4000000000, 128 * GiB);
+
+       create_unimplemented_device("pcie0-cfg0", 0x40000000, 16 * MiB);
+       create_unimplemented_device("pcie1-cfg1", 0x50000000, 256 * MiB);
+       create_unimplemented_device("pcie1-phy0", 0x70000000, 256 * MiB);
+       create_unimplemented_device("pcie1-phy1", 0x6000000000, 128 * GiB);
+}
+
 static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
 {
     int hart_count;
@@ -243,6 +276,12 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
                            bosc_kmh_memmap[BOSC_KMH_DEV_MROM].size, &error_fatal);
     memory_region_add_subregion(system_memory,
         bosc_kmh_memmap[BOSC_KMH_DEV_MROM].base, &state->rom);
+
+    bosc_kmh_dw_pcie_init(state);
+    /*
+     * PCIe PHY
+     */
+	bosc_kmh_fill_pcie_memmap();
 }
 
 static void bosc_kmh_soc_class_init(ObjectClass *klass, void *data)
@@ -281,6 +320,8 @@ static void bosc_kmh_soc_instance_init(Object *obj)
                             TYPE_RISCV_CPU_BOSC_KMH, &error_abort);
     object_property_set_int(OBJECT(&state->cpus), "num-harts", hart_count,
                             &error_abort);
+
+    object_initialize_child(OBJECT(ms), "pcie0", &state->pcie0, TYPE_DESIGNWARE_PCIE_HOST);
 }
 
 static const TypeInfo bosc_kmh_type_info = {

@@ -23,6 +23,8 @@
 #include "hw/boards.h"
 #include "hw/char/serial.h"
 #include "hw/intc/riscv_imsic.h"
+#include "hw/pci-host/designware.h"
+#include "qemu/units.h"
 
 #define BOSC_KMH_CPUS_MAX_BITS             4
 #define BOSC_KMH_CPUS_MAX                  (1 << BOSC_KMH_CPUS_MAX_BITS)
@@ -49,7 +51,7 @@ typedef struct BoscKmhSoCState {
     MemoryRegion rom;
 
     RISCVKmhAIAType aia_type;
-
+    DesignwarePCIEHost pcie0;
 } BoscKmhSoCState;
 
 #define TYPE_RISCV_KMH_MACHINE MACHINE_TYPE_NAME("bosc-kmh")
@@ -82,6 +84,8 @@ enum {
 enum {
     BOSC_KMH_UART0_IRQ = 10,
     BOSC_KMH_UART1_IRQ = 11,
+    BOSC_KMH_RC_MSI0_IRQ = 12,
+    BOSC_KMH_RC_HP_IRQ = 13,
 };
 
 
