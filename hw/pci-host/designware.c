@@ -138,7 +138,7 @@ designware_pcie_root_config_read(PCIDevice *d, uint32_t address, int len)
     switch (address) {
     case PCIE_VERSION_NUMBER:
     case PCIE_VERSION_TYPE:
-        val = 0x0005000;
+        val = 0x3534302a;
         break;
     case DESIGNWARE_PCIE_PORT_LINK_CONTROL:
         /*

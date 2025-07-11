@@ -230,6 +230,7 @@ static void bosc_kmh_dw_pcie_init(BoscKmhSoCState *s)
 
 static void bosc_kmh_fill_pcie_memmap(void)
 {
+       create_unimplemented_device("pcie0-cfg0", 0x32000000, 128 * MiB);
        create_unimplemented_device("pcie0-cfg1", 0x48000000, 128 * MiB);
        create_unimplemented_device("pcie0-phy1", 0x4000000000, 128 * GiB);
 
