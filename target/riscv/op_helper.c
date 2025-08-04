@@ -35,8 +35,6 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
 #define DISABLE_TIME_INTR 0x100
 #define NOTIFY_PROFILER 0x101
 #define NOTIFY_WORKLOAD_EXIT 0x102
-#define SKIP_ON   0x103
-#define SKIP_OFF  0x104
     
     // nemu trap -> nemu_singal(GOOD_TRAP)
 #define GOOD_TRAP 0x0
@@ -78,24 +76,26 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
         printf("Hit GOOD TRAP\n");
         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
 
-    } else if(a0 == SKIP_ON){
-        env->sync_skip_mode = true;
-        // TODO: close skip when checkpointing this turn
-    } else if(a0 == SKIP_OFF){
-        env->sync_skip_mode = false;
     } else {
         printf("Hit BAD TRAP %ld\n", a0);
         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
     }
 }
 
-uint64_t helper_qemu_sync(CPURISCVState *env, target_ulong a0) {
+uint64_t helper_qemu_signal(CPURISCVState *env, target_ulong a0) {
+#define SKIP_ON   0x103
+#define SKIP_OFF  0x104
 #define CHECK_CPT 0x105
     // CPUState *cs = env_cpu(env);
     MachineState *ms = MACHINE(qdev_get_machine());
     NEMUState *ns = NEMU_MACHINE(ms);
 
-    if (a0 == CHECK_CPT) {
+    if (a0 == SKIP_ON) {
+        env->sync_skip_mode = true;
+        // TODO: close skip when checkpointing this turn
+    } else if (a0 == SKIP_OFF) {
+        env->sync_skip_mode = false;
+    } else if (a0 == CHECK_CPT) {
         return ns->nemu_args.checkpoint_mode;
     }
     return 0;

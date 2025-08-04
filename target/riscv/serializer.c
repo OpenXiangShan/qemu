@@ -24,8 +24,8 @@ static bool instrsCouldTakeCpt(NEMUState *ns, int64_t icount) {
             info_report("Should take cpt now: %lu limit_instructions: %lu", icount,limit_instructions);
             return true;
         } else if (icount % ns->nemu_args.cpt_interval == 0) {
-            info_report("Next cpt @ %lu, now: %lu",
-                        limit_instructions, icount);
+            // info_report("Next cpt @ %lu, now: %lu",
+            //             limit_instructions, icount);
             break;
         } else {
             break;
