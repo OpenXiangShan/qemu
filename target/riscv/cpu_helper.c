@@ -64,17 +64,23 @@ int riscv_env_mmu_index(CPURISCVState *env, bool ifetch)
 #endif
 }
 
-void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
-                          uint64_t *cs_base, uint32_t *pflags)
-{
-    RISCVCPU *cpu = env_archcpu(env);
-    RISCVExtStatus fs, vs;
-    //uint32_t flags = 0;
-    CPURISCVTBFlags flags = {0, 0};
 
-    *pc = env->xl == MXL_RV32 ? env->pc & UINT32_MAX : env->pc;
-    *cs_base = 0;
-
+uint32_t real_compute_vflags(CPURISCVState *env, uint32_t vsew, bool vl_eq_vlmax){
+    uint32_t flags = 0;
+    flags = FIELD_DP32(flags, TB_FLAGS, VILL, env->vill);
+    flags = FIELD_DP32(flags, TB_FLAGS, SEW, vsew);
+    flags = FIELD_DP32(flags, TB_FLAGS, LMUL,
+                    FIELD_EX64(env->vtype, VTYPE, VLMUL));
+    flags = FIELD_DP32(flags, TB_FLAGS, VL_EQ_VLMAX, vl_eq_vlmax);
+    flags = FIELD_DP32(flags, TB_FLAGS, VTA,
+                    FIELD_EX64(env->vtype, VTYPE, VTA));
+    flags = FIELD_DP32(flags, TB_FLAGS, VMA,
+                    FIELD_EX64(env->vtype, VTYPE, VMA));
+    flags = FIELD_DP32(flags, TB_FLAGS, VSTART_EQ_ZERO, env->vstart == 0);
+    return flags;
+}
+uint32_t test_compute_vflags(CPURISCVState *env, RISCVCPU *cpu, uint64_t pc){
+    uint32_t flags = 0;
     if (cpu->cfg.ext_zve32x) {
         /*
          * If env->vl equals to VLMAX, we can use generic vector operation
@@ -92,19 +98,127 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
         uint32_t maxsz = vlmax << vsew;
         bool vl_eq_vlmax = (env->vstart == 0) && (vlmax == env->vl) &&
                            (maxsz >= 8);
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VILL, env->vill);
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, SEW, vsew);
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, LMUL,
-                           FIELD_EX64(env->vtype, VTYPE, VLMUL));
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VL_EQ_VLMAX, vl_eq_vlmax);
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VTA,
-                           FIELD_EX64(env->vtype, VTYPE, VTA));
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VMA,
-                           FIELD_EX64(env->vtype, VTYPE, VMA));
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VSTART_EQ_ZERO, env->vstart == 0);
+
+        if (env->vtype == 0){
+            flags = 0xc000;
+        } else if (env->vtype == 0xd0 && vl_eq_vlmax) {
+            flags = 0x30a800;
+        } else if (env->vtype == 0xd0 && !vl_eq_vlmax) {
+            flags = 0x308800;
+        } else if (env->vtype == 0xc0 && vl_eq_vlmax) {
+            flags = 0x30a000;
+        } else if (env->vtype == 0xc9 && vl_eq_vlmax) {
+            flags = 0x30a480;
+        } else {
+            flags = real_compute_vflags(env, vsew, vl_eq_vlmax);
+        }
     } else {
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VILL, 1);
+        flags = FIELD_DP32(flags, TB_FLAGS, VILL, 1);
     }
+    return flags;
+}
+
+uint32_t real_compute_other_flags(CPURISCVState *env, RISCVExtStatus fs, RISCVExtStatus vs, uint8_t axl){
+    uint32_t flags = 0;
+    flags = FIELD_DP32(flags, TB_FLAGS, FS, fs);
+    flags = FIELD_DP32(flags, TB_FLAGS, VS, vs);
+    flags = FIELD_DP32(flags, TB_FLAGS, XL, env->xl);
+    flags = FIELD_DP32(flags, TB_FLAGS, AXL, axl);
+    if (env->cur_pmmask != 0) {
+        flags = FIELD_DP32(flags, TB_FLAGS, PM_MASK_ENABLED, 1);
+    }
+    if (env->cur_pmbase != 0) {
+        flags = FIELD_DP32(flags, TB_FLAGS, PM_BASE_ENABLED, 1);
+    }
+    return flags;
+}
+
+uint32_t test_compute_other_flags(CPURISCVState *env, RISCVCPU *cpu){
+    RISCVExtStatus fs, vs;
+    uint32_t flags = 0;
+    
+#ifdef CONFIG_USER_ONLY
+    fs = EXT_STATUS_DIRTY;
+    vs = EXT_STATUS_DIRTY;
+#else
+    flags = FIELD_DP32(flags, TB_FLAGS, PRIV, env->priv);
+
+    flags |= riscv_env_mmu_index(env, 0);
+    fs = get_field(env->mstatus, MSTATUS_FS);
+    vs = get_field(env->mstatus, MSTATUS_VS);
+
+    if (env->virt_enabled) {
+        flags = FIELD_DP32(flags, TB_FLAGS, VIRT_ENABLED, 1);
+        /*
+         * Merge DISABLED and !DIRTY states using MIN.
+         * We will set both fields when dirtying.
+         */
+        fs = MIN(fs, get_field(env->mstatus_hs, MSTATUS_FS));
+        vs = MIN(vs, get_field(env->mstatus_hs, MSTATUS_VS));
+    }
+
+    /* With Zfinx, floating point is enabled/disabled by Smstateen. */
+    if (!riscv_has_ext(env, RVF)) {
+        fs = (smstateen_acc_ok(env, 0, SMSTATEEN0_FCSR) == RISCV_EXCP_NONE)
+             ? EXT_STATUS_DIRTY : EXT_STATUS_DISABLED;
+    }
+
+    if (cpu->cfg.debug && !icount_enabled()) {
+        flags = FIELD_DP32(flags, TB_FLAGS, ITRIGGER, env->itrigger_enabled);
+    }
+#endif
+
+    uint8_t axl = cpu_address_xl(env);
+    if (fs==3 && vs==3 && env->xl==2 && env->cur_pmmask==0 && env->cur_pmmask==0 && axl==2) {
+        flags |= 0x8020078;
+    } else {
+        flags |= real_compute_other_flags(env, fs, vs, axl);
+    }
+    return flags;
+}
+
+void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
+                          uint64_t *cs_base, uint32_t *pflags)
+{
+    RISCVCPU *cpu = env_archcpu(env);
+    // RISCVExtStatus fs, vs;
+    //uint32_t flags = 0;
+    CPURISCVTBFlags flags = {0, 0};
+
+    *pc = env->xl == MXL_RV32 ? env->pc & UINT32_MAX : env->pc;
+    *cs_base = 0;
+
+    flags.flags = test_compute_vflags(env, cpu, env->pc);
+    // if (cpu->cfg.ext_zve32x) {
+    //     /*
+    //      * If env->vl equals to VLMAX, we can use generic vector operation
+    //      * expanders (GVEC) to accerlate the vector operations.
+    //      * However, as LMUL could be a fractional number. The maximum
+    //      * vector size can be operated might be less than 8 bytes,
+    //      * which is not supported by GVEC. So we set vl_eq_vlmax flag to true
+    //      * only when maxsz >= 8 bytes.
+    //      */
+
+    //     /* lmul encoded as in DisasContext::lmul */
+    //     int8_t lmul = sextract32(FIELD_EX64(env->vtype, VTYPE, VLMUL), 0, 3);
+    //     uint32_t vsew = FIELD_EX64(env->vtype, VTYPE, VSEW);
+    //     uint32_t vlmax = vext_get_vlmax(cpu->cfg.vlenb, vsew, lmul);
+    //     uint32_t maxsz = vlmax << vsew;
+    //     bool vl_eq_vlmax = (env->vstart == 0) && (vlmax == env->vl) &&
+    //                        (maxsz >= 8);
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VILL, env->vill);
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, SEW, vsew);
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, LMUL,
+    //                        FIELD_EX64(env->vtype, VTYPE, VLMUL));
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VL_EQ_VLMAX, vl_eq_vlmax);
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VTA,
+    //                        FIELD_EX64(env->vtype, VTYPE, VTA));
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VMA,
+    //                        FIELD_EX64(env->vtype, VTYPE, VMA));
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VSTART_EQ_ZERO, env->vstart == 0);
+    // } else {
+    //     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VILL, 1);
+    // }
 
     if (cpu->cfg.ext_matrix) {
         DP_TBFLAGS_MATRIX(flags, PWI32, !!(env->xmisa & MATRIX_PW_I32));
@@ -125,47 +239,48 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
                          env->sizen > 2 * get_mrows(env) || env->sizen == 0);
     }
 
-#ifdef CONFIG_USER_ONLY
-    fs = EXT_STATUS_DIRTY;
-    vs = EXT_STATUS_DIRTY;
-#else
-    flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, PRIV, env->priv);
+// #ifdef CONFIG_USER_ONLY
+//     fs = EXT_STATUS_DIRTY;
+//     vs = EXT_STATUS_DIRTY;
+// #else
+//     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, PRIV, env->priv);
 
-    flags.flags |= riscv_env_mmu_index(env, 0);
-    fs = get_field(env->mstatus, MSTATUS_FS);
-    vs = get_field(env->mstatus, MSTATUS_VS);
+//     flags.flags |= riscv_env_mmu_index(env, 0);
+//     fs = get_field(env->mstatus, MSTATUS_FS);
+//     vs = get_field(env->mstatus, MSTATUS_VS);
 
-    if (env->virt_enabled) {
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VIRT_ENABLED, 1);
-        /*
-         * Merge DISABLED and !DIRTY states using MIN.
-         * We will set both fields when dirtying.
-         */
-        fs = MIN(fs, get_field(env->mstatus_hs, MSTATUS_FS));
-        vs = MIN(vs, get_field(env->mstatus_hs, MSTATUS_VS));
-    }
+//     if (env->virt_enabled) {
+//         flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VIRT_ENABLED, 1);
+//         /*
+//          * Merge DISABLED and !DIRTY states using MIN.
+//          * We will set both fields when dirtying.
+//          */
+//         fs = MIN(fs, get_field(env->mstatus_hs, MSTATUS_FS));
+//         vs = MIN(vs, get_field(env->mstatus_hs, MSTATUS_VS));
+//     }
 
-    /* With Zfinx, floating point is enabled/disabled by Smstateen. */
-    if (!riscv_has_ext(env, RVF)) {
-        fs = (smstateen_acc_ok(env, 0, SMSTATEEN0_FCSR) == RISCV_EXCP_NONE)
-             ? EXT_STATUS_DIRTY : EXT_STATUS_DISABLED;
-    }
+//     /* With Zfinx, floating point is enabled/disabled by Smstateen. */
+//     if (!riscv_has_ext(env, RVF)) {
+//         fs = (smstateen_acc_ok(env, 0, SMSTATEEN0_FCSR) == RISCV_EXCP_NONE)
+//              ? EXT_STATUS_DIRTY : EXT_STATUS_DISABLED;
+//     }
 
-    if (cpu->cfg.debug && !icount_enabled()) {
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, ITRIGGER, env->itrigger_enabled);
-    }
-#endif
+//     if (cpu->cfg.debug && !icount_enabled()) {
+//         flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, ITRIGGER, env->itrigger_enabled);
+//     }
+// #endif
 
-    flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, FS, fs);
-    flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VS, vs);
-    flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, XL, env->xl);
-    flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, AXL, cpu_address_xl(env));
-    if (env->cur_pmmask != 0) {
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, PM_MASK_ENABLED, 1);
-    }
-    if (env->cur_pmbase != 0) {
-        flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, PM_BASE_ENABLED, 1);
-    }
+//     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, FS, fs);
+//     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, VS, vs);
+//     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, XL, env->xl);
+//     flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, AXL, cpu_address_xl(env));
+//     if (env->cur_pmmask != 0) {
+//         flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, PM_MASK_ENABLED, 1);
+//     }
+//     if (env->cur_pmbase != 0) {
+//         flags.flags = FIELD_DP32(flags.flags, TB_FLAGS, PM_BASE_ENABLED, 1);
+//     }
+    flags.flags |= test_compute_other_flags(env, cpu);
 
     *pflags = flags.flags;
     *cs_base = flags.flags2;

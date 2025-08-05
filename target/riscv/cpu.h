@@ -795,6 +795,11 @@ static inline uint32_t vext_get_vlmax(uint32_t vlenb, uint32_t vsew,
     return vlen >> (vsew + 3 - lmul);
 }
 
+uint32_t real_compute_vflags(CPURISCVState *env, uint32_t vsew, bool vl_eq_vlmax);
+uint32_t test_compute_vflags(CPURISCVState *env, RISCVCPU *cpu, uint64_t pc);
+uint32_t real_compute_other_flags(CPURISCVState *env, RISCVExtStatus fs, RISCVExtStatus vs, uint8_t axl);
+uint32_t test_compute_other_flags(CPURISCVState *env, RISCVCPU *cpu);
+
 void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
                           uint64_t *cs_base, uint32_t *pflags);
 
