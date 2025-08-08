@@ -250,17 +250,6 @@ static int generic_final_init(bool cold_boot)
 	fdt_fixups(fdt);
 	fdt_domain_fixup(fdt);
 
-	rc = 0;
-	if (csr_read(CSR_MARCHID) > 0) {
-		while ((rc = fdt_node_offset_by_compatible(fdt, rc,
-								"xlnx,xdma-host-3.00")) >= 0)
-			fdt_setprop_string(fdt, rc, "status", "okay");
-	} else {
-		while ((rc = fdt_node_offset_by_compatible(fdt, rc,
-								"pci-host-ecam-generic")) >= 0)
-			fdt_setprop_string(fdt, rc, "status", "okay");
-	}
-
 	if (generic_plat && generic_plat->fdt_fixup) {
 		rc = generic_plat->fdt_fixup(fdt, generic_plat_match);
 		if (rc)
