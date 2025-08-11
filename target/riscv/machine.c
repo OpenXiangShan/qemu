@@ -266,6 +266,9 @@ static int riscv_cpu_post_load(void *opaque, int version_id)
     CPURISCVState *env = &cpu->env;
 
     env->xl = cpu_recompute_xl(env);
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
     riscv_cpu_update_mask(env);
     return 0;
 }

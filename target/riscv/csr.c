@@ -4834,6 +4834,9 @@ RISCVException riscv_csrr(CPURISCVState *env, int csrno,
         return ret;
     }
 
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
     return riscv_csrrw_do64(env, csrno, ret_value, 0, 0);
 }
 
@@ -4846,6 +4849,9 @@ RISCVException riscv_csrrw(CPURISCVState *env, int csrno,
         return ret;
     }
 
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
     return riscv_csrrw_do64(env, csrno, ret_value, new_value, write_mask);
 }
 
@@ -4899,6 +4905,9 @@ RISCVException riscv_csrr_i128(CPURISCVState *env, int csrno,
         return ret;
     }
 
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
     if (csr_ops[csrno].read128) {
         return riscv_csrrw_do128(env, csrno, ret_value,
                                  int128_zero(), int128_zero());
@@ -4932,6 +4941,9 @@ RISCVException riscv_csrrw_i128(CPURISCVState *env, int csrno,
         return ret;
     }
 
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
     if (csr_ops[csrno].read128) {
         return riscv_csrrw_do128(env, csrno, ret_value, new_value, write_mask);
     }

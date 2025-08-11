@@ -82,6 +82,28 @@ uint32_t real_compute_vflags(CPURISCVState *env, uint32_t vsew, bool vl_eq_vlmax
 uint32_t test_compute_vflags(CPURISCVState *env, RISCVCPU *cpu, uint64_t pc){
     uint32_t flags = 0;
     if (cpu->cfg.ext_zve32x) {
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+        if (env->flags1_update) { // flags1 unlikely to change
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, VILL, env->vill);
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, VTA,
+                    FIELD_EX64(env->vtype, VTYPE, VTA));
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, VMA,
+                    FIELD_EX64(env->vtype, VTYPE, VMA));
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, VSTART_EQ_ZERO, env->vstart == 0);
+        } 
+        if (env->flags2_update) { // flags2 include VL_EQ_VLMAX, SEW, LMUL may change
+            int8_t lmul = sextract32(FIELD_EX64(env->vtype, VTYPE, VLMUL), 0, 3);
+            uint32_t vsew = FIELD_EX64(env->vtype, VTYPE, VSEW);
+            uint32_t vlmax = vext_get_vlmax(cpu->cfg.vlenb, vsew, lmul);
+            uint32_t maxsz = vlmax << vsew;
+            bool vl_eq_vlmax = (env->vstart == 0) && (vlmax == env->vl) &&
+                           (maxsz >= 8);
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, SEW, vsew);
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, LMUL,
+                    FIELD_EX64(env->vtype, VTYPE, VLMUL));
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, VL_EQ_VLMAX, vl_eq_vlmax);
+        }
+#else
         /*
          * If env->vl equals to VLMAX, we can use generic vector operation
          * expanders (GVEC) to accerlate the vector operations.
@@ -98,7 +120,7 @@ uint32_t test_compute_vflags(CPURISCVState *env, RISCVCPU *cpu, uint64_t pc){
         uint32_t maxsz = vlmax << vsew;
         bool vl_eq_vlmax = (env->vstart == 0) && (vlmax == env->vl) &&
                            (maxsz >= 8);
-
+#ifdef CONFIG_FLAGS_LAZYMAP
         if (env->vtype == 0){
             flags = 0xc000;
         } else if (env->vtype == 0xd0 && vl_eq_vlmax) {
@@ -112,6 +134,10 @@ uint32_t test_compute_vflags(CPURISCVState *env, RISCVCPU *cpu, uint64_t pc){
         } else {
             flags = real_compute_vflags(env, vsew, vl_eq_vlmax);
         }
+#else
+        flags = real_compute_vflags(env, vsew, vl_eq_vlmax);
+#endif /* CONFIG_FLAGS_LAZYMAP */
+#endif /* CONFIG_FLAG_LAZYCOMPUTE */
     } else {
         flags = FIELD_DP32(flags, TB_FLAGS, VILL, 1);
     }
@@ -136,7 +162,54 @@ uint32_t real_compute_other_flags(CPURISCVState *env, RISCVExtStatus fs, RISCVEx
 uint32_t test_compute_other_flags(CPURISCVState *env, RISCVCPU *cpu){
     RISCVExtStatus fs, vs;
     uint32_t flags = 0;
-    
+
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    if (env->flags1_update) {
+#ifdef CONFIG_USER_ONLY
+        fs = EXT_STATUS_DIRTY;
+        vs = EXT_STATUS_DIRTY;
+#else
+        env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, PRIV, env->priv);
+
+        env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, MEM_IDX, riscv_env_mmu_index(env, 0));
+        fs = get_field(env->mstatus, MSTATUS_FS);
+        vs = get_field(env->mstatus, MSTATUS_VS);
+
+        if (env->virt_enabled) {
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, VIRT_ENABLED, 1);
+            /*
+            * Merge DISABLED and !DIRTY states using MIN.
+            * We will set both fields when dirtying.
+            */
+            fs = MIN(fs, get_field(env->mstatus_hs, MSTATUS_FS));
+            vs = MIN(vs, get_field(env->mstatus_hs, MSTATUS_VS));
+        }
+
+        /* With Zfinx, floating point is enabled/disabled by Smstateen. */
+        if (!riscv_has_ext(env, RVF)) {
+            fs = (smstateen_acc_ok(env, 0, SMSTATEEN0_FCSR) == RISCV_EXCP_NONE)
+                ? EXT_STATUS_DIRTY : EXT_STATUS_DISABLED;
+        }
+
+        if (cpu->cfg.debug && !icount_enabled()) {
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, ITRIGGER, env->itrigger_enabled);
+        }
+#endif /* CONFIG_USER_ONLY */
+        env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, FS, fs);
+        env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, VS, vs);
+        env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, XL, env->xl);
+        env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, AXL, cpu_address_xl(env));
+        if (env->cur_pmmask != 0) {
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, PM_MASK_ENABLED, 1);
+        }
+        if (env->cur_pmbase != 0) {
+            env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, PM_BASE_ENABLED, 1);
+        }
+        env->flags1_update = false;
+    }
+
+#else
+
 #ifdef CONFIG_USER_ONLY
     fs = EXT_STATUS_DIRTY;
     vs = EXT_STATUS_DIRTY;
@@ -166,14 +239,20 @@ uint32_t test_compute_other_flags(CPURISCVState *env, RISCVCPU *cpu){
     if (cpu->cfg.debug && !icount_enabled()) {
         flags = FIELD_DP32(flags, TB_FLAGS, ITRIGGER, env->itrigger_enabled);
     }
-#endif
+#endif /* CONFIG_USER_ONLY */
 
     uint8_t axl = cpu_address_xl(env);
+#ifdef CONFIG_FLAGS_LAZYMAP
     if (fs==3 && vs==3 && env->xl==2 && env->cur_pmmask==0 && env->cur_pmmask==0 && axl==2) {
         flags |= 0x8020078;
     } else {
         flags |= real_compute_other_flags(env, fs, vs, axl);
     }
+#else 
+    flags |= real_compute_other_flags(env, fs, vs, axl);
+#endif /* CONFIG_FLAGS_LAZYMAP */
+
+#endif /* CONFIG_FLAG_LAZYCOMPUTE */
     return flags;
 }
 
@@ -182,7 +261,7 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
 {
     RISCVCPU *cpu = env_archcpu(env);
     // RISCVExtStatus fs, vs;
-    //uint32_t flags = 0;
+    // uint32_t flags = 0;
     CPURISCVTBFlags flags = {0, 0};
 
     *pc = env->xl == MXL_RV32 ? env->pc & UINT32_MAX : env->pc;
@@ -282,7 +361,11 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
 //     }
     flags.flags |= test_compute_other_flags(env, cpu);
 
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    *pflags = env->tb_flags;
+#else
     *pflags = flags.flags;
+#endif
     *cs_base = flags.flags2;
 }
 
@@ -1990,6 +2073,10 @@ void riscv_cpu_do_interrupt(CPUState *cs)
 
     env->two_stage_lookup = false;
     env->two_stage_indirect_lookup = false;
+
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
 }
 
 #endif /* !CONFIG_USER_ONLY */

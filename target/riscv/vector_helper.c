@@ -67,6 +67,10 @@ target_ulong HELPER(vsetvl)(CPURISCVState *env, target_ulong s1,
         env->vtype = 0;
         env->vl = 0;
         env->vstart = 0;
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+        env->flags1_update = true;
+        env->flags2_update = true;
+#endif
         return 0;
     }
 
@@ -78,6 +82,12 @@ target_ulong HELPER(vsetvl)(CPURISCVState *env, target_ulong s1,
     } else {
         vl = vlmax;
     }
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags2_update = true;
+    if (env->vstart != 0 || env->vill != 0) {
+        env->flags1_update = true;
+    }
+#endif
     env->vl = vl;
     env->vtype = s2;
     env->vstart = 0;

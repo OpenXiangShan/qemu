@@ -36,6 +36,7 @@
 typedef struct CPUArchState CPURISCVState;
 
 #define CPU_RESOLVING_TYPE TYPE_RISCV_CPU
+#define CONFIG_FLAG_LAZYCOMPUTE
 
 #if defined(TARGET_RISCV32)
 # define TYPE_RISCV_CPU_BASE            TYPE_RISCV_CPU_BASE32
@@ -490,6 +491,11 @@ struct CPUArchState {
 
     uint64_t profiling_insns;
     bool sync_skip_mode;
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    uint32_t tb_flags;
+    bool flags1_update;
+    bool flags2_update;
+#endif /* CONFIG_FLAG_LAZYCOMPUTE */
 
 #ifdef CONFIG_KVM
     /* kvm timer */

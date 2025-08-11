@@ -386,6 +386,9 @@ target_ulong helper_sret(CPURISCVState *env)
 
     riscv_cpu_set_mode(env, prev_priv, prev_virt);
 
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
     return retpc;
 }
 
@@ -427,6 +430,9 @@ target_ulong helper_mret(CPURISCVState *env)
 
     riscv_cpu_set_mode(env, prev_priv, prev_virt);
 
+#ifdef CONFIG_FLAG_LAZYCOMPUTE
+    env->flags1_update = true;
+#endif
     return retpc;
 }
 

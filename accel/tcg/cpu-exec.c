@@ -41,6 +41,7 @@
 #include "tb-context.h"
 #include "internal-common.h"
 #include "internal-target.h"
+#include <stdint.h>
 #ifdef CONFIG_SOFTMMU
 #include "checkpoint/checkpoint.h"
 #endif
