@@ -206,6 +206,7 @@ uint32_t test_compute_other_flags(CPURISCVState *env, RISCVCPU *cpu){
             env->tb_flags = FIELD_DP32(env->tb_flags, TB_FLAGS, PM_BASE_ENABLED, 1);
         }
         env->flags1_update = false;
+        env->flags2_update = false;
     }
 
 #else
