@@ -215,7 +215,7 @@ static void bosc_kmh_dw_pcie_init(BoscKmhSoCState *s)
      * PCIE
      */
     sysbus_realize(SYS_BUS_DEVICE(pcie0), &error_abort);
-    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0, 0x32000000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0, 0x48000000);
     create_unimplemented_device("pcie0-phy", 0x60000000, 512 * MiB);
 
     irq = qdev_get_gpio_in(DEVICE(s->irqchip), BOSC_KMH_RC_MSI0_IRQ); //MSI
