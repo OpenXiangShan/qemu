@@ -3266,6 +3266,67 @@ static const TypeInfo riscv_cpu_type_infos[] = {
         .cfg.pmp = true,
         .cfg.max_satp_mode = VM_1_10_SV48,
     ),
+    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_BOSC_NHV5, TYPE_RISCV_VENDOR_CPU,
+        .misa_mxl_max = MXL_RV64,
+        .misa_ext = RVI | RVM | RVA | RVF | RVD | RVC | RVS | RVU | RVB,
+        .priv_spec = PRIV_VERSION_1_13_0,
+
+       /*
+        * The RISC-V Instruction Set Manual: Volume I
+        * Unprivileged Architecture
+        * Version 20240411
+        */
+        .cfg.ext_zba = true,
+        .cfg.ext_zbb = true,
+        .cfg.ext_zbc = true,
+        .cfg.ext_zbs = true,
+
+       /*
+        * The RISC-V Instruction Set Manual: Volume II
+        * Privileged Architecture
+        * Version 20241101
+        */
+        .cfg.ext_smstateen = true,
+       /*
+        * Enabled automallcally if >= PRIV_SPEC_1_12
+        */
+        //.cfg.ext_sscounterenw = true,
+        //.cfg.ext_sstvala = true,
+        //.cfg.ext_sv48 = true,
+        .cfg.ext_ssstateen = true,
+
+        .cfg.ext_svpbmt = true,
+        .cfg.ext_svinval = true,
+        .cfg.ext_sstc = true,
+
+       /*
+        * RVA23 Profiles
+        * Version 1.0
+        */
+        .cfg.ext_zicbom = true,
+        .cfg.ext_zicbop = true,
+        .cfg.ext_zicboz = true,
+
+        .cfg.ext_zicntr = true,
+        .cfg.ext_zicond = true,
+        .cfg.ext_zicsr = true,
+        .cfg.ext_zifencei = true,
+        .cfg.ext_zihintpause = true,
+        .cfg.ext_zihpm = true,
+        .cfg.ext_zkn = true,
+        .cfg.ext_zknd = true,
+        .cfg.ext_zkne = true,
+        .cfg.ext_zknh = true,
+        .cfg.ext_zks = true,
+        .cfg.ext_zksed = true,
+        .cfg.ext_zksh = true,
+
+        /* Enable ISA extensions */
+        .cfg.mmu = true,
+        .cfg.pmp = true,
+        
+        .cfg.max_satp_mode = VM_1_10_SV48,
+    ),
 
 #if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)
     DEFINE_RISCV_CPU(TYPE_RISCV_CPU_BASE128, TYPE_RISCV_DYNAMIC_CPU,

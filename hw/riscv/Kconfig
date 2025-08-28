@@ -132,3 +132,13 @@ config XIANGSHAN_KUNMINGHU
     select PCI_EXPRESS_XILINX
     select XILINX
     select PCI_EXPRESS_DESIGNWARE
+
+config RISCV_BOSC_NHV5
+    bool
+    default y
+    depends on RISCV64
+    select RISCV_ACLINT
+    select SERIAL
+    select SIFIVE_PLIC
+    select UNIMP
+    select XILINX
