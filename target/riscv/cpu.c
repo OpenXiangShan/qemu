@@ -639,6 +639,194 @@ static void rv64_bosc_kmh_cpu_init(Object *obj)
 #endif
 }
 
+#if 0
+static void rv64_bosc_nhv5_cpu_init(Object *obj)
+{
+	CPURISCVState *env = &RISCV_CPU(obj)->env;
+	RISCVCPU *cpu = RISCV_CPU(obj);
+
+	riscv_cpu_set_misa_ext(env, RVI | RVM | RVA | RVF | RVD | RVC | RVS | RVU | RVB | RVV | RVH);
+	env->priv_ver = PRIV_VERSION_1_13_0;
+
+	/* Enable ISA extensions */
+	cpu->cfg.mmu = true;
+	cpu->cfg.pmp = true;
+
+	/*
+	 * The RISC-V Instruction Set Manual: Volume I
+	 * Unprivileged Architecture
+	 * Version 20240411
+	 */
+	cpu->cfg.ext_zifencei = true;
+	cpu->cfg.ext_zicsr = true;
+	cpu->cfg.ext_zicntr = true;
+	cpu->cfg.ext_zihpm = true;
+	cpu->cfg.ext_zihintntl = true;
+	cpu->cfg.ext_zihintpause = true;
+	cpu->cfg.ext_zimop = true;
+	cpu->cfg.ext_zcmop = true;
+	cpu->cfg.ext_zicond = true;
+	cpu->cfg.ext_zawrs = true;
+	cpu->cfg.ext_zacas = true;
+	cpu->cfg.ext_zfh = true;
+	cpu->cfg.ext_zfa = true;
+	cpu->cfg.ext_zcb = true;
+	cpu->cfg.ext_zbc = true;
+	cpu->cfg.ext_zvfh = true;
+	cpu->cfg.ext_zkn = true;
+	cpu->cfg.ext_zks = true;
+	cpu->cfg.ext_zkt = true;
+	cpu->cfg.ext_zvbb = true;
+	cpu->cfg.ext_zvkt = true;
+
+	/*
+	 * The RISC-V Instruction Set Manual: Volume II
+	 * Privileged Architecture
+	 * Version 20241101
+	 */
+	cpu->cfg.ext_smstateen = true;
+	//cpu->cfg.ext_smcsrind = true;
+	//cpu->cfg.ext_sscsrind = true;
+	//cpu->cfg.ext_smrnmi = true;
+	//cpu->cfg.ext_smdbltrp = true;
+	cpu->cfg.ext_svnapot = true;
+	cpu->cfg.ext_svpbmt = true;
+	cpu->cfg.ext_svinval = true;
+	cpu->cfg.ext_sstc = true;
+	cpu->cfg.ext_sscofpmf = true;
+	//cpu->cfg.ext_ssdbltrp = true;
+	//cpu->cfg.ext_ssnpm = true;
+	//cpu->cfg.ext_smnpm = true;
+	//cpu->cfg.ext_smmpm = true;
+	//cpu->cfg.ext_sspm = true;
+	//cpu->cfg.ext_supm = true;
+
+	/*
+	 * The RISC-V Advanced Interrupt Architecture
+	 * Version 1.0
+	 */
+	cpu->cfg.ext_smaia = true;
+	cpu->cfg.ext_ssaia = true;
+
+	/*
+	 * RVA23 Profiles
+	 * Version 1.0
+	 */
+	cpu->cfg.ext_zic64b = true;
+	cpu->cfg.ext_zicbom = true;
+	cpu->cfg.ext_zicbop = true;
+	cpu->cfg.ext_zicboz = true;
+	cpu->cfg.ext_svade = true;
+
+#ifndef CONFIG_USER_ONLY
+	set_satp_mode_max_supported(cpu, VM_1_10_SV48);
+#endif
+}
+#endif
+
+#if 1
+static void rv64_bosc_nhv5_cpu_init(Object *obj)
+{
+	CPURISCVState *env = &RISCV_CPU(obj)->env;
+	RISCVCPU *cpu = RISCV_CPU(obj);
+
+	riscv_cpu_set_misa_ext(env, RVI | RVM | RVA | RVF | RVD | RVC | RVS | RVU | RVB);
+	//riscv_cpu_set_misa_ext(env, RVI | RVM | RVA | RVF | RVD | RVC | RVS | RVU | RVB | RVV | RVH);
+    env->priv_ver = PRIV_VERSION_1_13_0;
+
+	/* Enable ISA extensions */
+	cpu->cfg.mmu = true;
+	cpu->cfg.pmp = true;
+
+	/*
+	 * The RISC-V Instruction Set Manual: Volume I
+	 * Unprivileged Architecture
+	 * Version 20240411
+	 */
+	//cpu->cfg.ext_zifencei = true;
+	//cpu->cfg.ext_zicsr = true;
+	//cpu->cfg.ext_zicntr = true;
+	//cpu->cfg.ext_zihpm = true;
+	//cpu->cfg.ext_zihintntl = true;
+	//cpu->cfg.ext_zihintpause = true;
+	//cpu->cfg.ext_zimop = true;
+	//cpu->cfg.ext_zcmop = true;
+	//cpu->cfg.ext_zicond = true;
+	//cpu->cfg.ext_zawrs = true;
+	//cpu->cfg.ext_zacas = true;
+    cpu->cfg.ext_zba = true;
+    cpu->cfg.ext_zbb = true;
+    cpu->cfg.ext_zbc = true;
+    cpu->cfg.ext_zbs = true;
+	//cpu->cfg.ext_zfh = true;
+	//cpu->cfg.ext_zfa = true;
+	//cpu->cfg.ext_zcb = true;
+	//cpu->cfg.ext_zvfh = true;
+	//cpu->cfg.ext_zkn = true;
+	//cpu->cfg.ext_zks = true;
+	//cpu->cfg.ext_zkt = true;
+	//cpu->cfg.ext_zvbb = true;
+	//cpu->cfg.ext_zvkt = true;
+
+	/*
+	 * The RISC-V Instruction Set Manual: Volume II
+	 * Privileged Architecture
+	 * Version 20241101
+	 */
+	cpu->cfg.ext_smstateen = true;
+	cpu->cfg.ext_sscounterenw = true;
+	cpu->cfg.ext_ssstateen = true;
+	cpu->cfg.ext_sstvala = true;
+	//cpu->cfg.ext_smdbltrp = true;
+	//cpu->cfg.ext_svnapot = true;
+	cpu->cfg.ext_svpbmt = true;
+	cpu->cfg.ext_svinval = true;
+	cpu->cfg.ext_sstc = true;
+	//cpu->cfg.ext_sscofpmf = true;
+	cpu->cfg.ext_sv48 = true;
+	//cpu->cfg.ext_ssnpm = true;
+	//cpu->cfg.ext_smnpm = true;
+	//cpu->cfg.ext_smmpm = true;
+	//cpu->cfg.ext_sspm = true;
+	//cpu->cfg.ext_supm = true;
+
+	/*
+	 * The RISC-V Advanced Interrupt Architecture
+	 * Version 1.0
+	 */
+	//cpu->cfg.ext_smaia = true;
+	//cpu->cfg.ext_ssaia = true;
+
+	/*
+	 * RVA23 Profiles
+	 * Version 1.0
+	 */
+	//cpu->cfg.ext_zic64b = true;
+	cpu->cfg.ext_zicbom = true;
+	cpu->cfg.ext_zicbop = true;
+	cpu->cfg.ext_zicboz = true;
+	//cpu->cfg.ext_svade = true;
+
+    cpu->cfg.ext_zicntr = true;
+    cpu->cfg.ext_zicond = true;
+    cpu->cfg.ext_zicsr = true;
+    cpu->cfg.ext_zifencei = true;
+    cpu->cfg.ext_zihintpause = true;
+    cpu->cfg.ext_zihpm = true;
+    cpu->cfg.ext_zkn = true;
+    cpu->cfg.ext_zknd = true;
+    cpu->cfg.ext_zkne = true;
+    cpu->cfg.ext_zknh = true;
+    cpu->cfg.ext_zks = true;
+    cpu->cfg.ext_zksed = true;
+    cpu->cfg.ext_zksh = true;
+
+#ifndef CONFIG_USER_ONLY
+	set_satp_mode_max_supported(cpu, VM_1_10_SV48);
+#endif
+}
+#endif
+
 static void rv64_thead_c906_cpu_init(Object *obj)
 {
     CPURISCVState *env = &RISCV_CPU(obj)->env;
@@ -3124,6 +3312,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
     DEFINE_PROFILE_CPU(TYPE_RISCV_CPU_RVA22S64,  MXL_RV64,  rva22s64_profile_cpu_init),
     DEFINE_CPU(TYPE_RISCV_CPU_BOSC_NanHu,        MXL_RV64,  rv64_bosc_nanhu_cpu_init),
     DEFINE_VENDOR_CPU(TYPE_RISCV_CPU_BOSC_KMH,   MXL_RV64,  rv64_bosc_kmh_cpu_init),
+    DEFINE_VENDOR_CPU(TYPE_RISCV_CPU_BOSC_NHV5,  MXL_RV64,  rv64_bosc_nhv5_cpu_init),
 #endif /* TARGET_RISCV64 */
 };
 

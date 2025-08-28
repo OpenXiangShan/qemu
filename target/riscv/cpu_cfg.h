@@ -78,7 +78,11 @@ struct RISCVCPUConfig {
     bool ext_ztso;
     bool ext_smstateen;
     bool ext_sstc;
+    bool ext_sscounterenw;
+    bool ext_ssstateen;
     bool ext_smcntrpmf;
+    bool ext_sstvala;
+    bool ext_sv48;
     bool ext_svadu;
     bool ext_svinval;
     bool ext_svnapot;
