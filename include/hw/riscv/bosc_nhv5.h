@@ -92,7 +92,8 @@ enum {
 };
 
 enum {
-    BOSC_NHV5_UART0_IRQ = 40
+    BOSC_NHV5_UART0_IRQ = 40,
+    BOSC_NHV5_UART1_IRQ = 41,
 };
 
 

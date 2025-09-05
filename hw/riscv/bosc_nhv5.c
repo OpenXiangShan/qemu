@@ -120,6 +120,17 @@ static void bosc_nhv5_machine_type_info_register(void)
 }
 type_init(bosc_nhv5_machine_type_info_register)
 
+static XilinxUARTLite *uartlite_init(hwaddr base, qemu_irq irq, Chardev *chr)
+{
+    XilinxUARTLite *uartlite = XILINX_UARTLITE(qdev_new(TYPE_XILINX_UARTLITE));
+
+    qdev_prop_set_chr(DEVICE(uartlite), "chardev", chr);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(uartlite), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(uartlite), 0, base);
+    sysbus_connect_irq(SYS_BUS_DEVICE(uartlite), 0, irq);
+
+    return uartlite;
+}
 
 static void bosc_nhv5_soc_state_realize(DeviceState *dev, Error **errp)
 {
@@ -156,11 +167,11 @@ static void bosc_nhv5_soc_state_realize(DeviceState *dev, Error **errp)
                qdev_get_gpio_in(DEVICE(state->plic), BOSC_NHV5_UART0_IRQ),
                115200, serial_hd(0), DEVICE_LITTLE_ENDIAN);
 
-    /* UART1: Xilinx UART Lite 
-    uartlite_init(bosc_kmh_memmap[BOSC_NHV5_DEV_UART1].base,
-                  qdev_get_gpio_in(DEVICE(state->plic), NULL),
+    /* UART1: Xilinx UART Lite */
+    uartlite_init(bosc_nhv5_memmap[BOSC_NHV5_DEV_UART1].base,
+                  qdev_get_gpio_in(DEVICE(state->plic), BOSC_NHV5_UART1_IRQ),
                   serial_hd(1));  
-    */     
+
     /* CLINT */
     riscv_aclint_swi_create(memmap[BOSC_NHV5_DEV_CLINT].base,
         0, hart_count, false);
