@@ -23,7 +23,7 @@
 #include "hw/boards.h"
 #include "hw/char/serial.h"
 #include "hw/intc/riscv_imsic.h"
-//#include "hw/pci-host/designware.h"
+#include "hw/pci-host/designware.h"
 #include "qemu/units.h"
 
 #define BOSC_NHV5_CPUS_MAX_BITS             4
@@ -63,7 +63,7 @@ typedef struct BoscNhv5SoCState {
     MemoryRegion rom;
 
 //    RISCVNHAIAType aia_type;
-    //DesignwarePCIEHost pcie0;
+    DesignwarePCIEHost pcie0;
 } BoscNhv5SoCState;
 
 typedef struct BoscNhv5MachineState {
@@ -94,6 +94,8 @@ enum {
 enum {
     BOSC_NHV5_UART0_IRQ = 40,
     BOSC_NHV5_UART1_IRQ = 41,
+    BOSC_KMH_RC0_MSI_IRQ = 52,
+    BOSC_KMH_RC0_HP_IRQ = 53,
 };
 
 

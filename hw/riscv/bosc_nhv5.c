@@ -55,6 +55,28 @@ static const MemMapEntry bosc_nhv5_memmap[] = {
     [BOSC_NHV5_DEV_UART1] 	=	{ 0x40600000,   0x1000 },
     [BOSC_NHV5_DEV_DRAM] 	=	{ 0x80000000,   0x0 },
 };
+static void bosc_nh_dw_pcie_init(BoscNhv5SoCState *s)
+{
+    DesignwarePCIEHost *pcie0 = &s->pcie0;
+    qemu_irq irq;
+
+    /*
+     * PCIE
+     */
+    sysbus_realize(SYS_BUS_DEVICE(pcie0), &error_abort);
+    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0, 0x48000000);
+    create_unimplemented_device("pcie0-phy", 0x40000000, 128 * MiB);
+
+    irq = qdev_get_gpio_in(DEVICE(s->plic), BOSC_KMH_RC0_MSI_IRQ); //MSI
+    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), 0, irq);
+    irq = qdev_get_gpio_in(DEVICE(s->plic), BOSC_KMH_RC0_HP_IRQ); //HP
+    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), 0, irq);
+    //DESIGNWARE_PCIE_IRQ_MSI
+    pcie0->pci.irqs[3] = qdev_get_gpio_in(DEVICE(s->plic), BOSC_KMH_RC0_MSI_IRQ);
+
+    create_unimplemented_device("pcie1-cfg1", 0x4c000000, 64 * MiB);
+    create_unimplemented_device("pcie1-phy0", 0x60000000, 512 * MiB);
+}
 
 static void bosc_nhv5_machine_state_init(MachineState *mstate)
 {
@@ -180,6 +202,7 @@ static void bosc_nhv5_soc_state_realize(DeviceState *dev, Error **errp)
         RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
         RISCV_ACLINT_NHV5_TIMEBASE_FREQ, true);              
 
+    bosc_nh_dw_pcie_init(state);
     /* ROM */
     memory_region_init_rom(&state->rom, OBJECT(dev), "riscv.bosc.nhv5.rom",
                             memmap[BOSC_NHV5_DEV_MROM].size, &error_fatal);
@@ -211,7 +234,7 @@ static void bosc_nhv5_soc_instance_init(Object *obj)
     object_property_set_int(OBJECT(&state->cpus), "num-harts", hart_count,
                             &error_abort);
 
-    //object_initialize_child(OBJECT(ms), "pcie0", &state->pcie0, TYPE_DESIGNWARE_PCIE_HOST);
+    object_initialize_child(OBJECT(ms), "pcie0", &state->pcie0, TYPE_DESIGNWARE_PCIE_HOST);
 }
 
 static void bosc_nhv5_soc_class_init(ObjectClass *klass, void *data)
