@@ -212,10 +212,10 @@ static void bosc_kmh_dw_pcie_init(BoscKmhSoCState *s)
     qemu_irq irq;
 
     /*
-     * PCIE
+     * PCIE RC0
      */
     sysbus_realize(SYS_BUS_DEVICE(pcie0), &error_abort);
-    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0, 0x48000000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0, 0x32000000);
     create_unimplemented_device("pcie0-phy", 0x60000000, 512 * MiB);
 
     irq = qdev_get_gpio_in(DEVICE(s->irqchip), BOSC_KMH_RC_MSI0_IRQ); //MSI
@@ -230,14 +230,8 @@ static void bosc_kmh_dw_pcie_init(BoscKmhSoCState *s)
 
 static void bosc_kmh_fill_pcie_memmap(void)
 {
-       create_unimplemented_device("pcie0-cfg0", 0x32000000, 128 * MiB);
-       create_unimplemented_device("pcie0-cfg1", 0x48000000, 128 * MiB);
-       create_unimplemented_device("pcie0-phy1", 0x4000000000, 128 * GiB);
-
-       create_unimplemented_device("pcie0-cfg0", 0x40000000, 16 * MiB);
-       create_unimplemented_device("pcie1-cfg1", 0x50000000, 256 * MiB);
-       create_unimplemented_device("pcie1-phy0", 0x70000000, 256 * MiB);
-       create_unimplemented_device("pcie1-phy1", 0x6000000000, 128 * GiB);
+       create_unimplemented_device("pcie0-cfg1", 0x40000000, 512 * MiB);
+       create_unimplemented_device("pcie0-phy1", 0x4000000000, 640 * GiB); // 0x40_0000_0000 ~ 0xE0_0000_0000
 }
 
 static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
