@@ -49,6 +49,7 @@ typedef struct BoscKmhSoCState {
     RISCVHartArrayState cpus;
     DeviceState *irqchip;
     MemoryRegion rom;
+    MemoryRegion sram;
 
     RISCVKmhAIAType aia_type;
     DesignwarePCIEHost pcie0;
@@ -75,6 +76,7 @@ enum {
     BOSC_KMH_DEV_PLIC,
     BOSC_KMH_APLIC_M,
     BOSC_KMH_APLIC_S,
+    BOSC_KMH_DEV_SRAM,
     BOSC_KMH_IMSIC_M,
     BOSC_KMH_IMSIC_S,
     BOSC_KMH_DEV_UART1,

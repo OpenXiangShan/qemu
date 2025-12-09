@@ -54,6 +54,7 @@ static const MemMapEntry bosc_kmh_memmap[] = {
     [BOSC_KMH_DEV_PLIC]         =       { 0x3c000000,   0x4000000},
     [BOSC_KMH_APLIC_M] =      {  0x31100000, APLIC_SIZE(BOSC_KMH_CPUS_MAX) },
     [BOSC_KMH_APLIC_S] =      {  0x31120000, APLIC_SIZE(BOSC_KMH_CPUS_MAX) },
+    [BOSC_KMH_DEV_SRAM] 	=	{ 0x37f00000,   0x100000 },
     [BOSC_KMH_IMSIC_M] =      { 0x3a800000, BOSC_KMH_IMSIC_MAX_SIZE },
     [BOSC_KMH_IMSIC_S] =      { 0x3b000000, BOSC_KMH_IMSIC_MAX_SIZE },
     [BOSC_KMH_DEV_UART1] 	=	{ 0x40600000,   0x1000 },
@@ -271,6 +272,12 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
                            bosc_kmh_memmap[BOSC_KMH_DEV_MROM].size, &error_fatal);
     memory_region_add_subregion(system_memory,
         bosc_kmh_memmap[BOSC_KMH_DEV_MROM].base, &state->rom);
+
+    /* SRAM */
+    memory_region_init_ram(&state->sram, OBJECT(dev), "riscv.bosc.kmh.sram",
+                           bosc_kmh_memmap[BOSC_KMH_DEV_SRAM].size, &error_fatal);
+    memory_region_add_subregion(system_memory,
+                           bosc_kmh_memmap[BOSC_KMH_DEV_SRAM].base, &state->sram);
 
     bosc_kmh_dw_pcie_init(state);
     /*
