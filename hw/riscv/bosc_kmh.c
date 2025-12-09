@@ -47,7 +47,7 @@
 
 static const MemMapEntry bosc_kmh_memmap[] = {
     [BOSC_KMH_DEV_DEBUG] 	=	{       0x0,    0x100 },
-    [BOSC_KMH_DEV_MROM] 	=	{    0x1000,    0xf000 },
+    [BOSC_KMH_DEV_MROM] 	=	{    0x1000,    0x40000 },
     [BOSC_KMH_DEV_FLASH] 	=	{ 0x10000000,   0x4000000 },
     [BOSC_KMH_DEV_UART0] 	=	{ 0x310B0000,   0x10000 },
     [BOSC_KMH_DEV_CLINT] 	=	{ 0x38000000,   0x10000 },
