@@ -279,6 +279,12 @@ static void bosc_kmh_soc_state_realize(DeviceState *dev, Error **errp)
     memory_region_add_subregion(system_memory,
                            bosc_kmh_memmap[BOSC_KMH_DEV_SRAM].base, &state->sram);
 
+    /* FLASH */
+    memory_region_init_rom(&state->flash, NULL, "riscv.bosc.kmh.flash0",
+                           memmap[BOSC_KMH_DEV_FLASH].size, &error_fatal);
+    memory_region_add_subregion(system_memory, memmap[BOSC_KMH_DEV_FLASH].base,
+                                &state->flash);
+
     bosc_kmh_dw_pcie_init(state);
     /*
      * PCIe PHY

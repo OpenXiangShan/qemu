@@ -50,6 +50,7 @@ typedef struct BoscKmhSoCState {
     DeviceState *irqchip;
     MemoryRegion rom;
     MemoryRegion sram;
+    MemoryRegion flash;
 
     RISCVKmhAIAType aia_type;
     DesignwarePCIEHost pcie0;
