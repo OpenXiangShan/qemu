@@ -30,10 +30,10 @@ static void hw_switch_realize(DeviceState *dev, Error **errp)
     ssize_t size = 0;
     hwaddr entry;
 
-    if (strcmp(s->boot, "rom")) {
+    if (!strcmp(s->boot, "rom")) {
         s->set_pc = false;
         s->addr = ROM_BOOT_ADDR;
-    } else if (strcmp(s->boot, "flash")) {
+    } else if (!strcmp(s->boot, "flash")) {
         s->set_pc = true;
         s->addr = FLASH_BOOT_ADDR;
     } else {
