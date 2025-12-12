@@ -47,15 +47,17 @@
 
 
 static const MemMapEntry xiangshan_kmh_memmap[] = {
-    [XIANGSHAN_KMH_ROM] =          {     0x1000,        0xF000 },
-    [XIANGSHAN_KMH_UART0] =        { 0x310B0000,       0x10000 },
-    [XIANGSHAN_KMH_CLINT] =        { 0x38000000,       0x10000 },
-    [XIANGSHAN_KMH_APLIC_M] =      { 0x31100000,        0x4000 },
-    [XIANGSHAN_KMH_APLIC_S] =      { 0x31120000,        0x4000 },
-    [XIANGSHAN_KMH_IMSIC_M] =      { 0x3A800000,       0x10000 },
-    [XIANGSHAN_KMH_IMSIC_S] =      { 0x3B000000,       0x80000 },
-    [XIANGSHAN_KMH_UART1] =        { 0x40600000,        0x1000 },
-    [XIANGSHAN_KMH_DRAM] =         { 0x80000000,           0x0 },
+    [XIANGSHAN_KMH_ROM]      =        {     0x1000,       0x40000 },
+    [XIANGSHAN_KMH_FLASH]    =        { 0x10000000,     0x4000000 },
+    [XIANGSHAN_KMH_UART0]    =        { 0x310B0000,       0x10000 },
+    [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },
+    [XIANGSHAN_KMH_APLIC_M]  =        { 0x31100000,        0x4000 },
+    [XIANGSHAN_KMH_APLIC_S]  =        { 0x31120000,        0x4000 },
+    [XIANGSHAN_KMH_SRAM]     =        { 0x37f00000,      0x100000 },
+    [XIANGSHAN_KMH_IMSIC_M]  =        { 0x3A800000,       0x10000 },
+    [XIANGSHAN_KMH_IMSIC_S]  =        { 0x3B000000,       0x80000 },
+    [XIANGSHAN_KMH_UART1]    =        { 0x40600000,        0x1000 },
+    [XIANGSHAN_KMH_DRAM]     =        { 0x80000000,           0x0 },
 };
 
 static void xiangshan_kmh_dw_pcie_init(XiangshanKmhSoCState *s)
@@ -179,6 +181,18 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                            memmap[XIANGSHAN_KMH_ROM].size, &error_fatal);
     memory_region_add_subregion(system_memory,
                                 memmap[XIANGSHAN_KMH_ROM].base, &s->rom);
+
+    /* SRAM */
+    memory_region_init_ram(&s->sram, OBJECT(dev), "riscv.bosc.kmh.sram",
+                           memmap[XIANGSHAN_KMH_SRAM].size, &error_fatal);
+    memory_region_add_subregion(system_memory,
+                           memmap[XIANGSHAN_KMH_SRAM].base, &s->sram);
+
+    /* FLASH */
+    memory_region_init_rom(&s->flash, NULL, "riscv.bosc.kmh.flash0",
+                           memmap[XIANGSHAN_KMH_FLASH].size, &error_fatal);
+    memory_region_add_subregion(system_memory, memmap[XIANGSHAN_KMH_FLASH].base,
+                                &s->flash);
 
     xiangshan_kmh_dw_pcie_init(s);
     /*

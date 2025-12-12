@@ -26,6 +26,8 @@ typedef struct XiangshanKmhSoCState {
     RISCVHartArrayState cpus;
     DeviceState *irqchip;
     MemoryRegion rom;
+    MemoryRegion sram;
+    MemoryRegion flash;
     DesignwarePCIEHost pcie0;
 } XiangshanKmhSoCState;
 
@@ -47,10 +49,12 @@ DECLARE_INSTANCE_CHECKER(XiangshanKmhState, XIANGSHAN_KMH_MACHINE,
 
 enum {
     XIANGSHAN_KMH_ROM,
+    XIANGSHAN_KMH_FLASH,
     XIANGSHAN_KMH_UART0,
     XIANGSHAN_KMH_CLINT,
     XIANGSHAN_KMH_APLIC_M,
     XIANGSHAN_KMH_APLIC_S,
+    XIANGSHAN_KMH_SRAM,
     XIANGSHAN_KMH_IMSIC_M,
     XIANGSHAN_KMH_IMSIC_S,
     XIANGSHAN_KMH_UART1,
