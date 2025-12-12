@@ -12,6 +12,9 @@
 
 #include "hw/boards.h"
 #include "hw/riscv/riscv_hart.h"
+#include "hw/pci-host/designware.h"
+#include "qemu/units.h"
+
 
 #define XIANGSHAN_KMH_MAX_CPUS 16
 
@@ -23,6 +26,7 @@ typedef struct XiangshanKmhSoCState {
     RISCVHartArrayState cpus;
     DeviceState *irqchip;
     MemoryRegion rom;
+    DesignwarePCIEHost pcie0;
 } XiangshanKmhSoCState;
 
 #define TYPE_XIANGSHAN_KMH_SOC "xiangshan.kunminghu.soc"
@@ -56,6 +60,8 @@ enum {
 enum {
     XIANGSHAN_KMH_UART0_IRQ = 10,
     XIANGSHAN_KMH_UART1_IRQ = 11,
+    XIANGSHAN_KMH_RC_MSI0_IRQ = 12,
+    XIANGSHAN_KMH_RC_HP_IRQ = 13,
 };
 
 /* Indicating Timebase-freq (1MHZ) */
