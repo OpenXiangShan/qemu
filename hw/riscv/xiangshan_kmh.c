@@ -34,6 +34,7 @@
 #include "system/address-spaces.h"
 #include "hw/boards.h"
 #include "hw/char/serial-mm.h"
+#include "hw/char/xilinx_uartlite.h"
 #include "hw/intc/riscv_aclint.h"
 #include "hw/intc/riscv_aplic.h"
 #include "hw/intc/riscv_imsic.h"
@@ -51,6 +52,7 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_APLIC_S] =      { 0x31120000,        0x4000 },
     [XIANGSHAN_KMH_IMSIC_M] =      { 0x3A800000,       0x10000 },
     [XIANGSHAN_KMH_IMSIC_S] =      { 0x3B000000,       0x80000 },
+    [XIANGSHAN_KMH_UART1] =        { 0x40600000,        0x1000 },
     [XIANGSHAN_KMH_DRAM] =         { 0x80000000,           0x0 },
 };
 
@@ -92,6 +94,19 @@ static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts)
     return aplic_m;
 }
 
+static XilinxUARTLite *uartlite_init(hwaddr base, qemu_irq irq, Chardev *chr)
+{
+    XilinxUARTLite *uartlite = XILINX_UARTLITE(qdev_new(TYPE_XILINX_UARTLITE));
+
+    qdev_prop_set_chr(DEVICE(uartlite), "chardev", chr);
+    qdev_prop_set_enum(DEVICE(uartlite), "endianness", ENDIAN_MODE_LITTLE);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(uartlite), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(uartlite), 0, base);
+    sysbus_connect_irq(SYS_BUS_DEVICE(uartlite), 0, irq);
+
+    return uartlite;
+}
+
 static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -113,6 +128,11 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     serial_mm_init(system_memory, memmap[XIANGSHAN_KMH_UART0].base, 2,
                    qdev_get_gpio_in(s->irqchip, XIANGSHAN_KMH_UART0_IRQ),
                    115200, serial_hd(0), DEVICE_LITTLE_ENDIAN);
+
+    /* UART1: Xilinx UART Lite */
+    uartlite_init(xiangshan_kmh_memmap[XIANGSHAN_KMH_UART1].base,
+                  qdev_get_gpio_in(DEVICE(s->irqchip), XIANGSHAN_KMH_UART1_IRQ),
+                  serial_hd(1));
 
     /* CLINT */
     riscv_aclint_swi_create(memmap[XIANGSHAN_KMH_CLINT].base,

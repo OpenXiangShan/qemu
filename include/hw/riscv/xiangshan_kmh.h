@@ -49,11 +49,13 @@ enum {
     XIANGSHAN_KMH_APLIC_S,
     XIANGSHAN_KMH_IMSIC_M,
     XIANGSHAN_KMH_IMSIC_S,
+    XIANGSHAN_KMH_UART1,
     XIANGSHAN_KMH_DRAM,
 };
 
 enum {
     XIANGSHAN_KMH_UART0_IRQ = 10,
+    XIANGSHAN_KMH_UART1_IRQ = 11,
 };
 
 /* Indicating Timebase-freq (1MHZ) */
