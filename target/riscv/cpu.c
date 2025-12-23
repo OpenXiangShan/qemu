@@ -3266,7 +3266,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
         .cfg.pmp = true,
         .cfg.max_satp_mode = VM_1_10_SV48,
     ),
-    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_BOSC_NHV5, TYPE_RISCV_VENDOR_CPU,
+    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_XIANGSHAN_NHV5, TYPE_RISCV_VENDOR_CPU,
         .misa_mxl_max = MXL_RV64,
         .misa_ext = RVI | RVM | RVA | RVF | RVD | RVC | RVS | RVU | RVB,
         .priv_spec = PRIV_VERSION_1_13_0,
@@ -3287,14 +3287,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
         * Version 20241101
         */
         .cfg.ext_smstateen = true,
-       /*
-        * Enabled automallcally if >= PRIV_SPEC_1_12
-        */
-        //.cfg.ext_sscounterenw = true,
-        //.cfg.ext_sstvala = true,
-        //.cfg.ext_sv48 = true,
         .cfg.ext_ssstateen = true,
-
         .cfg.ext_svpbmt = true,
         .cfg.ext_svinval = true,
         .cfg.ext_sstc = true,
@@ -3306,7 +3299,6 @@ static const TypeInfo riscv_cpu_type_infos[] = {
         .cfg.ext_zicbom = true,
         .cfg.ext_zicbop = true,
         .cfg.ext_zicboz = true,
-
         .cfg.ext_zicntr = true,
         .cfg.ext_zicond = true,
         .cfg.ext_zicsr = true,
@@ -3324,7 +3316,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
         /* Enable ISA extensions */
         .cfg.mmu = true,
         .cfg.pmp = true,
-        
+
         .cfg.max_satp_mode = VM_1_10_SV48,
     ),
 

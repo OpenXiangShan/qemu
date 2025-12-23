@@ -133,7 +133,7 @@ config XIANGSHAN_KUNMINGHU
     select XILINX
     select PCI_EXPRESS_DESIGNWARE
 
-config RISCV_BOSC_NHV5
+config XIANGSHAN_NANHUV5
     bool
     default y
     depends on RISCV64
