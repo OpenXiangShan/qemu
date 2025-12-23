@@ -146,6 +146,7 @@ static XilinxUARTLite *uartlite_init(hwaddr base, qemu_irq irq, Chardev *chr)
     XilinxUARTLite *uartlite = XILINX_UARTLITE(qdev_new(TYPE_XILINX_UARTLITE));
 
     qdev_prop_set_chr(DEVICE(uartlite), "chardev", chr);
+    qdev_prop_set_enum(DEVICE(uartlite), "endianness", ENDIAN_MODE_LITTLE);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(uartlite), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(uartlite), 0, base);
     sysbus_connect_irq(SYS_BUS_DEVICE(uartlite), 0, irq);
