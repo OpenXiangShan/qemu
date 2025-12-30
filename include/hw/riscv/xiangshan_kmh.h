@@ -41,6 +41,7 @@ typedef struct XiangshanKmhState {
 
     /*< public >*/
     XiangshanKmhSoCState soc;
+    OnOffAuto iommu_sys;
 } XiangshanKmhState;
 
 #define TYPE_XIANGSHAN_KMH_MACHINE MACHINE_TYPE_NAME("xiangshan-kunminghu")
@@ -54,6 +55,7 @@ enum {
     XIANGSHAN_KMH_CLINT,
     XIANGSHAN_KMH_APLIC_M,
     XIANGSHAN_KMH_APLIC_S,
+    XIANGSHAN_KMH_IOMMU_SYS,
     XIANGSHAN_KMH_SRAM,
     XIANGSHAN_KMH_IMSIC_M,
     XIANGSHAN_KMH_IMSIC_S,
@@ -66,6 +68,7 @@ enum {
     XIANGSHAN_KMH_UART1_IRQ = 11,
     XIANGSHAN_KMH_RC_MSI0_IRQ = 12,
     XIANGSHAN_KMH_RC_HP_IRQ = 13,
+    XIANGSHAN_KMH_IOMMU_SYS_IRQ = 0x24,
 };
 
 /* Indicating Timebase-freq (1MHZ) */

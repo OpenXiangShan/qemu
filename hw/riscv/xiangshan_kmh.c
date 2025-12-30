@@ -44,12 +44,16 @@
 #include "hw/riscv/riscv_hart.h"
 #include "system/system.h"
 #include "hw/misc/unimp.h"
-
+#include "hw/riscv/iommu.h"
+#include "hw/riscv/riscv-iommu.h"
+#include "hw/riscv/riscv-iommu-bits.h"
+#include "qapi/qapi-visit-common.h"
 
 static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_ROM]      =        {     0x1000,       0x40000 },
     [XIANGSHAN_KMH_FLASH]    =        { 0x10000000,     0x4000000 },
     [XIANGSHAN_KMH_UART0]    =        { 0x310B0000,       0x10000 },
+    [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },
     [XIANGSHAN_KMH_APLIC_M]  =        { 0x31100000,        0x4000 },
     [XIANGSHAN_KMH_APLIC_S]  =        { 0x31120000,        0x4000 },
@@ -233,6 +237,11 @@ static void xiangshan_kmh_soc_register_types(void)
 }
 type_init(xiangshan_kmh_soc_register_types)
 
+static bool kmh_is_iommu_sys_enabled(XiangshanKmhState *s)
+{
+    return s->iommu_sys == ON_OFF_AUTO_ON;
+}
+
 static void xiangshan_kmh_machine_init(MachineState *machine)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(machine);
@@ -260,6 +269,58 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     }
 
     /* Note: dtb has been integrated into firmware(OpenSBI) when compiling */
+
+    if (kmh_is_iommu_sys_enabled(s)) {
+        DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
+
+        object_property_set_uint(OBJECT(iommu_sys), "addr",
+                                 memmap[XIANGSHAN_KMH_IOMMU_SYS].base,
+                                 &error_fatal);
+        object_property_set_uint(OBJECT(iommu_sys), "base-irq",
+                                 XIANGSHAN_KMH_IOMMU_SYS_IRQ,
+                                 &error_fatal);
+        object_property_set_link(OBJECT(iommu_sys), "irqchip",
+                                 OBJECT(s->soc.irqchip),
+                                 &error_fatal);
+
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
+
+        XiangshanKmhSoCState *soc = &s->soc;;
+        DesignwarePCIEHost *pcie0 = &soc->pcie0;
+        PCIHostState *pci_host = PCI_HOST_BRIDGE(pcie0);;
+        PCIBus *bus = pci_host->bus;
+
+        bus->iommu_ops = NULL;
+        bus->iommu_opaque = NULL;
+        RISCVIOMMUState *iommu = (RISCVIOMMUState *)object_resolve_path_type("", TYPE_RISCV_IOMMU, NULL);
+
+        riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
+    }
+}
+
+
+static void xiangshan_kmh_machine_instance_init(Object *obj)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->iommu_sys = ON_OFF_AUTO_AUTO;
+}
+
+static void xiangshan_kmh_get_iommu_sys(Object *obj, Visitor *v, const char *name,
+                               void *opaque, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+    OnOffAuto iommu_sys = s->iommu_sys;
+
+    visit_type_OnOffAuto(v, name, &iommu_sys, errp);
+}
+
+static void xiangshan_kmh_set_iommu_sys(Object *obj, Visitor *v, const char *name,
+                               void *opaque, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    visit_type_OnOffAuto(v, name, &s->iommu_sys, errp);
 }
 
 static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *data)
@@ -277,6 +338,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
     mc->default_cpu_type = TYPE_RISCV_CPU_XIANGSHAN_KMH;
     mc->valid_cpu_types = valid_cpu_types;
     mc->default_ram_id = "xiangshan.kunminghu.ram";
+
+    object_class_property_add(klass, "iommu-sys", "OnOffAuto",
+                                xiangshan_kmh_get_iommu_sys, xiangshan_kmh_set_iommu_sys,
+                                NULL, NULL);
+    object_class_property_set_description(klass, "iommu-sys",
+                                          "Enable IOMMU platform device");
 }
 
 static const TypeInfo xiangshan_kmh_machine_info = {
@@ -284,6 +351,7 @@ static const TypeInfo xiangshan_kmh_machine_info = {
     .parent = TYPE_MACHINE,
     .instance_size = sizeof(XiangshanKmhState),
     .class_init = xiangshan_kmh_machine_class_init,
+    .instance_init = xiangshan_kmh_machine_instance_init,
 };
 
 static void xiangshan_kmh_machine_register_types(void)
