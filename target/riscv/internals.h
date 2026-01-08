@@ -143,12 +143,12 @@ static inline target_ulong get_rlenb(CPURISCVState *env)
 
 static inline target_ulong get_mrows(CPURISCVState *env)
 {
-    return env_archcpu(env)->cfg.mrowlen / RV_MACC_LEN;
+    return env_archcpu(env)->cfg.mreglen / env_archcpu(env)->cfg.mrowlen;
 }
 
 static inline target_ulong get_mlenb(CPURISCVState *env)
 {
-    return get_mrows(env) * get_rlenb(env);
+    return env_archcpu(env)->cfg.mreglen;
 }
 
 /* rounding incremental calculation */

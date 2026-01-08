@@ -38,7 +38,7 @@
 
 /* global register indices */
 static TCGv cpu_gpr[32], cpu_gprh[32], cpu_pc, cpu_vl, cpu_vstart;
-static TCGv sizem, sizen, sizek;
+static TCGv mtilem, mtilen, mtilek;
 static TCGv cpu_exec_count;
 static TCGv_i64 cpu_fpr[32]; /* assume F and D extensions */
 static TCGv load_res;
@@ -112,20 +112,22 @@ typedef struct DisasContext {
      */
     int8_t lmul;
     uint8_t sew;
-    bool bf16;
-    bool pwi32;
-    bool pwi64;
     bool i4i32;
     bool i8i32;
-    bool i16i64;
     bool f16f16;
     bool f32f32;
     bool f64f64;
+    bool f8f16;
+    bool f8bf16;
+    bool f16f32;
+    bool bf16f32;
+    bool f32f64;
+    bool f8f32;
     bool mill;
     bool nill;
     bool kill;
-    bool npill;
-    uint16_t mrowlen;
+    uint32_t mrowlen;
+    uint32_t mreglen;
     uint8_t vta;
     uint8_t vma;
     bool cfg_vta_all_1s;
@@ -761,11 +763,6 @@ static int ex_plus_1(DisasContext *ctx, int nf)
     return nf + 1;
 }
 
-static int ex_plus_8(DisasContext *ctx, int rs)
-{
-    return rs + 8;
-}
-
 #define EX_SH(amount) \
     static int ex_shift_##amount(DisasContext *ctx, int imm) \
     {                                         \
@@ -1293,20 +1290,23 @@ static void riscv_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     ctx->zero = tcg_constant_tl(0);
     ctx->virt_inst_excp = false;
     ctx->decoders = cpu->decoders;
-    ctx->bf16 = EX_TBFLAGS_MATRIX(tb_flags, BF16);
-    ctx->pwi32 = EX_TBFLAGS_MATRIX(tb_flags, PWI32);
-    ctx->pwi64 = EX_TBFLAGS_MATRIX(tb_flags, PWI64);
+    ctx->mcsr_ms = 0;  /* close matrix_ext by default, open with minit instruction */
     ctx->i4i32 = EX_TBFLAGS_MATRIX(tb_flags, I4I32);
     ctx->i8i32 = EX_TBFLAGS_MATRIX(tb_flags, I8I32);
-    ctx->i16i64 = EX_TBFLAGS_MATRIX(tb_flags, I16I64);
     ctx->f16f16 = EX_TBFLAGS_MATRIX(tb_flags, F16F16);
     ctx->f32f32 = EX_TBFLAGS_MATRIX(tb_flags, F32F32);
     ctx->f64f64 = EX_TBFLAGS_MATRIX(tb_flags, F64F64);
+    ctx->f8f16 = EX_TBFLAGS_MATRIX(tb_flags, F8F16);
+    ctx->f8bf16 = EX_TBFLAGS_MATRIX(tb_flags, F8BF16);
+    ctx->f16f32 = EX_TBFLAGS_MATRIX(tb_flags, F16F32);
+    ctx->bf16f32 = EX_TBFLAGS_MATRIX(tb_flags, BF16F32);
+    ctx->f32f64 = EX_TBFLAGS_MATRIX(tb_flags, F32F64);
+    ctx->f8f32 = EX_TBFLAGS_MATRIX(tb_flags, F8F32);
     ctx->mill = EX_TBFLAGS_MATRIX(tb_flags, MILL);
     ctx->nill = EX_TBFLAGS_MATRIX(tb_flags, NILL);
     ctx->kill = EX_TBFLAGS_MATRIX(tb_flags, KILL);
-    ctx->npill = EX_TBFLAGS_MATRIX(tb_flags, NPILL);
     ctx->mrowlen = cpu->cfg.mrowlen;
+    ctx->mreglen = cpu->cfg.mreglen;
     ctx->ntemp = 0;
     memset(ctx->temp, 0, sizeof(ctx->temp));
 }
@@ -1428,7 +1428,7 @@ void riscv_translate_init(void)
                                  "pmmask");
     pm_base = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, cur_pmbase),
                                  "pmbase");
-    sizem = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizem), "sizem");
-    sizen = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizen), "sizen");
-    sizek = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizek), "sizek");
+    mtilem = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, mtilem), "mtilem");
+    mtilen = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, mtilen), "mtilen");
+    mtilek = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, mtilek), "mtilek");
 }

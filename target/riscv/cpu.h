@@ -160,8 +160,8 @@ extern RISCVCPUImpliedExtsRule *riscv_multi_ext_implied_rules[];
 #define RV_MAX_MHPMEVENTS 32
 #define RV_MAX_MHPMCOUNTERS 32
 
-#define RV_RLEN_MAX 4096
-#define RV_MACC_LEN 32
+#define RV_TRLEN_MAX   4096
+#define RV_TROWNUM_MAX 128
 
 FIELD(VTYPE, VLMUL, 0, 3)
 FIELD(VTYPE, VSEW, 3, 3)
@@ -169,10 +169,6 @@ FIELD(VTYPE, VTA, 6, 1)
 FIELD(VTYPE, VMA, 7, 1)
 FIELD(VTYPE, VEDIV, 8, 2)
 FIELD(VTYPE, RESERVED, 10, sizeof(target_ulong) * 8 - 11)
-
-FIELD(MSIZE, SIZEM, 0, 8)
-FIELD(MSIZE, SIZEN, 8, 8)
-FIELD(MSIZE, SIZEK, 16, 16)
 
 /* New tbflags for matrix  */
 typedef struct CPURISCVTBFlags {
@@ -216,15 +212,20 @@ struct CPUArchState {
     bool vill;
 
     /* matrix state */
-    uint64_t mreg[8 * RV_RLEN_MAX / RV_MACC_LEN  * RV_RLEN_MAX / 64] QEMU_ALIGNED(16);
-    target_ulong sizem;
-    target_ulong sizen;
-    target_ulong sizek;
-    target_ulong mrstart;
-    target_ulong mcsr;
-    target_ulong mxsat;
-    target_ulong mxrm;
+    uint64_t mreg[8 * RV_TRLEN_MAX * RV_TROWNUM_MAX / 64] QEMU_ALIGNED(16);
+    target_ulong mtilem;
+    target_ulong mtilen;
+    target_ulong mtilek;
     target_ulong xmisa;
+    target_ulong xtlenb;
+    target_ulong xtrlenb;
+    target_ulong xalenb;
+    target_ulong mcsr;
+    target_ulong xmxrm;
+    target_ulong xmsat;
+    target_ulong xmfflags;
+    target_ulong xmfrm;
+    target_ulong xmsaten;
 
     target_ulong pc;
     target_ulong load_res;
@@ -644,20 +645,21 @@ FIELD(TB_FLAGS, VIRT_ENABLED, 23, 1)
 FIELD(TB_FLAGS, PRIV, 24, 2)
 FIELD(TB_FLAGS, AXL, 26, 2)
 
-FIELD(TB_FLAGS_MATRIX, PWI32, 0, 1)
-FIELD(TB_FLAGS_MATRIX, PWI64, 1, 1)
-FIELD(TB_FLAGS_MATRIX, I4I32, 2, 1)
-FIELD(TB_FLAGS_MATRIX, I8I32, 3, 1)
-FIELD(TB_FLAGS_MATRIX, I16I64, 4, 1)
-FIELD(TB_FLAGS_MATRIX, F16F16, 5, 1)
-FIELD(TB_FLAGS_MATRIX, F32F32, 6, 1)
-FIELD(TB_FLAGS_MATRIX, F64F64, 7, 1)
-FIELD(TB_FLAGS_MATRIX, MS, 8, 2)
-FIELD(TB_FLAGS_MATRIX, MILL, 10, 1)
-FIELD(TB_FLAGS_MATRIX, NILL, 11, 1)
-FIELD(TB_FLAGS_MATRIX, KILL, 12, 1)
-FIELD(TB_FLAGS_MATRIX, NPILL, 13, 1)
-FIELD(TB_FLAGS_MATRIX, BF16, 20, 1)
+FIELD(TB_FLAGS_MATRIX, I4I32, 0, 1)
+FIELD(TB_FLAGS_MATRIX, I8I32, 1, 1)
+FIELD(TB_FLAGS_MATRIX, F16F16, 2, 1)
+FIELD(TB_FLAGS_MATRIX, F32F32, 3, 1)
+FIELD(TB_FLAGS_MATRIX, F64F64, 4, 1)
+FIELD(TB_FLAGS_MATRIX, F8F16, 5, 1)
+FIELD(TB_FLAGS_MATRIX, F8BF16, 6, 1)
+FIELD(TB_FLAGS_MATRIX, F16F32, 7, 1)
+FIELD(TB_FLAGS_MATRIX, BF16F32, 8, 1)
+FIELD(TB_FLAGS_MATRIX, F32F64, 9, 1)
+FIELD(TB_FLAGS_MATRIX, F8F32, 10, 1)
+FIELD(TB_FLAGS_MATRIX, MS, 11, 2)
+FIELD(TB_FLAGS_MATRIX, MILL, 13, 1)
+FIELD(TB_FLAGS_MATRIX, NILL, 14, 1)
+FIELD(TB_FLAGS_MATRIX, KILL, 15, 1)
 
 /*
  * Helpers for using the matrix.

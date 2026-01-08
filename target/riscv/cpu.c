@@ -1014,14 +1014,16 @@ static void riscv_cpu_reset_hold(Object *obj, ResetType type)
     pmp_unlock_entries(env);
 #endif
     if (cpu->cfg.ext_matrix) {
-            env->xmisa = MATRIX_MULT_F16F16
-                         | MATRIX_MULT_F32F32
-                         | MATRIX_MULT_F64F64
-                         | MATRIX_MULT_I16I64
-                         | MATRIX_MULT_I4I32
-                         | MATRIX_PW_I32
-                         | MATRIX_PW_I64
+            env->xmisa = MATRIX_MULT_F8F32
+                         | MATRIX_MULT_BF16F32
+                         | MATRIX_MULT_F16F32
+                         | MATRIX_MULT_F8BF16
+                         | MATRIX_MULT_F8F16
+                         | MATRIX_MULT_F16F16
                          | MATRIX_MULT_I8I32;
+            env->xtrlenb = cpu->cfg.mrowlen >> 3;
+            env->xtlenb = cpu->cfg.mreglen >> 3;
+            env->xalenb = (cpu->cfg.mreglen / cpu->cfg.mrowlen) * (cpu->cfg.mreglen / cpu->cfg.mrowlen) * cpu->cfg.melen/8;
         printf("============= ext_matrix open! =============\n");
     }
     env->xl = riscv_cpu_mxl(env);
@@ -2706,8 +2708,9 @@ static Property riscv_cpu_properties[] = {
     DEFINE_PROP_BOOL("x-misa-w", RISCVCPU, cfg.misa_w, false),
     /* matrix extension as experimental */
     DEFINE_PROP_BOOL("x-matrix", RISCVCPU, cfg.ext_matrix, false),
-    DEFINE_PROP_UINT16("rlen", RISCVCPU, cfg.mrowlen, 128),
-    DEFINE_PROP_UINT16("datapath", RISCVCPU, cfg.datapath, 256),
+    DEFINE_PROP_UINT32("rlen", RISCVCPU, cfg.mrowlen, 512),
+    DEFINE_PROP_UINT32("mlen", RISCVCPU, cfg.mreglen, 65536),
+    DEFINE_PROP_UINT16("melen", RISCVCPU, cfg.melen, 32),
     DEFINE_PROP_END_OF_LIST(),
 };
 
