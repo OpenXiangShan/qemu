@@ -81,7 +81,7 @@ typedef struct DisasContext {
     uint32_t opcode;
     RISCVExtStatus mstatus_fs;
     RISCVExtStatus mstatus_vs;
-    uint32_t mcsr_ms;
+    uint32_t xmstatus_ms;
     uint32_t mem_idx;
     uint32_t priv;
     /*
@@ -1290,7 +1290,6 @@ static void riscv_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     ctx->zero = tcg_constant_tl(0);
     ctx->virt_inst_excp = false;
     ctx->decoders = cpu->decoders;
-    ctx->mcsr_ms = 0;  /* close matrix_ext by default, open with minit instruction */
     ctx->i4i32 = EX_TBFLAGS_MATRIX(tb_flags, I4I32);
     ctx->i8i32 = EX_TBFLAGS_MATRIX(tb_flags, I8I32);
     ctx->f16f16 = EX_TBFLAGS_MATRIX(tb_flags, F16F16);

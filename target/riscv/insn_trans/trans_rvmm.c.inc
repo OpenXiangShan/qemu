@@ -4,7 +4,8 @@
 
 static inline bool require_matrix(DisasContext *s)
 {
-    return s->mcsr_ms != 0;
+    /* return s->xmstatus_ms != 0; */
+    return true;
 }
 
 /* Matrix Configuration translation */
@@ -395,10 +396,10 @@ static bool trans_minit(DisasContext *s, arg_empty *a)
     }
 
 #ifndef CONFIG_USER_ONLY
-    if (s->mcsr_ms == 1) {
+    if (s->xmstatus_ms == 1) {
         return true;
     }
-    s->mcsr_ms = 1;
+    s->xmstatus_ms = 1;
     // TCGv tmp = tcg_temp_new();
     // Mrelease Instruction sets MS to Initial state
     // tcg_gen_ld_tl(tmp, tcg_env, offsetof(CPURISCVState, mxstatus));
