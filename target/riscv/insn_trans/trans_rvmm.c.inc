@@ -123,7 +123,31 @@ static inline bool mmext_check_acc_reg(uint32_t mreg)
 /* matrix register offset from env */
 static uint32_t mregs_ofs(DisasContext *s, int mreg_idx)
 {
-    return offsetof(CPURISCVState, mreg) + (mreg_idx * s->mrowlen * s->mrowlen >> 8);
+    /* BUG FIX: Correct physical register sizes
+     * - Tile registers (tr0-tr3, idx 0-3): mrows × rlenb bytes
+     *   = (mreglen/mrowlen) × (mrowlen/8) = mreglen/8 bytes
+     * - Accumulator registers (acc0-acc3, idx 4-7): mrows × mrows × 4 bytes
+     *   = (mreglen/mrowlen)² × 4 bytes
+     * 
+     * With mreglen=65536 bits, mrowlen=512 bits:
+     * - Tile: 65536/8 = 8192 bytes
+     * - Accumulator: (65536/512)² × 4 = 128² × 4 = 65536 bytes
+     */
+    uint32_t mrows = s->mreglen / s->mrowlen;  // 65536/512 = 128
+    uint32_t rlenb = s->mrowlen >> 3;          // 512/8 = 64 bytes
+    uint32_t tile_size = mrows * rlenb;        // 128 * 64 = 8192 bytes
+    uint32_t acc_size = mrows * mrows * 4;     // 128 * 128 * 4 = 65536 bytes
+    
+    uint32_t offset = offsetof(CPURISCVState, mreg);
+    if (mreg_idx < 4) {
+        /* Tile registers tr0-tr3 */
+        offset += mreg_idx * tile_size;
+    } else {
+        /* Accumulator registers acc0-acc3 */
+        offset += 4 * tile_size;  // Skip 4 tile registers
+        offset += (mreg_idx - 4) * acc_size;
+    }
+    return offset;
 }
 
 /* Matrix Load/Store translation */

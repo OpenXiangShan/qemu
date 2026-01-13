@@ -109,13 +109,16 @@ static inline void set_elem_h(void *md, uint32_t i, uint32_t j,
 
 static inline int64_t get_elem_s(void* md, uint32_t i, uint32_t j,
                                  CPURISCVState* env){
-    uint32_t idx = i * (get_rlenb(env) >> 2) + j;
+    /* BUG FIX: Accumulator stride should be mrows (128), not rlenb>>2 (16).
+     * Accumulator is mrows × mrows int32 matrix. */
+    uint32_t idx = i * get_mrows(env) + j;
     return ((int32_t *)md)[idx];
 }
 
 static inline void set_elem_s(void* md, uint32_t i, uint32_t j,
                               CPURISCVState* env, int64_t val){
-    uint32_t idx = i * (get_rlenb(env) >> 2) + j;
+    /* BUG FIX: Accumulator stride should be mrows (128), not rlenb>>2 (16). */
+    uint32_t idx = i * get_mrows(env) + j;
     ((int32_t *) md)[idx] = (int32_t) val;
 }
 
