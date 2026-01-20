@@ -164,7 +164,12 @@ static void mmext_mload_tile(void *md, target_ulong rs1, target_ulong stride,
     uint32_t rows_lim = mmext_rows(env, kind);
     uint32_t cols_lim = mmext_cols(env, kind);
     uint32_t rows_phys = get_mrows(env);
-    uint32_t cols_phys = (uint32_t)(get_rlenb(env) >> esz);
+    uint32_t cols_phys;
+    if (kind == MAT_C) {
+        cols_phys = get_mrows(env);
+    } else {
+        cols_phys = (uint32_t)(get_rlenb(env) >> esz);
+    }
     target_ulong addr;
 
     /*

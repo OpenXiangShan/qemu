@@ -1024,7 +1024,7 @@ static void riscv_cpu_reset_hold(Object *obj, ResetType type)
             env->xtrlenb = cpu->cfg.mrowlen >> 3;
             env->xtlenb = cpu->cfg.mreglen >> 3;
             env->xalenb = (cpu->cfg.mreglen / cpu->cfg.mrowlen) * (cpu->cfg.mreglen / cpu->cfg.mrowlen) * cpu->cfg.melen/8;
-        printf("============= ext_matrix open! =============\n");
+        // printf("============= ext_matrix open! =============\n");
     }
     env->xl = riscv_cpu_mxl(env);
     riscv_cpu_update_mask(env);
