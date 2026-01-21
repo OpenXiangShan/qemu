@@ -403,10 +403,17 @@ static inline uint32_t get_rows(DisasContext *s)
 }
 static bool trans_mzero(DisasContext *s, arg_mm_i *a)
 {
-    uint32_t len = get_rows(s) * s->mrowlen / 8;
-
     if (!require_matrix(s)) {
         return false;
+    }
+
+    uint32_t len = 0;
+    if (a->md < 4) {
+        /* Tile registers */
+        len = get_rows(s) * s->mrowlen / 8;
+    } else {
+        /* Acc registers */
+        len = get_rows(s) * get_rows(s) * 4;
     }
 
     tcg_gen_gvec_dup_imm(MO_64, mregs_ofs(s, a->md), len, len, 0);
