@@ -107,17 +107,17 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
     }
 
     if (cpu->cfg.ext_matrix) {
-        DP_TBFLAGS_MATRIX(flags, I4I32, !!(env->xmisa & MATRIX_MULT_I4I32));
-        DP_TBFLAGS_MATRIX(flags, I8I32, !!(env->xmisa & MATRIX_MULT_I8I32));
-        DP_TBFLAGS_MATRIX(flags, F16F16, !!(env->xmisa & MATRIX_MULT_F16F16));
-        DP_TBFLAGS_MATRIX(flags, F32F32, !!(env->xmisa & MATRIX_MULT_F32F32));
-        DP_TBFLAGS_MATRIX(flags, F64F64, !!(env->xmisa & MATRIX_MULT_F64F64));
-        DP_TBFLAGS_MATRIX(flags, F8F16, !!(env->xmisa & MATRIX_MULT_F8F16));
-        DP_TBFLAGS_MATRIX(flags, F8BF16, !!(env->xmisa & MATRIX_MULT_F8BF16));
-        DP_TBFLAGS_MATRIX(flags, F16F32, !!(env->xmisa & MATRIX_MULT_F16F32));
-        DP_TBFLAGS_MATRIX(flags, BF16F32, !!(env->xmisa & MATRIX_MULT_BF16F32));
-        DP_TBFLAGS_MATRIX(flags, F32F64, !!(env->xmisa & MATRIX_MULT_F32F64));
-        DP_TBFLAGS_MATRIX(flags, F8F32, !!(env->xmisa & MATRIX_MULT_F8F32));
+        // DP_TBFLAGS_MATRIX(flags, I4I32, !!(env->xmisa & MATRIX_MULT_I4I32));
+        // DP_TBFLAGS_MATRIX(flags, I8I32, !!(env->xmisa & MATRIX_MULT_I8I32));
+        // DP_TBFLAGS_MATRIX(flags, F16F16, !!(env->xmisa & MATRIX_MULT_F16F16));
+        // DP_TBFLAGS_MATRIX(flags, F32F32, !!(env->xmisa & MATRIX_MULT_F32F32));
+        // DP_TBFLAGS_MATRIX(flags, F64F64, !!(env->xmisa & MATRIX_MULT_F64F64));
+        // DP_TBFLAGS_MATRIX(flags, F8F16, !!(env->xmisa & MATRIX_MULT_F8F16));
+        // DP_TBFLAGS_MATRIX(flags, F8BF16, !!(env->xmisa & MATRIX_MULT_F8BF16));
+        // DP_TBFLAGS_MATRIX(flags, F16F32, !!(env->xmisa & MATRIX_MULT_F16F32));
+        // DP_TBFLAGS_MATRIX(flags, BF16F32, !!(env->xmisa & MATRIX_MULT_BF16F32));
+        // DP_TBFLAGS_MATRIX(flags, F32F64, !!(env->xmisa & MATRIX_MULT_F32F64));
+        // DP_TBFLAGS_MATRIX(flags, F8F32, !!(env->xmisa & MATRIX_MULT_F8F32));
         DP_TBFLAGS_MATRIX(flags, MILL,
                          env->mtilem > get_mrows(env) || env->mtilem == 0);
         DP_TBFLAGS_MATRIX(flags, NILL,
