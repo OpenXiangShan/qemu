@@ -55,8 +55,8 @@
 enum {
     UART0_IRQ = 10,
     RTC_IRQ = 11,
-    VIRTIO_IRQ = 1, /* From IRQ to (IRQ + COUNT - 1) */
-    VIRTIO_COUNT = 1,
+    VIRTIO_IRQ = 5, /* 1 to 8 */
+    VIRTIO_COUNT = 2,
 };
 
 enum {
@@ -74,8 +74,10 @@ enum {
  * Freedom E310 G000 supports 51 interrupt sources. We use the value
  * of G002 and G003, so it is 53 (including interrupt source 0).
  */
-#define PLIC_NUM_SOURCES 53
-#define PLIC_NUM_PRIORITIES 7
+#define PLIC_NUM_SOURCES 32
+#define PLIC_NUM_PRIORITIES 8
+// #define PLIC_NUM_SOURCES 53
+// #define PLIC_NUM_PRIORITIES 7
 #define PLIC_PRIORITY_BASE 0x00
 #define PLIC_PENDING_BASE 0x1000
 #define PLIC_ENABLE_BASE 0x2000
@@ -85,9 +87,10 @@ enum {
 
 static const MemMapEntry nemu_memmap[] = {
     [NEMU_MROM] = { 0x1000, 0xf000 },
-    [NEMU_VIRTIO] = { 0x10001000, 0x1000 },
-    [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
+    [NEMU_VIRTIO] ={ 0x10001000, 0x1000 },
     [NEMU_CLINT] = { 0x38000000, 0x10000 },
+    // [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
+    [NEMU_PLIC] = { 0x3c000000, 0x6000000 },
     [NEMU_UARTLITE] = { 0x40600000, 0x1000 },
     [NEMU_GCPT] = { 0x50000000, 0x8000000 },
     [NEMU_DRAM] = { 0x80000000, 0x0 },
