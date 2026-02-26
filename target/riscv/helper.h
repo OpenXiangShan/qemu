@@ -1413,6 +1413,9 @@ DEF_HELPER_4(mmaccu_w_bp,    void, ptr, ptr, ptr, env)
 // DEF_HELPER_4(mcbcaw_mv_i, void, ptr, ptr, i32, env)
 // DEF_HELPER_4(mcbcad_mv_i, void, ptr, ptr, i32, env)
 
+/* special insts for control function */
+DEF_HELPER_1(sync_skip, void, env)
 #ifndef CONFIG_USER_ONLY
 DEF_HELPER_FLAGS_2(nemu_trap, TCG_CALL_NO_RWG, void, env, tl)
+DEF_HELPER_4(qemu_signal, i64, env, tl, tl, tl)
 #endif

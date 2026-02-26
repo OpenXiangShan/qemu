@@ -490,6 +490,7 @@ struct CPUArchState {
     hwaddr fdt_addr;
 
     uint64_t profiling_insns;
+    bool sync_skip_mode;
 
 #ifdef CONFIG_KVM
     /* kvm timer */

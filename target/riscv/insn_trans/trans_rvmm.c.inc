@@ -172,10 +172,18 @@ typedef void gen_helper_ldst(TCGv_ptr, TCGv, TCGv, TCGv_env);
 static bool mm_ldst_op(uint32_t md, TCGv rs1, TCGv rs2,
                               gen_helper_ldst *fn, DisasContext *s)
 {
+    CPUState *cpu = s->cs;
+    CPURISCVState *env = cpu_env(cpu);
+    if (env->sync_skip_mode) {
+        /* 将指令翻译成sync_skip，跳过执行 */
+        gen_helper_sync_skip(tcg_env);
+        return true;
+    } else {
     TCGv_ptr dest = tcg_temp_new_ptr();
     tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
     fn(dest, rs1, rs2, tcg_env);
     return true;
+    }
 }
 
 #define GEN_MMEXT_LD(NAME, CHECK)                                    \
@@ -242,10 +250,18 @@ static bool mm_ldstm_op(uint32_t md, TCGv rs1,
                                     gen_helper_ldstm *fn,
                                     DisasContext *s)
 {
+    CPUState *cpu = s->cs;
+    CPURISCVState *env = cpu_env(cpu);
+    if (env->sync_skip_mode) {
+        /* 将指令翻译成sync_skip，跳过执行 */
+        gen_helper_sync_skip(tcg_env);
+        return true;
+    } else {
     TCGv_ptr dest = tcg_temp_new_ptr();
     tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
     fn(dest, rs1, tcg_env);
     return true;
+    }
 }
 
 #define GEN_MMEXT_LDM_TRANS(NAME, CHECK)                    \

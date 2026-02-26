@@ -2748,6 +2748,48 @@ void qmp_x_exit_preconfig(Error **errp)
     }
 }
 
+// #define SYNC_ON
+#ifdef SYNC_ON
+    #include <sys/socket.h>
+    #include <sys/un.h>
+    #include <unistd.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <errno.h>
+
+    #define SOCKET_PATH "/tmp/qemu-riscv.sock"
+
+    int sync_server_fd = -1;
+
+    // Create Socket and set Socket addr
+    static void init_qemu_socket_server(void) {
+        sync_server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (sync_server_fd < 0) {
+            perror("QEMU socket");
+            exit(1);
+        }
+
+        struct sockaddr_un addr = { .sun_family = AF_UNIX, .sun_path = SOCKET_PATH };
+
+        unlink(SOCKET_PATH); // clear old socket file
+        if (bind(sync_server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            perror("QEMU bind");
+            close(sync_server_fd);
+            exit(1);
+        }
+
+        if (listen(sync_server_fd, 1) < 0) {
+            perror("QEMU listen");
+            close(sync_server_fd);
+            exit(1);
+        }
+
+        printf("QEMU: Socket server ready at %s\n", SOCKET_PATH);
+    }
+
+#endif
+
 void qemu_init(int argc, char **argv)
 {
     QemuOpts *opts;
@@ -3772,4 +3814,7 @@ void qemu_init(int argc, char **argv)
     os_setup_post();
     resume_mux_open();
 
+#ifdef SYNC_ON
+    init_qemu_socket_server();
+#endif
 }

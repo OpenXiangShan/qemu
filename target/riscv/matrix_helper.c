@@ -912,3 +912,8 @@ void helper_mfmacc_s_e5(void *md, void *ms1, void *ms2, CPURISCVState *env)
 {
     helper_mfmacc_s(md, ms1, ms2, env);
 }
+
+void HELPER(sync_skip)(CPURISCVState *env) {
+    /* 直接跳过指令的模拟执行 */
+    return;
+}

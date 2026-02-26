@@ -80,6 +80,149 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
     }
 }
+
+// #define SYNC_ON
+#ifdef SYNC_ON
+#include <sys/socket.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdio.h>
+
+static inline target_ulong adjust_addr(CPURISCVState *env, target_ulong addr)
+{
+    return (addr & ~env->cur_pmmask) | env->cur_pmbase;
+}
+static void write_guest_user_buf(CPURISCVState *env,
+                                 target_ulong vaddr,
+                                 const uint8_t *src,
+                                 target_ulong len,
+                                 uintptr_t ra)
+{
+    int mmu_index = riscv_env_mmu_index(env, false);
+
+    while (len > 0) {
+        /* 本页还能写多少 */
+        target_ulong pagelen = -(vaddr | TARGET_PAGE_MASK);
+        target_ulong chunk   = MIN(pagelen, len);
+
+        void *host = NULL;
+        /*
+         * nonfault = false ：允许抛异常（缺页/权限错误等）
+         * 成功返回 flags==0 且 host!=NULL 才能直接 memcpy
+         * 否则（MMIO/INVALID/WP）必须走慢路径
+         */
+        int flags = probe_access_flags(env,
+                                       adjust_addr(env, vaddr),
+                                       chunk,
+                                       MMU_DATA_STORE,   // 写访问
+                                       mmu_index,
+                                       /* nonfault */ false,
+                                       &host,
+                                       ra);
+
+        if (flags == 0 && host != NULL) {
+            /* 直达 RAM 的快路径：页内连续 memcpy */
+            memcpy(host, src, chunk);
+        } else {
+            /* 慢路径：使用 cpu_st*_data_ra，保证：
+             *  - 未映射/权限不符 -> 触发 guest page fault
+             *  - MMIO -> 调设备回调
+             * 做一点小优化：按 8/4/2/1 对齐写，避免纯逐字节
+             */
+            target_ulong done = 0;
+
+            /* 对齐到 8 字节 */
+            while (done < chunk && ((vaddr + done) & 7)) {
+                cpu_stb_data_ra(env, adjust_addr(env, vaddr + done), src[done], ra);
+                done++;
+            }
+            /* 8 字节块 */
+            while (done + 8 <= chunk) {
+                uint64_t q;
+                memcpy(&q, src + done, 8);
+                cpu_stq_data_ra(env, adjust_addr(env, vaddr + done), q, ra);
+                done += 8;
+            }
+            /* 4 字节块 */
+            while (done + 4 <= chunk) {
+                uint32_t w;
+                memcpy(&w, src + done, 4);
+                cpu_stl_data_ra(env, adjust_addr(env, vaddr + done), w, ra);
+                done += 4;
+            }
+            /* 2 字节块 */
+            while (done + 2 <= chunk) {
+                uint16_t h;
+                memcpy(&h, src + done, 2);
+                cpu_stw_data_ra(env, adjust_addr(env, vaddr + done), h, ra);
+                done += 2;
+            }
+            /* 剩余字节 */
+            while (done < chunk) {
+                cpu_stb_data_ra(env, adjust_addr(env, vaddr + done), src[done], ra);
+                done++;
+            }
+        }
+
+        vaddr += chunk;
+        src   += chunk;
+        len   -= chunk;
+    }
+}
+
+extern int sync_server_fd;
+#endif
+
+uint64_t helper_qemu_signal(CPURISCVState *env, target_ulong req_type, target_ulong data_address, target_ulong data_len) {
+#define SKIP_ON   0x103
+#define SKIP_OFF  0x104
+#define SYNC      0x105
+    // CPUState *cs = env_cpu(env);
+    // MachineState *ms = MACHINE(qdev_get_machine());
+    // NEMUState *ns = NEMU_MACHINE(ms);
+
+    if (req_type == SKIP_ON) {
+        // env->sync_skip_mode = true;
+        // TODO: close skip when checkpointing this turn
+        env->sync_skip_mode = false;
+    } else if (req_type == SKIP_OFF) {
+        env->sync_skip_mode = false;
+    } else if (req_type == SYNC) {
+#ifdef SYNC_ON
+        int sync_client_fd = -1;
+        /* Accept a connect from Host client */
+        sync_client_fd = accept(sync_server_fd, NULL, NULL);
+        if (sync_client_fd < 0) {
+            perror("QEMU accept");
+            return 0;
+        }
+
+        /* Send DATA_REQ to host */
+        const char *req_msg = "DATA_REQ";
+        write(sync_client_fd, req_msg, strlen(req_msg)+1);
+
+        /* Receive data from host */
+        // 单次传输大小受限于 Linux PIPE_BUF(4096 Bytes)，通过循环 read 接收所有数据
+        uint8_t *buffer = malloc(data_len);
+        size_t total_received = 0;
+        while (total_received < data_len) {
+            ssize_t received = read(sync_client_fd, buffer + total_received, data_len - total_received);
+            if (received <= 0) { perror("QEMU read"); free(buffer); return 0; }
+            total_received += received;
+        }
+        // printf("QEMU: Finish receive %zu bytes data.\n", total_received);
+
+        /* Write back into memory of user space */
+        write_guest_user_buf(env, data_address, buffer, data_len, GETPC());
+        free(buffer);
+
+        /* close the client connection */
+        close(sync_client_fd);
+#endif
+    }
+    return 0;
+}
+
 #endif
 
 /* Exceptions processing helpers */
