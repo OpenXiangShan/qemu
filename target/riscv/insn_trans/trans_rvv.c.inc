@@ -680,7 +680,6 @@ static bool ld_us_op(DisasContext *s, arg_r2nfvm *a, uint8_t eew)
     CPUState *cpu = s->cs;
     CPURISCVState *env = cpu_env(cpu);
     if (env->sync_skip_mode) {
-        /* 将指令翻译成sync_skip，跳过执行 */
         gen_helper_sync_skip(tcg_env);
         return true;
     } else {
@@ -729,13 +728,6 @@ GEN_VEXT_TRANS(vle64_v, MO_64, r2nfvm, ld_us_op, ld_us_check)
 
 static bool st_us_op(DisasContext *s, arg_r2nfvm *a, uint8_t eew)
 {
-    CPUState *cpu = s->cs;
-    CPURISCVState *env = cpu_env(cpu);
-    if (env->sync_skip_mode) {
-        /* 将指令翻译成sync_skip，跳过执行 */
-        gen_helper_sync_skip(tcg_env);
-        return true;
-    } else {
     uint32_t data = 0;
     gen_helper_ldst_us *fn;
     static gen_helper_ldst_us * const fns[2][4] = {
@@ -757,7 +749,6 @@ static bool st_us_op(DisasContext *s, arg_r2nfvm *a, uint8_t eew)
     data = FIELD_DP32(data, VDATA, LMUL, emul);
     data = FIELD_DP32(data, VDATA, NF, a->nf);
     return ldst_us_trans(a->rd, a->rs1, data, fn, s, true);
-    }
 }
 
 static bool st_us_check(DisasContext *s, arg_r2nfvm* a, uint8_t eew)
@@ -2333,6 +2324,12 @@ static bool opfvf_check(DisasContext *s, arg_rmrr *a)
 #define GEN_OPFVF_TRANS(NAME, CHECK)                              \
 static bool trans_##NAME(DisasContext *s, arg_rmrr *a)            \
 {                                                                 \
+    CPUState *cpu = s->cs;                                        \
+    CPURISCVState *env = cpu_env(cpu);                            \
+    if (env->sync_skip_mode) {                                    \
+        gen_helper_sync_skip(tcg_env);                            \
+        return true;                                              \
+    } else {                                                      \
     if (CHECK(s, a)) {                                            \
         uint32_t data = 0;                                        \
         static gen_helper_opfvf *const fns[3] = {                 \
@@ -2351,6 +2348,7 @@ static bool trans_##NAME(DisasContext *s, arg_rmrr *a)            \
                            fns[s->sew - 1], s);                   \
     }                                                             \
     return false;                                                 \
+    }                                                             \
 }
 
 GEN_OPFVF_TRANS(vfadd_vf,  opfvf_check)
@@ -2371,6 +2369,12 @@ static bool opfvv_widen_check(DisasContext *s, arg_rmrr *a)
 #define GEN_OPFVV_WIDEN_TRANS(NAME, CHECK)                       \
 static bool trans_##NAME(DisasContext *s, arg_rmrr *a)           \
 {                                                                \
+    CPUState *cpu = s->cs;                                       \
+    CPURISCVState *env = cpu_env(cpu);                           \
+    if (env->sync_skip_mode) {                                   \
+        gen_helper_sync_skip(tcg_env);                           \
+        return true;                                             \
+    } else {                                                     \
     if (CHECK(s, a)) {                                           \
         uint32_t data = 0;                                       \
         static gen_helper_gvec_4_ptr * const fns[2] = {          \
@@ -2392,6 +2396,7 @@ static bool trans_##NAME(DisasContext *s, arg_rmrr *a)           \
         return true;                                             \
     }                                                            \
     return false;                                                \
+    }                                                            \
 }
 
 GEN_OPFVV_WIDEN_TRANS(vfwadd_vv, opfvv_widen_check)

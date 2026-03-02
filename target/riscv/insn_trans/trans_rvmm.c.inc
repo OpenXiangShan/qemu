@@ -353,7 +353,13 @@ static bool mm_oprmm_trans(uint32_t md, uint32_t ms1, uint32_t ms2,
     tcg_gen_addi_ptr(src1, tcg_env, mregs_ofs(s, ms1));
     tcg_gen_addi_ptr(src2, tcg_env, mregs_ofs(s, ms2));
 
+    CPUState *cpu = s->cs;
+    CPURISCVState *env = cpu_env(cpu);
+    if (env->sync_skip_mode) {
+        gen_helper_sync_skip(tcg_env);
+    } else {
     fn(dest, src1, src2, tcg_env);
+    }
 
     /*tcg_temp_free_ptr(dest);
     tcg_temp_free_ptr(src1);
