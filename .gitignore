@@ -20,3 +20,11 @@ GTAGS
 *.swp
 *.patch
 *.gcov
+*.envrc
+*CLAUDE.md
+*anthor_works/
+*draft.md
+*plan.md
+/.claude/
+
+.humanize*

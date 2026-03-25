@@ -63,6 +63,13 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
     size_t const compress_size = ZSTD_compress(compress_buffer, compress_buffer_size, pmem_addr, guest_pmem_size, 1);
     assert(compress_size<=compress_buffer_size&&compress_size!=0);
 
+    // Fix file extension for zstd (.zst is one byte longer than .gz)
+    char *ext = strrchr(filepath, '.');
+    if (ext && strcmp(ext, ".gz") == 0 &&
+        (ext - filepath) + 4 < FILEPATH_BUF_SIZE) {
+        memcpy(ext, ".zst", 5);
+    }
+
     FILE *compress_file=fopen(filepath,"wb");
     size_t fw_size = fwrite(compress_buffer,1,compress_size,compress_file);
 
