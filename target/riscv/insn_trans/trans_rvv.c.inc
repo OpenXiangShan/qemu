@@ -677,6 +677,12 @@ static bool ldst_us_trans(uint32_t vd, uint32_t rs1, uint32_t data,
 
 static bool ld_us_op(DisasContext *s, arg_r2nfvm *a, uint8_t eew)
 {
+    CPUState *cpu = s->cs;
+    CPURISCVState *env = cpu_env(cpu);
+    if (env->sync_skip_mode) {
+        gen_helper_sync_skip(tcg_env);
+        return true;
+    } else {
     uint32_t data = 0;
     gen_helper_ldst_us *fn;
     static gen_helper_ldst_us * const fns[2][4] = {
@@ -705,6 +711,7 @@ static bool ld_us_op(DisasContext *s, arg_r2nfvm *a, uint8_t eew)
     data = FIELD_DP32(data, VDATA, VTA, s->vta);
     data = FIELD_DP32(data, VDATA, VMA, s->vma);
     return ldst_us_trans(a->rd, a->rs1, data, fn, s, false);
+    }
 }
 
 static bool ld_us_check(DisasContext *s, arg_r2nfvm* a, uint8_t eew)
@@ -1128,12 +1135,19 @@ static bool ldst_whole_trans(uint32_t vd, uint32_t rs1, uint32_t nf,
 #define GEN_LDST_WHOLE_TRANS(NAME, ARG_NF)                                \
 static bool trans_##NAME(DisasContext *s, arg_##NAME * a)                 \
 {                                                                         \
+    CPUState *cpu = s->cs;                                                \
+    CPURISCVState *env = cpu_env(cpu);                                    \
+    if (env->sync_skip_mode) {                                            \
+        gen_helper_sync_skip(tcg_env);                                    \
+        return true;                                                      \
+    } else {                                                              \
     if (require_rvv(s) &&                                                 \
         QEMU_IS_ALIGNED(a->rd, ARG_NF)) {                                 \
         return ldst_whole_trans(a->rd, a->rs1, ARG_NF,                    \
                                 gen_helper_##NAME, s);                    \
     }                                                                     \
     return false;                                                         \
+    }                                                                     \
 }
 
 GEN_LDST_WHOLE_TRANS(vl1re8_v,  1)
@@ -1498,12 +1512,19 @@ static bool do_opivv_widen(DisasContext *s, arg_rmrr *a,
 #define GEN_OPIVV_WIDEN_TRANS(NAME, CHECK) \
 static bool trans_##NAME(DisasContext *s, arg_rmrr *a)       \
 {                                                            \
+    CPUState *cpu = s->cs;                                   \
+    CPURISCVState *env = cpu_env(cpu);                       \
+    if (env->sync_skip_mode) {                               \
+        gen_helper_sync_skip(tcg_env);                       \
+        return true;                                         \
+    } else {                                                 \
     static gen_helper_gvec_4_ptr * const fns[3] = {          \
         gen_helper_##NAME##_b,                               \
         gen_helper_##NAME##_h,                               \
         gen_helper_##NAME##_w                                \
     };                                                       \
     return do_opivv_widen(s, a, fns[s->sew], CHECK);         \
+    }                                                        \
 }
 
 GEN_OPIVV_WIDEN_TRANS(vwaddu_vv, opivv_widen_check)
@@ -2303,6 +2324,12 @@ static bool opfvf_check(DisasContext *s, arg_rmrr *a)
 #define GEN_OPFVF_TRANS(NAME, CHECK)                              \
 static bool trans_##NAME(DisasContext *s, arg_rmrr *a)            \
 {                                                                 \
+    CPUState *cpu = s->cs;                                        \
+    CPURISCVState *env = cpu_env(cpu);                            \
+    if (env->sync_skip_mode) {                                    \
+        gen_helper_sync_skip(tcg_env);                            \
+        return true;                                              \
+    } else {                                                      \
     if (CHECK(s, a)) {                                            \
         uint32_t data = 0;                                        \
         static gen_helper_opfvf *const fns[3] = {                 \
@@ -2321,6 +2348,7 @@ static bool trans_##NAME(DisasContext *s, arg_rmrr *a)            \
                            fns[s->sew - 1], s);                   \
     }                                                             \
     return false;                                                 \
+    }                                                             \
 }
 
 GEN_OPFVF_TRANS(vfadd_vf,  opfvf_check)
@@ -2341,6 +2369,12 @@ static bool opfvv_widen_check(DisasContext *s, arg_rmrr *a)
 #define GEN_OPFVV_WIDEN_TRANS(NAME, CHECK)                       \
 static bool trans_##NAME(DisasContext *s, arg_rmrr *a)           \
 {                                                                \
+    CPUState *cpu = s->cs;                                       \
+    CPURISCVState *env = cpu_env(cpu);                           \
+    if (env->sync_skip_mode) {                                   \
+        gen_helper_sync_skip(tcg_env);                           \
+        return true;                                             \
+    } else {                                                     \
     if (CHECK(s, a)) {                                           \
         uint32_t data = 0;                                       \
         static gen_helper_gvec_4_ptr * const fns[2] = {          \
@@ -2362,6 +2396,7 @@ static bool trans_##NAME(DisasContext *s, arg_rmrr *a)           \
         return true;                                             \
     }                                                            \
     return false;                                                \
+    }                                                            \
 }
 
 GEN_OPFVV_WIDEN_TRANS(vfwadd_vv, opfvv_widen_check)

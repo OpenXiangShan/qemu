@@ -804,23 +804,6 @@ static RISCVException write_vcsr(CPURISCVState *env, int csrno,
     return RISCV_EXCP_NONE;
 }
 
-static RISCVException read_mrstart(CPURISCVState *env, int csrno,
-                                   target_ulong *val)
-{
-    *val = env->mrstart;
-    return RISCV_EXCP_NONE;
-}
-
-static RISCVException write_mrstart(CPURISCVState *env, int csrno,
-                                    target_ulong val)
-{
-    /*if (val < get_mrows(env)) {
-        env->mrstart = val;
-    }*/
-    qemu_log_mask(LOG_UNIMP, "No support for writing to mrstart.");
-    return RISCV_EXCP_NONE;
-}
-
 static RISCVException read_mcsr(CPURISCVState *env, int csrno,
                                 target_ulong *val)
 {
@@ -831,39 +814,103 @@ static RISCVException read_mcsr(CPURISCVState *env, int csrno,
 static RISCVException write_mcsr(CPURISCVState *env, int csrno,
                                  target_ulong val)
 {
-    env->mcsr = val & (MCSR_RM | MCSR_SAT);
-    env->mxrm = get_field(val, MCSR_RM);
-    env->mxsat = get_field(val, MCSR_SAT);
+    env->mcsr = val & (MCSR_RM | MCSR_SAT | MCSR_FFLAGS | MCSR_FRM | MCSR_SATEN);
+    env->xmxrm = get_field(val, MCSR_RM);
+    env->xmsat = get_field(val, MCSR_SAT);
+    env->xmfflags = get_field(val, MCSR_FFLAGS);
+    env->xmfrm = get_field(val, MCSR_FRM);
+    env->xmsaten = get_field(val, MCSR_SATEN);
     return RISCV_EXCP_NONE;
 }
 
-static RISCVException read_msize(CPURISCVState *env, int csrno,
-                                 target_ulong *val)
+static RISCVException read_xmxrm(CPURISCVState *env, int csrno,
+                                target_ulong *val)
 {
-    *val = (env->sizek << 16) | (env->sizen << 8) | (env->sizem);
+    *val = env->xmxrm;
     return RISCV_EXCP_NONE;
 }
 
-static RISCVException write_msize(CPURISCVState *env, int csrno,
+static RISCVException write_xmxrm(CPURISCVState *env, int csrno,
                                  target_ulong val)
 {
-    env->sizek = get_field(val, 0xffff0000);
-    env->sizen = get_field(val, 0xff00);
-    env->sizem = get_field(val, 0xff);
+    env->xmxrm = val;
     return RISCV_EXCP_NONE;
 }
 
-static RISCVException read_mlenb(CPURISCVState *env, int csrno,
-                                    target_ulong *val)
+static RISCVException read_xmsat(CPURISCVState *env, int csrno,
+                                target_ulong *val)
 {
-    *val = get_mlenb(env);
+    *val = env->xmsat;
     return RISCV_EXCP_NONE;
 }
 
-static RISCVException read_rlenb(CPURISCVState *env, int csrno,
+static RISCVException write_xmsat(CPURISCVState *env, int csrno,
+                                 target_ulong val)
+{
+    env->xmsat = val;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_xmfflags(CPURISCVState *env, int csrno,
+                                target_ulong *val)
+{
+    *val = env->xmfflags;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_xmfflags(CPURISCVState *env, int csrno,
+                                 target_ulong val)
+{
+    env->xmfflags = val;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_xmfrm(CPURISCVState *env, int csrno,
+                                target_ulong *val)
+{
+    *val = env->xmfrm;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_xmfrm(CPURISCVState *env, int csrno,
+                                 target_ulong val)
+{
+    env->xmfrm = val;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_xmsaten(CPURISCVState *env, int csrno,
+                                target_ulong *val)
+{
+    *val = env->xmsaten;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_xmsaten(CPURISCVState *env, int csrno,
+                                 target_ulong val)
+{
+    env->xmsaten = val;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_mtilem(CPURISCVState *env, int csrno,
                                  target_ulong *val)
 {
-    *val = get_rlenb(env);
+    *val = env->mtilem;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_mtilen(CPURISCVState *env, int csrno,
+                                 target_ulong *val)
+{
+    *val = env->mtilen;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_mtilek(CPURISCVState *env, int csrno,
+                                 target_ulong *val)
+{
+    *val = env->mtilek;
     return RISCV_EXCP_NONE;
 }
 
@@ -871,6 +918,27 @@ static RISCVException read_xmisa(CPURISCVState *env, int csrno,
                                  target_ulong *val)
 {
     *val = env->xmisa;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_xtlenb(CPURISCVState *env, int csrno,
+                                    target_ulong *val)
+{
+    *val = env->xtlenb;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_xtrlenb(CPURISCVState *env, int csrno,
+                                 target_ulong *val)
+{
+    *val = env->xtrlenb;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_xalenb(CPURISCVState *env, int csrno,
+                                 target_ulong *val)
+{
+    *val = env->xalenb;
     return RISCV_EXCP_NONE;
 }
 
@@ -5010,12 +5078,19 @@ riscv_csr_operations csr_ops[CSR_TABLE_SIZE] = {
     [CSR_VLENB]    = { "vlenb",    vs,     read_vlenb                 },
 
     /* Matrix CSRs */
-    [CSR_MRSTART]  = { "mrstart",  ms,    read_mrstart, write_mrstart},
-    [CSR_MCSR]     = { "mcsr",     ms,    read_mcsr,    write_mcsr   },
-    [CSR_MSIZE]    = { "msize",    ms,    read_msize,   write_msize  },
-    [CSR_MLENB]    = { "mlenb",    ms,    read_mlenb                 },
-    [CSR_MRLENB]   = { "rlenb",    ms,    read_rlenb                 },
-    [CSR_XMISA]    = { "xmisa",    ms,    read_xmisa                 },
+    [CSR_MCSR]     = { "mcsr",     ms,    read_mcsr,     write_mcsr   },
+    [CSR_MTILEM]   = { "mtilem",   ms,    read_mtilem                 },
+    [CSR_MTILEN]   = { "mtilen",   ms,    read_mtilen                 },
+    [CSR_MTILEK]   = { "mtilek",   ms,    read_mtilek                 },
+    [CSR_XMISA]    = { "xmisa",    ms,    read_xmisa                  },
+    [CSR_XTLENB]   = { "xtlenb",   ms,    read_xtlenb                 },
+    [CSR_XTRLENB]  = { "xtrlenb",  ms,    read_xtrlenb                },
+    [CSR_XALENB]   = { "xalenb",   ms,    read_xalenb                 },
+    [CSR_XMXRM]    = { "xmxrm",    ms,    read_xmxrm,    write_xmxrm  },
+    [CSR_XMSAT]    = { "xmsat",    ms,    read_xmsat,    write_xmsat  },
+    [CSR_XMFFLAGS] = { "xmfflags", ms,    read_xmfflags, write_xmfflags},
+    [CSR_XMFRM]    = { "xmfrm",    ms,    read_xmfrm,    write_xmfrm  },
+    [CSR_XMSATEN]  = { "xmsaten",  ms,    read_xmsaten,  write_xmsaten},
 
     /* User Timers and Counters */
     [CSR_CYCLE]    = { "cycle",    ctr,    read_hpmcounter  },

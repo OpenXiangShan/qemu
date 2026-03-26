@@ -41,7 +41,11 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
         strcpy(filepath,((GString*)(g_list_first(ns->path_manager.checkpoint_path_list)->data))->str);
         info_report("prepare for generate checkpoint path %s inst_count %ld pmem_size %ld", filepath, inst_count, guest_pmem_size);
     }else if(ns->nemu_args.checkpoint_mode==UniformCheckpointing || ns->nemu_args.checkpoint_mode == SyncUniformCheckpoint){
-        sprintf(filepath, "%s/%ld/_%ld_.gz", ns->path_manager.uniform_path->str, inst_count, inst_count);
+#ifdef USE_ZSTD_COMPRESS
+        sprintf(filepath, "%s/%ld/_%ld_.zstd", ns->path_manager.uniform_path->str, inst_count, inst_count);
+#else
+        sprintf(filepath, "%s/%ld/_%ld_.gz",   ns->path_manager.uniform_path->str, inst_count, inst_count);
+#endif
         info_report("prepare for generate checkpoint path %s base_path %s inst_count %ld pmem_size %ld", filepath, ns->path_manager.uniform_path->str, inst_count, guest_pmem_size);
     }
     assert(g_mkdir_with_parents(g_path_get_dirname(filepath), 0775)==0);

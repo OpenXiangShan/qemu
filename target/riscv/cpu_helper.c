@@ -107,22 +107,23 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
     }
 
     if (cpu->cfg.ext_matrix) {
-        DP_TBFLAGS_MATRIX(flags, PWI32, !!(env->xmisa & MATRIX_PW_I32));
-        DP_TBFLAGS_MATRIX(flags, PWI64, !!(env->xmisa & MATRIX_PW_I64));
-        DP_TBFLAGS_MATRIX(flags, I4I32, !!(env->xmisa & MATRIX_MULT_I4I32));
-        DP_TBFLAGS_MATRIX(flags, I8I32, !!(env->xmisa & MATRIX_MULT_I8I32));
-        DP_TBFLAGS_MATRIX(flags, I16I64, !!(env->xmisa & MATRIX_MULT_I16I64));
-        DP_TBFLAGS_MATRIX(flags, F16F16, !!(env->xmisa & MATRIX_MULT_F16F16));
-        DP_TBFLAGS_MATRIX(flags, F32F32, !!(env->xmisa & MATRIX_MULT_F32F32));
-        DP_TBFLAGS_MATRIX(flags, F64F64, !!(env->xmisa & MATRIX_MULT_F64F64));
+        // DP_TBFLAGS_MATRIX(flags, I4I32, !!(env->xmisa & MATRIX_MULT_I4I32));
+        // DP_TBFLAGS_MATRIX(flags, I8I32, !!(env->xmisa & MATRIX_MULT_I8I32));
+        // DP_TBFLAGS_MATRIX(flags, F16F16, !!(env->xmisa & MATRIX_MULT_F16F16));
+        // DP_TBFLAGS_MATRIX(flags, F32F32, !!(env->xmisa & MATRIX_MULT_F32F32));
+        // DP_TBFLAGS_MATRIX(flags, F64F64, !!(env->xmisa & MATRIX_MULT_F64F64));
+        // DP_TBFLAGS_MATRIX(flags, F8F16, !!(env->xmisa & MATRIX_MULT_F8F16));
+        // DP_TBFLAGS_MATRIX(flags, F8BF16, !!(env->xmisa & MATRIX_MULT_F8BF16));
+        // DP_TBFLAGS_MATRIX(flags, F16F32, !!(env->xmisa & MATRIX_MULT_F16F32));
+        // DP_TBFLAGS_MATRIX(flags, BF16F32, !!(env->xmisa & MATRIX_MULT_BF16F32));
+        // DP_TBFLAGS_MATRIX(flags, F32F64, !!(env->xmisa & MATRIX_MULT_F32F64));
+        // DP_TBFLAGS_MATRIX(flags, F8F32, !!(env->xmisa & MATRIX_MULT_F8F32));
         DP_TBFLAGS_MATRIX(flags, MILL,
-                         env->sizem > get_mrows(env) || env->sizem == 0);
+                         env->mtilem > get_mrows(env) || env->mtilem == 0);
         DP_TBFLAGS_MATRIX(flags, NILL,
-                         env->sizen > get_mrows(env) || env->sizen == 0);
+                         env->mtilen > get_mrows(env) || env->mtilen == 0);
         DP_TBFLAGS_MATRIX(flags, KILL,
-                         env->sizek > get_rlenb(env) || env->sizek == 0);
-        DP_TBFLAGS_MATRIX(flags, NPILL,
-                         env->sizen > 2 * get_mrows(env) || env->sizen == 0);
+                         env->mtilek > get_rlenb(env) || env->mtilek == 0);
     }
 
 #ifdef CONFIG_USER_ONLY

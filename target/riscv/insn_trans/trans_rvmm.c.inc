@@ -2,97 +2,47 @@
 #include "tcg/tcg-gvec-desc.h"
 #include "internals.h"
 
-static inline uint32_t get_rows(DisasContext *s)
-{
-    return s->mrowlen / RV_MACC_LEN;
-}
-
-static inline target_ulong get_row_mask(DisasContext *s)
-{
-    return (target_ulong)pow2ceil(get_rows(s)) - 1;
-}
-
 static inline bool require_matrix(DisasContext *s)
 {
-    return s->mcsr_ms != 0;
-}
-
-static void pack_msize(TCGv t, TCGv sizem, TCGv sizen, TCGv sizek)
-{
-    tcg_gen_deposit_tl(t, tcg_constant_tl(0), sizem, 0, 8);
-    tcg_gen_deposit_tl(t, t, sizen, 8, 8);
-    tcg_gen_deposit_tl(t, t, sizek, 16, 16);
-}
-
-static bool do_mcfg(DisasContext *s, TCGv tval, uint32_t rd, bool m, bool n, bool k)
-{
-    TCGv t = temp_new(s);
-
-    tcg_debug_assert(m || n || k);
-    if (!require_matrix(s)) {
-        return false;
-    }
-
-    if (m && n && k) {
-        tcg_gen_extract_tl(sizem, tval, 0, 8);
-        tcg_gen_extract_tl(sizen, tval, 8, 8);
-        tcg_gen_extract_tl(sizek, tval, 16, 16);
-    } else {
-        if (m || n) {
-            tcg_gen_extract_tl(t, tval, 0, 8);
-        } else {
-            tcg_gen_extract_tl(t, tval, 0, 16);
-        }
-        tcg_gen_mov_tl(m ? sizem : (n ? sizen : sizek), t);
-    }
-
-    pack_msize(t, sizem, sizen, sizek);
-    gen_set_gpr(s, rd, t);
-    
-    gen_update_pc(s, s->cur_insn_len);
-    lookup_and_goto_ptr(s);
-    s->base.is_jmp = DISAS_NORETURN;
-
+    /* return s->xmstatus_ms != 0; */
     return true;
 }
 
-static bool trans_mcfgm(DisasContext *s, arg_mm_cfg *a)
-{
-    TCGv src1 = get_gpr(s, a->rs1, EXT_NONE);
-    return do_mcfg(s, src1, a->rd, true, false, false);
-}
+/* Matrix Configuration translation */
+typedef enum MTileSel {
+    MTILE_M = 0,
+    MTILE_N = 1,
+    MTILE_K = 2,
+} MTileSel;
 
-static bool trans_mcfgn(DisasContext *s, arg_mm_cfg *a)
+static bool do_msettile(DisasContext *s, TCGv val, MTileSel which)
 {
-    TCGv src1 = get_gpr(s, a->rs1, EXT_NONE);
-    return do_mcfg(s, src1, a->rd, false, true, false);
-}
-
-static bool trans_mcfgk(DisasContext *s, arg_mm_cfg *a)
-{
-    TCGv src1 = get_gpr(s, a->rs1, EXT_NONE);
-    return do_mcfg(s, src1, a->rd, false, false, true);
-}
-
-static bool trans_mcfg(DisasContext *s, arg_mm_cfg *a)
-{
-    TCGv src1 = get_gpr(s, a->rs1, EXT_NONE);
-    return do_mcfg(s, src1, a->rd, true, true, true);
-}
-
-static bool do_mcfgi(DisasContext *s, target_ulong val, uint32_t rd, bool m, bool n, bool k)
-{
-    TCGv t = temp_new(s);
-
-    tcg_debug_assert(m || n || k);
     if (!require_matrix(s)) {
         return false;
     }
 
-    tcg_gen_movi_tl(m ? sizem : (n ? sizen : sizek), val);
+    TCGv t = temp_new(s);
+    /* Conservative mask: immediate is uimm10; rs1-form might supply wider,
+     * but architecturally tile sizes are bounded. Keeping low 10 bits is safe.
+     */
+    tcg_gen_andi_tl(t, val, 0x3ff);
 
-    pack_msize(t, sizem, sizen, sizek);
-    gen_set_gpr(s, rd, t);
+    switch (which) {
+    case MTILE_M:
+        tcg_gen_mov_tl(mtilem, t);
+        gen_helper_msettilem(tcg_env, t);
+        break;
+    case MTILE_N:
+        tcg_gen_mov_tl(mtilen, t);
+        gen_helper_msettilen(tcg_env, t);
+        break;
+    case MTILE_K:
+        tcg_gen_mov_tl(mtilek, t);
+        gen_helper_msettilek(tcg_env, t);
+        break;
+    default:
+        g_assert_not_reached();
+    }
 
     gen_update_pc(s, s->cur_insn_len);
     lookup_and_goto_ptr(s);
@@ -100,416 +50,296 @@ static bool do_mcfgi(DisasContext *s, target_ulong val, uint32_t rd, bool m, boo
     return true;
 }
 
-static bool trans_mcfgmi(DisasContext *s, arg_mm_cfg_i *a)
+static bool trans_msettilem(DisasContext *s, arg_mm_settile *a)
 {
-    return do_mcfgi(s, a->uimm7, a->rd, true, false, false);
+    TCGv src1 = get_gpr(s, a->rs1, EXT_NONE);
+    return do_msettile(s, src1, MTILE_M);
 }
 
-static bool trans_mcfgni(DisasContext *s, arg_mm_cfg_i *a)
+static bool trans_msettilen(DisasContext *s, arg_mm_settile *a)
 {
-    return do_mcfgi(s, a->uimm7, a->rd, false, true, false);
+    TCGv src1 = get_gpr(s, a->rs1, EXT_NONE);
+    return do_msettile(s, src1, MTILE_N);
 }
 
-static bool trans_mcfgki(DisasContext *s, arg_mm_cfg_i *a)
+static bool trans_msettilek(DisasContext *s, arg_mm_settile *a)
 {
-    return do_mcfgi(s, a->uimm7, a->rd, false, false, true);
+    TCGv src1 = get_gpr(s, a->rs1, EXT_NONE);
+    return do_msettile(s, src1, MTILE_K);
 }
 
-/* matrix register offset from env */
-static uint32_t mregs_ofs(DisasContext *s, int mreg_idx)
+static bool do_msettilei(DisasContext *s, uint32_t uimm10, MTileSel which)
 {
-    return offsetof(CPURISCVState, mreg) + (mreg_idx * s->mrowlen * s->mrowlen >> 8);
+    TCGv val = tcg_constant_tl((target_ulong)(uimm10 & 0x3ff));
+    return do_msettile(s, val, which);
+}
+
+static bool trans_msettilemi(DisasContext *s, arg_mm_settile_i *a)
+{
+    return do_msettilei(s, a->uimm10, MTILE_M);
+}
+
+static bool trans_msettileni(DisasContext *s, arg_mm_settile_i *a)
+{
+    return do_msettilei(s, a->uimm10, MTILE_N);
+}
+
+static bool trans_msettileki(DisasContext *s, arg_mm_settile_i *a)
+{
+    return do_msettilei(s, a->uimm10, MTILE_K);
 }
 
 /* Check */
-
-/* Check sizeM and sizeK */
 static inline bool mmext_check_mk(DisasContext *s)
 {
     return !s->mill && !s->kill;
 }
 
-/* Check sizeM, sizeN and sizeK */
+static inline bool mmext_check_nk(DisasContext *s)
+{
+    return !s->nill && !s->kill;
+}
+
+static inline bool mmext_check_mn(DisasContext *s)
+{
+    return !s->mill && !s->nill;
+}
+
 static inline bool mmext_check_mnk(DisasContext *s)
 {
-    return !s->nill && mmext_check_mk(s);
+    return !s->mill && !s->nill && !s->kill;
 }
 
-/* Check sizeM, sizeN(pair) and sizeK */
-static inline bool mmext_check_mnpk(DisasContext *s)
+static inline bool mmext_check_tile_reg(uint32_t mreg)
 {
-    return !s->mill && !s->npill && !s->kill;
+    return mreg < 4;
 }
 
-static inline bool mmext_check_pwi32(DisasContext *s)
+static inline bool mmext_check_acc_reg(uint32_t mreg)
 {
-    return s->pwi32 && require_matrix(s) && mmext_check_mk(s);
+    return mreg >= 4 && mreg < 8;
 }
 
-static inline bool mmext_check_pwi64(DisasContext *s)
+/* matrix register offset from env */
+static uint32_t mregs_ofs(DisasContext *s, int mreg_idx)
 {
-    return s->pwi64 && require_matrix(s) && mmext_check_mk(s);
+    /* BUG FIX: Correct physical register sizes
+     * - Tile registers (tr0-tr3, idx 0-3): mrows × rlenb bytes
+     *   = (mreglen/mrowlen) × (mrowlen/8) = mreglen/8 bytes
+     * - Accumulator registers (acc0-acc3, idx 4-7): mrows × mrows × 4 bytes
+     *   = (mreglen/mrowlen)² × 4 bytes
+     * 
+     * With mreglen=65536 bits, mrowlen=512 bits:
+     * - Tile: 65536/8 = 8192 bytes
+     * - Accumulator: (65536/512)² × 4 = 128² × 4 = 65536 bytes
+     */
+    uint32_t mrows = s->mreglen / s->mrowlen;  // 65536/512 = 128
+    uint32_t rlenb = s->mrowlen >> 3;          // 512/8 = 64 bytes
+    uint32_t tile_size = mrows * rlenb;        // 128 * 64 = 8192 bytes
+    uint32_t acc_size = mrows * mrows * 4;     // 128 * 128 * 4 = 65536 bytes
+    
+    uint32_t offset = offsetof(CPURISCVState, mreg);
+    if (mreg_idx < 4) {
+        /* Tile registers tr0-tr3 */
+        offset += mreg_idx * tile_size;
+    } else {
+        /* Accumulator registers acc0-acc3 */
+        offset += 4 * tile_size;  // Skip 4 tile registers
+        offset += (mreg_idx - 4) * acc_size;
+    }
+    return offset;
 }
 
-typedef void gen_helper_opimmi(TCGv_ptr, TCGv_ptr, TCGv_ptr, TCGv, TCGv_env);
-
-static bool mm_opi_trans(uint32_t md, uint32_t ms1, uint32_t ms2,
-                         target_ulong s1, gen_helper_opimmi *fn,
-                         DisasContext *s)
+/* Matrix Load/Store translation */
+/* load & store */
+static bool mmext_check_mldsta(DisasContext *s, uint32_t mreg)
 {
-    TCGv_ptr dest, src1, src2;
-    TCGv s1_v;
+    return require_matrix(s) && mmext_check_mk(s) && mmext_check_tile_reg(mreg);
+}
 
-    dest = tcg_temp_new_ptr();
-    src1 = tcg_temp_new_ptr();
-    src2 = tcg_temp_new_ptr();
+static bool mmext_check_mldstb(DisasContext *s, uint32_t mreg)
+{
+    return require_matrix(s) && mmext_check_nk(s) && mmext_check_tile_reg(mreg);
+}
 
-    s1_v = tcg_constant_tl(s1 & get_row_mask(s));
+static bool mmext_check_mldstc(DisasContext *s, uint32_t mreg)
+{
+    return require_matrix(s) && mmext_check_mn(s) && mmext_check_acc_reg(mreg);
+}
 
+typedef void gen_helper_ldst(TCGv_ptr, TCGv, TCGv, TCGv_env);
+
+static bool mm_ldst_op(uint32_t md, TCGv rs1, TCGv rs2,
+                              gen_helper_ldst *fn, DisasContext *s)
+{
+    CPUState *cpu = s->cs;
+    CPURISCVState *env = cpu_env(cpu);
+    if (env->sync_skip_mode) {
+        /* 将指令翻译成sync_skip，跳过执行 */
+        gen_helper_sync_skip(tcg_env);
+        return true;
+    } else {
+    TCGv_ptr dest = tcg_temp_new_ptr();
     tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
-    tcg_gen_addi_ptr(src1, tcg_env, mregs_ofs(s, ms1));
-    tcg_gen_addi_ptr(src2, tcg_env, mregs_ofs(s, ms2));
-
-    fn(dest, src1, src2, s1_v, tcg_env);
-
-    /*tcg_temp_free_ptr(dest);
-    tcg_temp_free_ptr(src1);
-    tcg_temp_free_ptr(src2);*/
-
+    fn(dest, rs1, rs2, tcg_env);
     return true;
+    }
 }
 
-#define GEN_MMEXT_OPI_TRANS(NAME, CHECK)                                    \
-static bool trans_##NAME(DisasContext *s, arg_mm_i *a)                      \
-{                                                                           \
-    if (CHECK(s)){                                                          \
-        return mm_opi_trans(a->md, a->ms1, a->ms2, (target_ulong) a->uimm3, \
-                            gen_helper_##NAME, s);                          \
-    }                                                                       \
-    return false;                                                           \
+#define GEN_MMEXT_LD(NAME, CHECK)                                    \
+static bool trans_##NAME(DisasContext *s, arg_mm_ld *a)              \
+{                                                                    \
+    if (CHECK(s, a->md)) {                                           \
+        return mm_ldst_op(a->md,                                     \
+            get_gpr(s, a->rs1, EXT_ZERO),                            \
+            get_gpr(s, a->rs2, EXT_ZERO),                            \
+            gen_helper_##NAME, s);                                   \
+    }                                                                \
+    return false;                                                    \
 }
 
-GEN_MMEXT_OPI_TRANS(madd_s_mv_i, mmext_check_pwi32)
-GEN_MMEXT_OPI_TRANS(msub_s_mv_i, mmext_check_pwi32)
-GEN_MMEXT_OPI_TRANS(msra_s_mv_i, mmext_check_pwi32)
-GEN_MMEXT_OPI_TRANS(mmul_s_mv_i, mmext_check_pwi32)
-GEN_MMEXT_OPI_TRANS(mmulh_s_mv_i, mmext_check_pwi32)
+#define GEN_MMEXT_ST(NAME, CHECK)                                    \
+static bool trans_##NAME(DisasContext *s, arg_mm_st *a)              \
+{                                                                    \
+    if (CHECK(s, a->ms3)) {                                          \
+        return mm_ldst_op(a->ms3,                                    \
+            get_gpr(s, a->rs1, EXT_ZERO),                            \
+            get_gpr(s, a->rs2, EXT_ZERO),                            \
+            gen_helper_##NAME, s);                                   \
+    }                                                                \
+    return false;                                                    \
+}
 
-GEN_MMEXT_OPI_TRANS(madd_d_mv_i, mmext_check_pwi64)
-GEN_MMEXT_OPI_TRANS(msub_d_mv_i, mmext_check_pwi64)
-GEN_MMEXT_OPI_TRANS(msra_d_mv_i, mmext_check_pwi64)
-GEN_MMEXT_OPI_TRANS(mmul_d_mv_i, mmext_check_pwi64)
+GEN_MMEXT_LD(mlae8,  mmext_check_mldsta)
+GEN_MMEXT_LD(mlae16, mmext_check_mldsta)
+GEN_MMEXT_LD(mlae32, mmext_check_mldsta)
+GEN_MMEXT_LD(mlae64, mmext_check_mldsta)
+GEN_MMEXT_ST(msae8,  mmext_check_mldsta)
+GEN_MMEXT_ST(msae16, mmext_check_mldsta)
+GEN_MMEXT_ST(msae32, mmext_check_mldsta)
+GEN_MMEXT_ST(msae64, mmext_check_mldsta)
 
+GEN_MMEXT_LD(mlbe8,  mmext_check_mldstb)
+GEN_MMEXT_LD(mlbe16, mmext_check_mldstb)
+GEN_MMEXT_LD(mlbe32, mmext_check_mldstb)
+GEN_MMEXT_LD(mlbe64, mmext_check_mldstb)
+GEN_MMEXT_ST(msbe8,  mmext_check_mldstb)
+GEN_MMEXT_ST(msbe16, mmext_check_mldstb)
+GEN_MMEXT_ST(msbe32, mmext_check_mldstb)
+GEN_MMEXT_ST(msbe64, mmext_check_mldstb)
 
-typedef void gen_helper_opimmx(TCGv_ptr, TCGv_ptr, TCGv_ptr, TCGv, TCGv_env);
+GEN_MMEXT_LD(mlce8,  mmext_check_mldstc)
+GEN_MMEXT_LD(mlce16, mmext_check_mldstc)
+GEN_MMEXT_LD(mlce32, mmext_check_mldstc)
+GEN_MMEXT_LD(mlce64, mmext_check_mldstc)
+GEN_MMEXT_ST(msce8,  mmext_check_mldstc)
+GEN_MMEXT_ST(msce16, mmext_check_mldstc)
+GEN_MMEXT_ST(msce32, mmext_check_mldstc)
+GEN_MMEXT_ST(msce64, mmext_check_mldstc)
 
-/* translation function for matrix-vector (register indexed) instructions */
-static bool mm_opx_trans(uint32_t md, uint32_t ms1, uint32_t ms2,
-                         TCGv s1, gen_helper_opimmx *fn,
-                         DisasContext *s)
+/* whole matrix load & store */
+/* Decode uses @mm_ld/@mm_st but rs2 is hard-wired to 0; helper only needs rs1. */
+static bool mmext_check_ldstm(DisasContext *s, uint32_t mreg)
 {
-    TCGv_ptr dest, src1, src2;
+    return require_matrix(s) && (mreg < 8);
+}
 
-    dest = tcg_temp_new_ptr();
-    src1 = tcg_temp_new_ptr();
-    src2 = tcg_temp_new_ptr();
+typedef void gen_helper_ldstm(TCGv_ptr, TCGv, TCGv_env);
 
+static bool mm_ldstm_op(uint32_t md, TCGv rs1,
+                                    gen_helper_ldstm *fn,
+                                    DisasContext *s)
+{
+    CPUState *cpu = s->cs;
+    CPURISCVState *env = cpu_env(cpu);
+    if (env->sync_skip_mode) {
+        /* 将指令翻译成sync_skip，跳过执行 */
+        gen_helper_sync_skip(tcg_env);
+        return true;
+    } else {
+    TCGv_ptr dest = tcg_temp_new_ptr();
     tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
-    tcg_gen_addi_ptr(src1, tcg_env, mregs_ofs(s, ms1));
-    tcg_gen_addi_ptr(src2, tcg_env, mregs_ofs(s, ms2));
-
-    tcg_gen_andi_tl(s1, s1, get_row_mask(s));
-    fn(dest, src1, src2, s1, tcg_env);
-
-    /*tcg_temp_free_ptr(dest);
-    tcg_temp_free_ptr(src1);
-    tcg_temp_free_ptr(src2);*/
-
+    fn(dest, rs1, tcg_env);
     return true;
-}
-
-#define GEN_MMEXT_OPX_TRANS(NAME, CHECK)                   \
-static bool trans_##NAME(DisasContext *s, arg_mm_r *a)     \
-{                                                          \
-    if (CHECK(s)){                                         \
-        return mm_opx_trans(a->md, a->ms1, a->ms2,         \
-                            get_gpr(s, a->rs1, EXT_ZERO),  \
-                            gen_helper_##NAME, s);         \
-    }                                                      \
-    return false;                                          \
-}
-
-GEN_MMEXT_OPX_TRANS(madd_s_mv_x, mmext_check_pwi32)
-GEN_MMEXT_OPX_TRANS(msub_s_mv_x, mmext_check_pwi32)
-GEN_MMEXT_OPX_TRANS(msra_s_mv_x, mmext_check_pwi32)
-GEN_MMEXT_OPX_TRANS(mmul_s_mv_x, mmext_check_pwi32)
-GEN_MMEXT_OPX_TRANS(mmulh_s_mv_x, mmext_check_pwi32)
-
-GEN_MMEXT_OPX_TRANS(madd_d_mv_x, mmext_check_pwi64)
-GEN_MMEXT_OPX_TRANS(msub_d_mv_x, mmext_check_pwi64)
-GEN_MMEXT_OPX_TRANS(msra_d_mv_x, mmext_check_pwi64)
-GEN_MMEXT_OPX_TRANS(mmul_d_mv_x, mmext_check_pwi64)
-
-typedef void gen_helper_opimmrx(TCGv_ptr, TCGv_ptr, TCGv, TCGv_env);
-
-/* translation function for matrix-vector (register indexed) instructions */
-static bool mm_oprx_trans(uint32_t md, uint32_t ms2, TCGv s1,
-                          gen_helper_opimmrx *fn, DisasContext *s)
-{
-    TCGv_ptr dest, src2;
-
-    dest = tcg_temp_new_ptr();
-    src2 = tcg_temp_new_ptr();
-
-    tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
-    tcg_gen_addi_ptr(src2, tcg_env, mregs_ofs(s, ms2));
-
-    fn(dest, src2, s1, tcg_env);
-
-    /*tcg_temp_free_ptr(dest);
-    tcg_temp_free_ptr(src2);*/
-
-    return true;
-}
-
-#define GEN_MMEXT_OPRX_TRANS(NAME, CHECK)                  \
-static bool trans_##NAME(DisasContext *s, arg_mm_rx *a)    \
-{                                                          \
-    if (CHECK(s)){                                         \
-        return mm_oprx_trans(a->md, a->ms2,                \
-                             get_gpr(s, a->rs1, EXT_ZERO), \
-                             gen_helper_##NAME, s);        \
-    }                                                      \
-    return false;                                          \
-}
-
-GEN_MMEXT_OPRX_TRANS(madd_s_mx, mmext_check_pwi32)
-GEN_MMEXT_OPRX_TRANS(msub_s_mx, mmext_check_pwi32)
-GEN_MMEXT_OPRX_TRANS(msra_s_mx, mmext_check_pwi32)
-GEN_MMEXT_OPRX_TRANS(mmul_s_mx, mmext_check_pwi32)
-GEN_MMEXT_OPRX_TRANS(mmulh_s_mx, mmext_check_pwi32)
-
-GEN_MMEXT_OPRX_TRANS(madd_d_mx, mmext_check_pwi64)
-GEN_MMEXT_OPRX_TRANS(msub_d_mx, mmext_check_pwi64)
-GEN_MMEXT_OPRX_TRANS(msra_d_mx, mmext_check_pwi64)
-GEN_MMEXT_OPRX_TRANS(mmul_d_mx, mmext_check_pwi64)
-
-static bool trans_mmov_mm(DisasContext *s, arg_mmov_mm *a)
-{
-    uint32_t len = get_rows(s) * s->mrowlen / 8;
-
-    if (!require_matrix(s)) {
-        return false;
-    }
-
-    tcg_gen_gvec_mov(MO_64, mregs_ofs(s, a->md), mregs_ofs(s, a->ms1),
-                     len, len);
-    return true;
-}
-
-static bool trans_mmov_mv_x(DisasContext *s, arg_mmov_mv_x *a)
-{
-    TCGv_ptr dest, src1;
-    TCGv row_index;
-
-    if (!require_matrix(s)) {
-        return false;
-    }
-
-    row_index = get_gpr(s, a->rs1, EXT_ZERO);
-    tcg_gen_andi_tl(row_index, row_index, get_row_mask(s));
-
-    dest = tcg_temp_new_ptr();
-    src1 = tcg_temp_new_ptr();
-    tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, a->md));
-    tcg_gen_addi_ptr(src1, tcg_env, mregs_ofs(s, a->ms1));
-
-    gen_helper_mmov_mv_x(dest, src1, row_index, tcg_env);
-
-    /*tcg_temp_free_ptr(dest);
-    tcg_temp_free_ptr(src1);*/
-
-    return true;
-}
-
-static bool trans_mmov_mv_i(DisasContext *s, arg_mm_mv_i *a)
-{
-    uint32_t rows = get_rows(s);
-
-    if (!require_matrix(s)) {
-        return false;
-    }
-
-    for (int i = 0; i < rows; i++) {
-        tcg_gen_gvec_mov(MO_64, mregs_ofs(s, a->md) + i * s->mrowlen / 8,
-                         mregs_ofs(s, a->ms1) + a->uimm3 * s->mrowlen / 8,
-                         s->mrowlen / 8, s->mrowlen / 8);
-    }
-    return true;
-}
-
-static bool trans_mdup_m_x(DisasContext *s, arg_mm_dup *a)
-{
-    uint32_t len = get_rows(s) * s->mrowlen / 8;
-    TCGv t = get_gpr(s, a->rs2, EXT_SIGN);
-    TCGv_i64 t_i64 = tcg_temp_new_i64();
-    tcg_gen_ext_tl_i64(t_i64, t);
-
-    if (!require_matrix(s)) {
-        return false;
-    }
-    tcg_gen_gvec_dup_i64(a->mo, mregs_ofs(s, a->md), len, len, t_i64);
-    // tcg_temp_free_i64(t_i64);
-    return true;
-}
-
-static void mm_store_element(TCGv_i64 val, TCGv_ptr base,
-                             int ofs, int sew)
-{
-    switch (sew) {
-    case MO_8:
-        tcg_gen_st8_i64(val, base, ofs);
-        break;
-    case MO_16:
-        tcg_gen_st16_i64(val, base, ofs);
-        break;
-    case MO_32:
-        tcg_gen_st32_i64(val, base, ofs);
-        break;
-    case MO_64:
-        tcg_gen_st_i64(val, base, ofs);
-        break;
-    default:
-        g_assert_not_reached();
-        break;
     }
 }
 
-static bool trans_mmov_m_x(DisasContext *s, arg_mm_mov *a)
-{
-    if (!require_matrix(s)) {
-        return false;
-    }
-    uint32_t len = get_rows(s) * s->mrowlen / 8;
-
-    TCGv src2 = get_gpr(s, a->rs2, EXT_SIGN);
-    TCGv_i64 val = tcg_temp_new_i64();
-    tcg_gen_ext_tl_i64(val, src2);
-
-    /* Get byte_index */
-    TCGv src1 = get_gpr(s, a->rs1, EXT_ZERO);
-    TCGv byte_index = temp_new(s);
-    tcg_gen_shli_tl(byte_index, src1, a->mo);
-    tcg_gen_rem_tl(byte_index, byte_index, tcg_constant_tl(len));
-    TCGv_i32 t_i32 = tcg_temp_new_i32();
-    TCGv_ptr t_ptr = tcg_temp_new_ptr();
-
-    /* Convert byte_index to pointer, thus it can be added to tcg_env */
-    tcg_gen_trunc_tl_i32(t_i32, byte_index);
-    tcg_gen_ext_i32_ptr(t_ptr, t_i32);
-    tcg_gen_add_ptr(t_ptr, tcg_env, t_ptr);
-
-    mm_store_element(val, t_ptr, mregs_ofs(s, a->md), a->mo);
-
-    // tcg_temp_free_i64(val);
-    // tcg_temp_free_i32(t_i32);
-    // tcg_temp_free_ptr(t_ptr);
-    return true;
+#define GEN_MMEXT_LDM_TRANS(NAME, CHECK)                    \
+static bool trans_##NAME(DisasContext *s, arg_mm_ld *a)     \
+{                                                           \
+    if (CHECK(s, a->md)) {                                  \
+        return mm_ldstm_op(a->md,                           \
+                           get_gpr(s, a->rs1, EXT_ZERO),    \
+                           gen_helper_##NAME, s);           \
+    }                                                       \
+    return false;                                           \
 }
 
-static void mm_load_element(TCGv_i64 dest, TCGv_ptr base,
-                            int ofs, int mo, bool sign)
-{
-    switch (mo) {
-    case MO_8:
-        if (!sign) {
-            tcg_gen_ld8u_i64(dest, base, ofs);
-        } else {
-            tcg_gen_ld8s_i64(dest, base, ofs);
-        }
-        break;
-    case MO_16:
-        if (!sign) {
-            tcg_gen_ld16u_i64(dest, base, ofs);
-        } else {
-            tcg_gen_ld16s_i64(dest, base, ofs);
-        }
-        break;
-    case MO_32:
-        if (!sign) {
-            tcg_gen_ld32u_i64(dest, base, ofs);
-        } else {
-            tcg_gen_ld32s_i64(dest, base, ofs);
-        }
-        break;
-    case MO_64:
-        tcg_gen_ld_i64(dest, base, ofs);
-        break;
-    default:
-        g_assert_not_reached();
-        break;
-    }
+#define GEN_MMEXT_STM_TRANS(NAME, CHECK)                    \
+static bool trans_##NAME(DisasContext *s, arg_mm_st *a)     \
+{                                                           \
+    if (CHECK(s, a->ms3)) {                                 \
+        return mm_ldstm_op(a->ms3,                          \
+                           get_gpr(s, a->rs1, EXT_ZERO),    \
+                           gen_helper_##NAME, s);           \
+    }                                                       \
+    return false;                                           \
 }
 
-static bool trans_mmov_x_m(DisasContext *s, arg_mm_mxm *a)
+GEN_MMEXT_LDM_TRANS(mlme8, mmext_check_ldstm)
+GEN_MMEXT_LDM_TRANS(mlme16, mmext_check_ldstm)
+GEN_MMEXT_LDM_TRANS(mlme32, mmext_check_ldstm)
+GEN_MMEXT_LDM_TRANS(mlme64, mmext_check_ldstm)
+GEN_MMEXT_STM_TRANS(msme8, mmext_check_ldstm)
+GEN_MMEXT_STM_TRANS(msme16, mmext_check_ldstm)
+GEN_MMEXT_STM_TRANS(msme32, mmext_check_ldstm)
+GEN_MMEXT_STM_TRANS(msme64, mmext_check_ldstm)
+
+/* transposed load & store */
+GEN_MMEXT_LD(mlate8,  mmext_check_mldsta)
+GEN_MMEXT_LD(mlate16, mmext_check_mldsta)
+GEN_MMEXT_LD(mlate32, mmext_check_mldsta)
+GEN_MMEXT_LD(mlate64, mmext_check_mldsta)
+GEN_MMEXT_ST(msate8,  mmext_check_mldsta)
+GEN_MMEXT_ST(msate16, mmext_check_mldsta)
+GEN_MMEXT_ST(msate32, mmext_check_mldsta)
+GEN_MMEXT_ST(msate64, mmext_check_mldsta)
+
+GEN_MMEXT_LD(mlbte8,  mmext_check_mldstb)
+GEN_MMEXT_LD(mlbte16, mmext_check_mldstb)
+GEN_MMEXT_LD(mlbte32, mmext_check_mldstb)
+GEN_MMEXT_LD(mlbte64, mmext_check_mldstb)
+GEN_MMEXT_ST(msbte8,  mmext_check_mldstb)
+GEN_MMEXT_ST(msbte16, mmext_check_mldstb)
+GEN_MMEXT_ST(msbte32, mmext_check_mldstb)
+GEN_MMEXT_ST(msbte64, mmext_check_mldstb)
+
+GEN_MMEXT_LD(mlcte8,  mmext_check_mldstc)
+GEN_MMEXT_LD(mlcte16, mmext_check_mldstc)
+GEN_MMEXT_LD(mlcte32, mmext_check_mldstc)
+GEN_MMEXT_LD(mlcte64, mmext_check_mldstc)
+GEN_MMEXT_ST(mscte8,  mmext_check_mldstc)
+GEN_MMEXT_ST(mscte16, mmext_check_mldstc)
+GEN_MMEXT_ST(mscte32, mmext_check_mldstc)
+GEN_MMEXT_ST(mscte64, mmext_check_mldstc)
+
+/* Matrix Multiplication translation */
+/* 
+ *   - Float  : mfmacc.* variants (fp16/fp32/fp64 and widening forms)
+ *   - Integer: mmacc{u,us,su}.w.b, (optionally packed variants)
+ */
+static inline bool mmext_check_macc_common(DisasContext *s, arg_mm_rmm *a)
 {
-    if (!require_matrix(s)) {
-        return false;
-    }
-    uint32_t len = get_rows(s) * s->mrowlen / 8;
-
-    TCGv_i64 t_i64 = tcg_temp_new_i64();
-    TCGv dest = dest_gpr(s, a->rd);
-
-    /* Get byte_index */
-    TCGv src1 = get_gpr(s, a->rs1, EXT_ZERO);
-    TCGv byte_index = temp_new(s);
-    tcg_gen_shli_tl(byte_index, src1, a->mo);
-    tcg_gen_rem_tl(byte_index, byte_index, tcg_constant_tl(len));
-    TCGv_i32 t_i32 = tcg_temp_new_i32();
-    TCGv_ptr t_ptr = tcg_temp_new_ptr();
-
-    /* Convert byte_index to pointer, thus it can be added to tcg_env */
-    tcg_gen_trunc_tl_i32(t_i32, byte_index);
-    tcg_gen_ext_i32_ptr(t_ptr, t_i32);
-    tcg_gen_add_ptr(t_ptr, tcg_env, t_ptr);
-
-    mm_load_element(t_i64, t_ptr, mregs_ofs(s, a->ms2), a->mo, true);
-
-    /* Covert signed i64 result to tl */
-    tcg_gen_trunc_i64_tl(dest, t_i64);
-    gen_set_gpr(s, a->rd, dest);
-
-    // tcg_temp_free_i64(t_i64);
-    // tcg_temp_free_i32(t_i32);
-    // tcg_temp_free_ptr(t_ptr);
-    return true;
+    return require_matrix(s)
+        && mmext_check_mnk(s)
+        && mmext_check_acc_reg(a->md)
+        && mmext_check_tile_reg(a->ms1)
+        && mmext_check_tile_reg(a->ms2);
 }
-
-/* check */
-static bool mmext_check_mm_rmm_s(DisasContext *s, arg_mm_rmm *a)
-{
-    return mmext_check_pwi32(s);
-}
-
-static bool mmext_check_mm_rmm_d(DisasContext *s, arg_mm_rmm *a)
-{
-    return mmext_check_pwi64(s);
-}
-
-static bool mmext_check_mmaqa_b(DisasContext *s, arg_mm_rmm *a)
-{
-    return s->i8i32 && require_matrix(s) && mmext_check_mnk(s);
-}
-
-static inline bool mmext_check_pmmaqa_b_subext(DisasContext *s, arg_mm_rmm *a)
-{
-    return s->i4i32 && require_matrix(s) && mmext_check_mnk(s);
-}
+/* TODO: check for misa, matrix multiplication support type - mmf8f32, ..., mmi8i32 */
 
 typedef void gen_helper_opimmrmm(TCGv_ptr, TCGv_ptr, TCGv_ptr, TCGv_env);
 
-/* translation function for matrix-vector (register indexed) instructions */
 static bool mm_oprmm_trans(uint32_t md, uint32_t ms1, uint32_t ms2,
                            gen_helper_opimmrmm *fn, DisasContext *s)
 {
@@ -523,7 +353,13 @@ static bool mm_oprmm_trans(uint32_t md, uint32_t ms1, uint32_t ms2,
     tcg_gen_addi_ptr(src1, tcg_env, mregs_ofs(s, ms1));
     tcg_gen_addi_ptr(src2, tcg_env, mregs_ofs(s, ms2));
 
+    CPUState *cpu = s->cs;
+    CPURISCVState *env = cpu_env(cpu);
+    if (env->sync_skip_mode) {
+        gen_helper_sync_skip(tcg_env);
+    } else {
     fn(dest, src1, src2, tcg_env);
+    }
 
     /*tcg_temp_free_ptr(dest);
     tcg_temp_free_ptr(src1);
@@ -542,300 +378,81 @@ static bool trans_##NAME(DisasContext *s, arg_mm_rmm *a)    \
     return false;                                           \
 }
 
-GEN_MMEXT_OPRMM_TRANS(madd_s_mm, mmext_check_mm_rmm_s)
-GEN_MMEXT_OPRMM_TRANS(msub_s_mm, mmext_check_mm_rmm_s)
-GEN_MMEXT_OPRMM_TRANS(msra_s_mm, mmext_check_mm_rmm_s)
-GEN_MMEXT_OPRMM_TRANS(mmul_s_mm, mmext_check_mm_rmm_s)
-GEN_MMEXT_OPRMM_TRANS(mmulh_s_mm, mmext_check_mm_rmm_s)
+/* Floating-point macc */
+GEN_MMEXT_OPRMM_TRANS(mfmacc_h,        mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_s,        mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_d,        mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_s_h,      mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_s_bf16,   mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_s_tf32,   mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_d_s,      mmext_check_macc_common)
 
-GEN_MMEXT_OPRMM_TRANS(madd_d_mm, mmext_check_mm_rmm_d)
-GEN_MMEXT_OPRMM_TRANS(msub_d_mm, mmext_check_mm_rmm_d)
-GEN_MMEXT_OPRMM_TRANS(msra_d_mm, mmext_check_mm_rmm_d)
-GEN_MMEXT_OPRMM_TRANS(mmul_d_mm, mmext_check_mm_rmm_d)
+/* FP8 source variants (e4/e5) */
+GEN_MMEXT_OPRMM_TRANS(mfmacc_h_e4,     mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_h_e5,     mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_bf16_e4,  mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_bf16_e5,  mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_s_e4,     mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mfmacc_s_e5,     mmext_check_macc_common)
 
-GEN_MMEXT_OPRMM_TRANS(mn4clip_s_mm,  mmext_check_mm_rmm_s)
-GEN_MMEXT_OPRMM_TRANS(mn4clipu_s_mm, mmext_check_mm_rmm_s)
-GEN_MMEXT_OPRMM_TRANS(mn4clip_d_mm,  mmext_check_mm_rmm_d)
-GEN_MMEXT_OPRMM_TRANS(mn4clipu_d_mm, mmext_check_mm_rmm_d)
+/* Integer macc */
+GEN_MMEXT_OPRMM_TRANS(mmacc_w_b,   mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mmaccu_w_b,  mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mmaccus_w_b, mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mmaccsu_w_b, mmext_check_macc_common)
 
-GEN_MMEXT_OPX_TRANS(mn4clip_s_mv_x,  mmext_check_pwi32)
-GEN_MMEXT_OPX_TRANS(mn4clipu_s_mv_x, mmext_check_pwi32)
-GEN_MMEXT_OPX_TRANS(mn4clip_d_mv_x,  mmext_check_pwi64)
-GEN_MMEXT_OPX_TRANS(mn4clipu_d_mv_x, mmext_check_pwi64)
+/* Packed int4 macc (if implemented by the target) */
+GEN_MMEXT_OPRMM_TRANS(pmmacc_w_b,   mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(pmmaccu_w_b,  mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(pmmaccus_w_b, mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(pmmaccsu_w_b, mmext_check_macc_common)
 
-GEN_MMEXT_OPI_TRANS(mn4clip_s_mv_i,  mmext_check_pwi32)
-GEN_MMEXT_OPI_TRANS(mn4clipu_s_mv_i, mmext_check_pwi32)
-GEN_MMEXT_OPI_TRANS(mn4clip_d_mv_i,  mmext_check_pwi64)
-GEN_MMEXT_OPI_TRANS(mn4clipu_d_mv_i, mmext_check_pwi64)
+/* Optional 16b->64b integer macc variants */
+GEN_MMEXT_OPRMM_TRANS(mmacc_d_h,   mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mmaccu_d_h,  mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mmaccus_d_h, mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mmaccsu_d_h, mmext_check_macc_common)
 
-GEN_MMEXT_OPRX_TRANS(mn4clip_s_mx,  mmext_check_pwi32)
-GEN_MMEXT_OPRX_TRANS(mn4clipu_s_mx, mmext_check_pwi32)
-GEN_MMEXT_OPRX_TRANS(mn4clip_d_mx,  mmext_check_pwi64)
-GEN_MMEXT_OPRX_TRANS(mn4clipu_d_mx, mmext_check_pwi64)
+/* Optional packed formats (bp) – treated as separate opcodes */
+GEN_MMEXT_OPRMM_TRANS(mmacc_w_bp,  mmext_check_macc_common)
+GEN_MMEXT_OPRMM_TRANS(mmaccu_w_bp, mmext_check_macc_common)
 
-/* mmaqa instructions */
-GEN_MMEXT_OPRMM_TRANS(mmaqa_b,   mmext_check_mmaqa_b)
-GEN_MMEXT_OPRMM_TRANS(mmaqau_b,  mmext_check_mmaqa_b)
-GEN_MMEXT_OPRMM_TRANS(mmaqaus_b, mmext_check_mmaqa_b)
-GEN_MMEXT_OPRMM_TRANS(mmaqasu_b, mmext_check_mmaqa_b)
-
-GEN_MMEXT_OPRMM_TRANS(pmmaqa_b,   mmext_check_pmmaqa_b_subext)
-GEN_MMEXT_OPRMM_TRANS(pmmaqau_b,  mmext_check_pmmaqa_b_subext)
-GEN_MMEXT_OPRMM_TRANS(pmmaqaus_b, mmext_check_pmmaqa_b_subext)
-GEN_MMEXT_OPRMM_TRANS(pmmaqasu_b, mmext_check_pmmaqa_b_subext)
-
-
-/* mmaqa{u, s}.h instructions require the md to be aligned to 2 */
-static bool mmext_check_mmaqa_h(DisasContext *s, arg_mm_rmm * a)
+/* Matrix MISC translation */
+/* only support zero 1 matrix register now */
+static inline uint32_t get_rows(DisasContext *s)
 {
-    return (a->md % 2 == 0) && s->i16i64 && require_matrix(s)
-           && mmext_check_mnk(s);
+    return s->mreglen / s->mrowlen;
 }
-
-GEN_MMEXT_OPRMM_TRANS(mmaqa_h,   mmext_check_mmaqa_h)
-GEN_MMEXT_OPRMM_TRANS(mmaqau_h,  mmext_check_mmaqa_h)
-GEN_MMEXT_OPRMM_TRANS(mmaqaus_h, mmext_check_mmaqa_h)
-GEN_MMEXT_OPRMM_TRANS(mmaqasu_h, mmext_check_mmaqa_h)
-
-
-/* fmmacc/fwmacc instructions */
-static bool mmext_check_fmmacc_h(DisasContext *s, arg_mm_rmm * a)
+static bool trans_mzero(DisasContext *s, arg_mm_i *a)
 {
-    return (a->ms2 % 2 == 0) && s->f16f16 && require_matrix(s)
-           && mmext_check_mnpk(s);
-}
-
-static bool mmext_check_fmmacc_s(DisasContext *s, arg_mm_rmm * a)
-{
-    return s->f32f32 && require_matrix(s) && mmext_check_mnk(s);
-}
-
-static bool mmext_check_fmmacc_d(DisasContext *s, arg_mm_rmm * a)
-{
-    return (a->md % 2 == 0) && s->f64f64 && require_matrix(s)
-           && mmext_check_mnk(s);
-}
-
-/* Todo: we still don't have the sub extension for fwmmacc */
-static bool mmext_check_fwmmacc_h(DisasContext *s, arg_mm_rmm * a)
-{
-    return require_matrix(s) && mmext_check_mnk(s);
-}
-
-static bool mmext_check_fwmmacc_s(DisasContext *s, arg_mm_rmm * a)
-{
-    return (a->md % 2 == 0) && require_matrix(s) && mmext_check_mnk(s);
-}
-
-static bool trans_fmmacc_h(DisasContext *s, arg_mm_rmm * a)
-{
-    if (mmext_check_fmmacc_h(s, a)) {
-        TCGv_ptr dest, src1, src2;
-
-        dest = tcg_temp_new_ptr();
-        src1 = tcg_temp_new_ptr();
-        src2 = tcg_temp_new_ptr();
-
-        TCGv_i32 bf16_flag = tcg_constant_i32(s->bf16);
-
-        tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, a->md));
-        tcg_gen_addi_ptr(src1, tcg_env, mregs_ofs(s, a->ms1));
-        tcg_gen_addi_ptr(src2, tcg_env, mregs_ofs(s, a->ms2));
-
-        gen_helper_fmmacc_h(dest, src1, src2, tcg_env, bf16_flag);
-
-        /*tcg_temp_free_ptr(dest);
-        tcg_temp_free_ptr(src1);
-        tcg_temp_free_ptr(src2);*/
-
-        return true;
-    }
-    return false;
-}
-
-GEN_MMEXT_OPRMM_TRANS(fmmacc_s,  mmext_check_fmmacc_s)
-GEN_MMEXT_OPRMM_TRANS(fmmacc_d,  mmext_check_fmmacc_d)
-GEN_MMEXT_OPRMM_TRANS(fwmmacc_h, mmext_check_fwmmacc_h)
-GEN_MMEXT_OPRMM_TRANS(fwmmacc_s, mmext_check_fwmmacc_s)
-
-/* load/store translation */
-static bool mmext_check_ldst(DisasContext *s)
-{
-    return require_matrix(s) && mmext_check_mk(s) ;
-}
-
-typedef void gen_helper_ldst(TCGv_ptr, TCGv, TCGv, TCGv_env);
-
-static bool mm_ldst_trans(uint32_t md, TCGv rs1, TCGv s2,
-                          gen_helper_ldst *fn, DisasContext *s){
-    TCGv_ptr dest;
-
-    dest = tcg_temp_new_ptr();
-
-    tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
-
-    fn(dest, rs1, s2, tcg_env);
-
-    // tcg_temp_free_ptr(dest);
-    return true;
-}
-
-#define GEN_MMEXT_LD_TRANS(NAME, CHECK)                     \
-static bool trans_##NAME(DisasContext *s, arg_mm_ld *a)     \
-{                                                           \
-    if (CHECK(s)) {                                         \
-        return mm_ldst_trans(a->md,                         \
-                           get_gpr(s, a->rs1, EXT_ZERO),    \
-                           get_gpr(s, a->rs2, EXT_ZERO),    \
-                           gen_helper_##NAME, s);           \
-    }                                                       \
-    return false;                                           \
-}
-
-#define GEN_MMEXT_ST_TRANS(NAME, CHECK)                     \
-static bool trans_##NAME(DisasContext *s, arg_mm_st *a)     \
-{                                                           \
-    if (CHECK(s)) {                                         \
-        return mm_ldst_trans(a->ms3,                        \
-                           get_gpr(s, a->rs1, EXT_ZERO),    \
-                           get_gpr(s, a->rs2, EXT_ZERO),    \
-                           gen_helper_##NAME, s);           \
-    }                                                       \
-    return false;                                           \
-}
-
-GEN_MMEXT_LD_TRANS(mld_b, mmext_check_ldst)
-GEN_MMEXT_LD_TRANS(mld_h, mmext_check_ldst)
-GEN_MMEXT_LD_TRANS(mld_w, mmext_check_ldst)
-GEN_MMEXT_LD_TRANS(mld_d, mmext_check_ldst)
-
-GEN_MMEXT_LD_TRANS(msld_b, mmext_check_ldst)
-GEN_MMEXT_LD_TRANS(msld_h, mmext_check_ldst)
-GEN_MMEXT_LD_TRANS(msld_w, mmext_check_ldst)
-GEN_MMEXT_LD_TRANS(msld_d, mmext_check_ldst)
-
-GEN_MMEXT_ST_TRANS(mst_b, mmext_check_ldst)
-GEN_MMEXT_ST_TRANS(mst_h, mmext_check_ldst)
-GEN_MMEXT_ST_TRANS(mst_w, mmext_check_ldst)
-GEN_MMEXT_ST_TRANS(mst_d, mmext_check_ldst)
-
-GEN_MMEXT_ST_TRANS(msst_b, mmext_check_ldst)
-GEN_MMEXT_ST_TRANS(msst_h, mmext_check_ldst)
-GEN_MMEXT_ST_TRANS(msst_w, mmext_check_ldst)
-GEN_MMEXT_ST_TRANS(msst_d, mmext_check_ldst)
-
-/* whole matrix load/store translation */
-static bool mmext_check_ldm(DisasContext *s, arg_mm_ldm *a, uint8_t nf)
-{
-    return require_matrix(s) && (a->md % nf == 0);
-}
-
-static bool mmext_check_stm(DisasContext *s, arg_mm_stm *a, uint8_t nf)
-{
-    return require_matrix(s) && (a->ms3 % nf == 0);
-}
-
-typedef void gen_helper_ldstm(TCGv_ptr, TCGv, TCGv_env);
-
-static bool mm_ldstm_trans(uint32_t md, TCGv rs1,
-                           gen_helper_ldstm *fn, DisasContext *s){
-    TCGv_ptr dest;
-
-    dest = tcg_temp_new_ptr();
-
-    tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
-
-    fn(dest, rs1, tcg_env);
-
-    // tcg_temp_free_ptr(dest);
-    return true;
-}
-
-#define GEN_MMEXT_LDM_TRANS(NAME, CHECK, nf)                \
-static bool trans_##NAME(DisasContext *s, arg_mm_ldm *a)    \
-{                                                           \
-    if (CHECK(s, a, nf)) {                                  \
-        return mm_ldstm_trans(a->md,                        \
-                           get_gpr(s, a->rs1, EXT_ZERO),    \
-                           gen_helper_##NAME, s);           \
-    }                                                       \
-    return false;                                           \
-}
-
-#define GEN_MMEXT_STM_TRANS(NAME, CHECK, nf)                \
-static bool trans_##NAME(DisasContext *s, arg_mm_stm *a)    \
-{                                                           \
-    if (CHECK(s, a, nf)) {                                  \
-        return mm_ldstm_trans(a->ms3,                       \
-                           get_gpr(s, a->rs1, EXT_ZERO),    \
-                           gen_helper_##NAME, s);           \
-    }                                                       \
-    return false;                                           \
-}
-
-GEN_MMEXT_LDM_TRANS(mld1m_b, mmext_check_ldm, 1)
-GEN_MMEXT_LDM_TRANS(mld2m_b, mmext_check_ldm, 2)
-GEN_MMEXT_LDM_TRANS(mld4m_b, mmext_check_ldm, 4)
-GEN_MMEXT_LDM_TRANS(mld8m_b, mmext_check_ldm, 8)
-
-GEN_MMEXT_LDM_TRANS(mld1m_h, mmext_check_ldm, 1)
-GEN_MMEXT_LDM_TRANS(mld2m_h, mmext_check_ldm, 2)
-GEN_MMEXT_LDM_TRANS(mld4m_h, mmext_check_ldm, 4)
-GEN_MMEXT_LDM_TRANS(mld8m_h, mmext_check_ldm, 8)
-
-GEN_MMEXT_LDM_TRANS(mld1m_w, mmext_check_ldm, 1)
-GEN_MMEXT_LDM_TRANS(mld2m_w, mmext_check_ldm, 2)
-GEN_MMEXT_LDM_TRANS(mld4m_w, mmext_check_ldm, 4)
-GEN_MMEXT_LDM_TRANS(mld8m_w, mmext_check_ldm, 8)
-
-GEN_MMEXT_LDM_TRANS(mld1m_d, mmext_check_ldm, 1)
-GEN_MMEXT_LDM_TRANS(mld2m_d, mmext_check_ldm, 2)
-GEN_MMEXT_LDM_TRANS(mld4m_d, mmext_check_ldm, 4)
-GEN_MMEXT_LDM_TRANS(mld8m_d, mmext_check_ldm, 8)
-
-GEN_MMEXT_STM_TRANS(mst1m_b, mmext_check_stm, 1)
-GEN_MMEXT_STM_TRANS(mst2m_b, mmext_check_stm, 2)
-GEN_MMEXT_STM_TRANS(mst4m_b, mmext_check_stm, 4)
-GEN_MMEXT_STM_TRANS(mst8m_b, mmext_check_stm, 8)
-
-GEN_MMEXT_STM_TRANS(mst1m_h, mmext_check_stm, 1)
-GEN_MMEXT_STM_TRANS(mst2m_h, mmext_check_stm, 2)
-GEN_MMEXT_STM_TRANS(mst4m_h, mmext_check_stm, 4)
-GEN_MMEXT_STM_TRANS(mst8m_h, mmext_check_stm, 8)
-
-GEN_MMEXT_STM_TRANS(mst1m_w, mmext_check_stm, 1)
-GEN_MMEXT_STM_TRANS(mst2m_w, mmext_check_stm, 2)
-GEN_MMEXT_STM_TRANS(mst4m_w, mmext_check_stm, 4)
-GEN_MMEXT_STM_TRANS(mst8m_w, mmext_check_stm, 8)
-
-GEN_MMEXT_STM_TRANS(mst1m_d, mmext_check_stm, 1)
-GEN_MMEXT_STM_TRANS(mst2m_d, mmext_check_stm, 2)
-GEN_MMEXT_STM_TRANS(mst4m_d, mmext_check_stm, 4)
-GEN_MMEXT_STM_TRANS(mst8m_d, mmext_check_stm, 8)
-
-static bool trans_mzero(DisasContext *s, arg_mm_rm *a)
-{
-    uint32_t len = get_rows(s) * s->mrowlen / 8;
-
     if (!require_matrix(s)) {
         return false;
+    }
+
+    uint32_t len = 0;
+    if (a->md < 4) {
+        /* Tile registers */
+        len = get_rows(s) * s->mrowlen / 8;
+    } else {
+        /* Acc registers */
+        len = get_rows(s) * get_rows(s) * 4;
     }
 
     tcg_gen_gvec_dup_imm(MO_64, mregs_ofs(s, a->md), len, len, 0);
     return true;
 }
 
-static bool trans_mrelease(DisasContext *s, arg_mrelease *a)
+static bool trans_minit(DisasContext *s, arg_empty *a)
 {
     if (!require_matrix(s)) {
         return false;
     }
 
 #ifndef CONFIG_USER_ONLY
-    if (s->mcsr_ms == 1) {
+    if (s->xmstatus_ms == 1) {
         return true;
     }
-    s->mcsr_ms = 1;
+    s->xmstatus_ms = 1;
     // TCGv tmp = tcg_temp_new();
     // Mrelease Instruction sets MS to Initial state
     // tcg_gen_ld_tl(tmp, tcg_env, offsetof(CPURISCVState, mxstatus));
@@ -843,5 +460,30 @@ static bool trans_mrelease(DisasContext *s, arg_mrelease *a)
     // tcg_gen_st_tl(tmp, tcg_env, offsetof(CPURISCVState, mxstatus));
     // tcg_temp_free(tmp);
 #endif
+    return true;
+}
+
+/* TODO: checkpoints should be generated outside async insts bound */
+static bool trans_msyncreset(DisasContext *s, arg_mm_async *a)
+{
+    if (!require_matrix(s)) {
+        return false;
+    }
+    return true;
+}
+
+static bool trans_mrelease(DisasContext *s, arg_mm_async *a)
+{
+    if (!require_matrix(s)) {
+        return false;
+    }
+    return true;
+}
+
+static bool trans_macquire(DisasContext *s, arg_mm_async *a)
+{
+    if (!require_matrix(s)) {
+        return false;
+    }
     return true;
 }

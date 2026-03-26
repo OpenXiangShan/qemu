@@ -48,6 +48,14 @@
 #include <libfdt.h>
 #include <unistd.h>
 #include <inttypes.h>
+
+/* Keep in sync with target/riscv/serializer_utils.c */
+#define USE_ZSTD_COMPRESS
+#ifdef USE_ZSTD_COMPRESS
+#  define CPT_FILE_EXT ".zstd"
+#else
+#  define CPT_FILE_EXT ".gz"
+#endif
 #include <zstd.h>
 #include <zlib.h>
 #include "checkpoint/checkpoint.h"
@@ -369,7 +377,7 @@ static void init_path_manager(MachineState *machine)
                 g_list_index(s->simpoint_info.cpt_instructions, iterator->data);
 
             g_string_printf(
-                checkpoint_path, "%s/%d/_ %d _%s.gz", (char *)base_output_path,
+                checkpoint_path, "%s/%d/_ %d _%s" CPT_FILE_EXT, (char *)base_output_path,
                 GPOINTER_TO_INT(iterator->data),
                 GPOINTER_TO_INT(iterator->data),
                 ((GString *)(g_list_nth(s->simpoint_info.weights, data_position)->data))

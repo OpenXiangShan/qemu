@@ -33,18 +33,24 @@
 #define FSR_AEXC            (FSR_NVA | FSR_OFA | FSR_UFA | FSR_DZA | FSR_NXA)
 
 /* Matrix Sub Extension */
-#define MATRIX_PW_I32       0x80
-#define MATRIX_PW_I64       0x40
-#define MATRIX_MULT_F64F64  0x20
-#define MATRIX_MULT_F32F32  0x10
-#define MATRIX_MULT_F16F16  0x8
-#define MATRIX_MULT_I8I32   0x4
-#define MATRIX_MULT_I16I64  0x2
-#define MATRIX_MULT_I4I32   0x1
+#define MATRIX_MULT_I4I32    0x1
+#define MATRIX_MULT_I8I32    0x2
+#define MATRIX_MULT_F16F16   0x4
+#define MATRIX_MULT_F32F32   0x8
+#define MATRIX_MULT_F64F64   0x10
+#define MATRIX_MULT_F8F16    0x20
+#define MATRIX_MULT_F8BF16   0x20
+#define MATRIX_MULT_F16F32   0x40
+#define MATRIX_MULT_BF16F32  0x80
+#define MATRIX_MULT_F32F64   0x100
+#define MATRIX_MULT_F8F32    0x200
 
 /* Matrix Status */
-#define MCSR_RM            0xC
-#define MCSR_SAT           0x10
+#define MCSR_RM             0x3
+#define MCSR_SAT            0x4
+#define MCSR_FFLAGS         0xf8
+#define MCSR_FRM            0x700
+#define MCSR_SATEN          0x800
 
 /* Control and Status Registers */
 
@@ -81,12 +87,20 @@
 #define VCSR_VXRM           (0x3 << VCSR_VXRM_SHIFT)
 
 /* Matrix CSR */
-#define CSR_MRSTART         0x801
 #define CSR_MCSR            0x802
-#define CSR_MSIZE           0x803
-#define CSR_MLENB           0xCC0
-#define CSR_MRLENB          0xCC1
-#define CSR_XMISA           0xCC2
+#define CSR_MTILEM          0xcc5
+#define CSR_MTILEN          0xcc6
+#define CSR_MTILEK          0xcc7
+#define CSR_XMISA           0xcc0
+#define CSR_XTLENB          0xcc1
+#define CSR_XTRLENB         0xcc2
+#define CSR_XALENB          0xcc3
+
+#define CSR_XMXRM           0x806
+#define CSR_XMSAT           0x807
+#define CSR_XMFFLAGS        0x808
+#define CSR_XMFRM           0x809
+#define CSR_XMSATEN         0x80a
 
 /* User Timers and Counters */
 #define CSR_CYCLE           0xc00
