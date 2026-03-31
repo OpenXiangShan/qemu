@@ -22,6 +22,7 @@
 #include "checkpoint/serializer_utils.h"
 #include "sysemu/cpu-timers.h"
 #include "sysemu/runstate.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -40,18 +41,53 @@ serialize(uint64_t memory_addr, int cpu_idx, int cpus, uint64_t inst_count);
 
 __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* ns, uint64_t icount, int cpu_idx,
                              bool exit_sync_period);
- 
+
+static void fifo_rw_full(int fd, void *buffer, size_t size,
+                         bool is_write, const char *fifo_name)
+{
+    size_t done = 0;
+
+    while (done < size) {
+        ssize_t ret;
+
+        if (is_write) {
+            ret = write(fd, (const uint8_t *)buffer + done, size - done);
+        } else {
+            ret = read(fd, (uint8_t *)buffer + done, size - done);
+        }
+
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            error_report("Failed to %s %s: %s",
+                         is_write ? "write" : "read",
+                         fifo_name, strerror(errno));
+            abort();
+        }
+
+        if (ret == 0) {
+            error_report("Unexpected EOF while trying to %s %s",
+                         is_write ? "write" : "read", fifo_name);
+            abort();
+        }
+
+        done += ret;
+    }
+}
 
 static inline void send_fifo(NEMUState *ns){
     ns->q2d_buf.cpt_ready = true;
-    write(ns->q2d_fifo, &ns->q2d_buf, sizeof(Qemu2Detail));
+    fifo_rw_full(ns->q2d_fifo, &ns->q2d_buf, sizeof(Qemu2Detail), true,
+                 "qemu-to-detail FIFO");
 }
 
 static inline void read_fifo(NEMUState *ns){
     ns->sync_control_info.info_vaild_periods -= 1;
     if (ns->sync_control_info.info_vaild_periods <= 0) {
-        read(ns->d2q_fifo, &ns->sync_control_info.u_arch_info,
-             sizeof(Detail2Qemu));
+        fifo_rw_full(ns->d2q_fifo, &ns->sync_control_info.u_arch_info,
+                     sizeof(Detail2Qemu), false,
+                     "detail-to-qemu FIFO");
     }
 }
 

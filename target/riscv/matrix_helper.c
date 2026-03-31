@@ -10,7 +10,57 @@
 #include "tcg/tcg-gvec-desc.h"
 #include "internals.h"
 
-/* Matrix Configuration helpers */
+/* -----------------------------------------------------------------------
+ * Matrix instruction tracer — toggle MMAT_TRACE to enable.
+ * Prints FNV-1a-32 hashes of active tile/accumulator regions after
+ * mlae8, mlbe8, mlce32, and mmacc.w.b (mqma) instructions.
+ * ----------------------------------------------------------------------- */
+#define MMAT_TRACE 0
+#if MMAT_TRACE
+#include <stdio.h>
+static uint64_t _qemu_mmat_cnt;
+#define MMAT_TRACE_LIMIT 500
+
+/* Hash active int8 region of MAT_A or MAT_B register.
+ * Element layout: md[i * rlenb + j] (row stride = rlenb bytes). */
+static void _qemu_mtrace_ab(const char *tag, void *md,
+                            uint32_t rows, uint32_t cols, uint32_t rlenb,
+                            uint64_t base_addr) {
+    if (_qemu_mmat_cnt++ >= MMAT_TRACE_LIMIT) return;
+    uint32_t h = 0x811c9dc5u;
+    for (uint32_t i = 0; i < rows; i++)
+        for (uint32_t j = 0; j < cols; j++) {
+            uint8_t b = ((const uint8_t *)md)[i * rlenb + j];
+            h = (h ^ b) * 0x01000193u;
+        }
+    fprintf(stderr, "[mtrace] qemu  %-12s M=%-4u K/N=%-4u addr=0x%016" PRIx64 "  fnv1a32=0x%08x\n",
+            tag, rows, cols, base_addr, h);
+    fflush(stderr);
+}
+
+/* Hash active int32 region of MAT_C (accumulator) register.
+ * Element layout: md[i * mrows + j] (row stride = mrows int32 values). */
+static void _qemu_mtrace_acc32(const char *tag, void *md,
+                               uint32_t rows, uint32_t cols, uint32_t mrows,
+                               uint64_t base_addr) {
+    if (_qemu_mmat_cnt++ >= MMAT_TRACE_LIMIT) return;
+    uint32_t h = 0x811c9dc5u;
+    for (uint32_t i = 0; i < rows; i++) {
+        for (uint32_t j = 0; j < cols; j++) {
+            uint32_t v = (uint32_t)((const int32_t *)md)[i * mrows + j];
+            h = (h ^ (v         & 0xff)) * 0x01000193u;
+            h = (h ^ ((v >>  8) & 0xff)) * 0x01000193u;
+            h = (h ^ ((v >> 16) & 0xff)) * 0x01000193u;
+            h = (h ^ ((v >> 24) & 0xff)) * 0x01000193u;
+        }
+    }
+    fprintf(stderr, "[mtrace] qemu  %-12s M=%-4u K/N=%-4u addr=0x%016" PRIx64 "  fnv1a32=0x%08x\n",
+            tag, rows, cols, base_addr, h);
+    fflush(stderr);
+}
+#endif /* MMAT_TRACE */
+
+
 void helper_msettilek(CPURISCVState *env, target_ulong s1)
 {
     env->mtilek = s1;
@@ -203,6 +253,15 @@ static void mmext_mload_tile(void *md, target_ulong rs1, target_ulong stride,
             }
         }
     }
+#if MMAT_TRACE
+    /* Only trace the int8-source loads and int32-acc load that we care about */
+    if (esz == 0 && kind == MAT_A)
+        _qemu_mtrace_ab("mlae8", md, rows_lim, cols_lim, get_rlenb(env), (uint64_t)rs1);
+    else if (esz == 0 && kind == MAT_B)
+        _qemu_mtrace_ab("mlbe8", md, rows_lim, cols_lim, get_rlenb(env), (uint64_t)rs1);
+    else if (esz == 2 && kind == MAT_C)
+        _qemu_mtrace_acc32("mlce32", md, rows_lim, cols_lim, get_mrows(env), (uint64_t)rs1);
+#endif /* MMAT_TRACE */
 }
 
 static void mmext_mstore_tile(void *ms3, target_ulong rs1, target_ulong stride,
@@ -435,6 +494,11 @@ static void mmext_mmaqa_b(void *md, void *ms1, void *ms2, CPURISCVState *env,
             }
         }
     }
+#if MMAT_TRACE
+    _qemu_mtrace_acc32("mqma", md,
+                       (uint32_t)env->mtilem, (uint32_t)env->mtilen,
+                       get_mrows(env), 0);
+#endif /* MMAT_TRACE */
 }
 
 /* half byte oprands accumulate to single word */

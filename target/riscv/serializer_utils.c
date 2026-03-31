@@ -206,6 +206,13 @@ __attribute_maybe_unused__ void serializeRegs(int cpu_index, char *buffer, singl
     info_report("Writting mstatus registers to checkpoint memory: %lx mpp %lx",
                 tmp_mstatus, env->priv);
 
+    // QEMU does not implement Smstateen; write all-ones so NEMU allows
+    // access to senvcfg/henvcfg and other gated CSRs after restore.
+    uint64_t tmp_mstateen0 = ~0ULL;
+    buffer_offset = cpt_percpu_layout->csr_reg_cpt_addr + 0x30c * 8;
+    memcpy(buffer + buffer_offset, &tmp_mstateen0, 8);
+    info_report("Writting mstateen0 (all-ones) to checkpoint memory");
+
     uint64_t tmp_mideleg = env->mideleg;
     buffer_offset = cpt_percpu_layout->csr_reg_cpt_addr + 0x303 * 8;
     memcpy(buffer + buffer_offset, &tmp_mideleg, 8);
