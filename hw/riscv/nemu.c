@@ -190,6 +190,7 @@ static int load_gcpt_restore(MachineState *machine,
     int fd = -1;
     int gcpt_restore_file_size = 0;
     int gcpt_restore_file_read_size = 0;
+    const int max_gcpt_restore_size = 1 * 1024 * 1024 + 4 * 1024;
     if (gcpt_restore_path) {
         fd = open(gcpt_restore_path, O_RDONLY | O_BINARY);
         if (fd < 0) {
@@ -197,11 +198,18 @@ static int load_gcpt_restore(MachineState *machine,
             return -1;
         }
         gcpt_restore_file_size = lseek(fd, 0, SEEK_END);
-        // for now gcpt_restore cannot bigger than 1M
+        /*
+         * The restore-only gcpt image reserves the payload slot at 0x100000 and
+         * still carries a tiny .payload stub, so the file is slightly larger
+         * than 1 MiB even when no payload is linked. Keep a small amount of
+         * headroom for that stub while continuing to reject payload-linked
+         * images that are much larger.
+         */
         if (gcpt_restore_file_size == 0 ||
-            gcpt_restore_file_size > 1 * 1024 * 1024) {
+            gcpt_restore_file_size > max_gcpt_restore_size) {
             close(fd);
-            error_report("Gcpt size is zero or too large");
+            error_report("Gcpt size is zero or too large: %d (max %d)",
+                         gcpt_restore_file_size, max_gcpt_restore_size);
             return -1;
         }
         lseek(fd, 0, SEEK_SET);
