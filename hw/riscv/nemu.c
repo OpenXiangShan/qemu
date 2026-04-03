@@ -83,9 +83,8 @@ enum {
  * of G002 and G003, so it is 53 (including interrupt source 0).
  */
 #define PLIC_NUM_SOURCES 32
-#define PLIC_NUM_PRIORITIES 8
 // #define PLIC_NUM_SOURCES 53
-// #define PLIC_NUM_PRIORITIES 7
+#define PLIC_NUM_PRIORITIES 7
 #define PLIC_PRIORITY_BASE 0x00
 #define PLIC_PENDING_BASE 0x1000
 #define PLIC_ENABLE_BASE 0x2000
@@ -93,12 +92,14 @@ enum {
 #define PLIC_CONTEXT_BASE 0x200000
 #define PLIC_CONTEXT_STRIDE 0x1000
 
+/* Timebase frequency from NEMU riscv64-xs_defconfig: 10 MHz */
+#define NEMU_TIMEBASE_FREQ 10000000
+
 static const MemMapEntry nemu_memmap[] = {
     [NEMU_MROM] = { 0x1000, 0xf000 },
     [NEMU_VIRTIO] ={ 0x10001000, 0x1000 },
     [NEMU_CLINT] = { 0x38000000, 0x10000 },
-    // [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
-    [NEMU_PLIC] = { 0x3c000000, 0x6000000 },
+    [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
     [NEMU_UARTLITE] = { 0x40600000, 0x1000 },
     [NEMU_GCPT] = { 0x50000000, 0x8000000 },
     [NEMU_DRAM] = { 0x80000000, 0x0 },
@@ -474,11 +475,203 @@ static void nemu_load_firmware(MachineState *machine)
         info_report("%s %lx", machine->kernel_filename, kernel_entry);
     }
 
-prepare_start:
+prepare_start:;
+    uint64_t fdt_load_addr = riscv_compute_fdt_addr(memmap[NEMU_DRAM].base,
+                                                     machine->ram_size,
+                                                     machine);
+    /* On checkpoint restore, guest RAM is already inflated — skip loading the
+     * FDT to avoid overwriting restored state near the top of RAM. */
+    if (!s->nemu_args.checkpoint) {
+        riscv_load_fdt(fdt_load_addr, machine->fdt);
+    }
     /* load the reset vector */
     riscv_setup_rom_reset_vec(machine, &s->soc[0], memmap[NEMU_DRAM].base,
                               memmap[NEMU_MROM].base, memmap[NEMU_MROM].size,
-                              memmap[NEMU_DRAM].base, memmap[NEMU_DRAM].base);
+                              memmap[NEMU_DRAM].base, fdt_load_addr);
+}
+
+/*
+ * DTSGen.py vs NEMU (riscv64-xs_defconfig) device gap analysis:
+ *   cpus                 INCLUDED  NEMU has CPUs with interrupt controllers
+ *   memory               INCLUDED  NEMU DRAM at 0x80000000
+ *   clint @ 0x38000000   INCLUDED  CONFIG_CLINT_MMIO=0x38000000
+ *   plic  @ 0x3c000000   INCLUDED  CONFIG_PLIC_ADDRESS=0x3c000000
+ *   uartlite @ 0x40600000 INCLUDED CONFIG_UARTLITE_MMIO=0x40600000
+ *   rng-seed             EXCLUDED  QEMU internal, no real NEMU device
+ *   reserved-memory      EXCLUDED  GCPT (0x50000000) is QEMU checkpoint
+ *                                  infrastructure, not exported to guest
+ *   nemu_sdhci           EXCLUDED  not needed per project requirements
+ *   virtio-mmio          EXCLUDED  QEMU-only addition, absent from NEMU
+ */
+static void nemu_create_fdt(NEMUState *s, const MemMapEntry *memmap,
+                             MachineState *machine)
+{
+    int fdt_size;
+    int cpu;
+    char *nodename;
+    uint32_t phandle = 1;
+    uint32_t uart_plic_phandle = 0;
+    uint32_t *intc_phandles;
+    int num_harts = machine->smp.cpus;
+    int num_sockets = riscv_socket_count(machine);
+
+    static const char * const clint_compat[] = {
+        "sifive,clint0", "riscv,clint0"
+    };
+    static const char * const plic_compat[] = {
+        "sifive,plic-1.0.0", "riscv,plic0"
+    };
+
+    machine->fdt = create_device_tree(&fdt_size);
+    if (!machine->fdt) {
+        error_report("create_device_tree() failed");
+        exit(1);
+    }
+
+    /* Root node */
+    qemu_fdt_setprop_string(machine->fdt, "/", "model", "XiangShan");
+    qemu_fdt_setprop_string(machine->fdt, "/", "compatible", "xiangshan,nemu-board");
+    qemu_fdt_setprop_cell(machine->fdt, "/", "#size-cells", 0x2);
+    qemu_fdt_setprop_cell(machine->fdt, "/", "#address-cells", 0x2);
+
+    /* /chosen */
+    qemu_fdt_add_subnode(machine->fdt, "/chosen");
+    if (machine->kernel_cmdline && machine->kernel_cmdline[0]) {
+        qemu_fdt_setprop_string(machine->fdt, "/chosen", "bootargs",
+                                machine->kernel_cmdline);
+    }
+
+    /* /cpus */
+    qemu_fdt_add_subnode(machine->fdt, "/cpus");
+    qemu_fdt_setprop_cell(machine->fdt, "/cpus", "#size-cells", 0x0);
+    qemu_fdt_setprop_cell(machine->fdt, "/cpus", "#address-cells", 0x1);
+    qemu_fdt_setprop_cell(machine->fdt, "/cpus", "timebase-frequency",
+                          NEMU_TIMEBASE_FREQ);
+
+    intc_phandles = g_new0(uint32_t, num_harts);
+
+    /* Iterate per-socket so we index soc[i].harts[] correctly and use the
+     * actual hartid (mhartid) for DT node names and reg properties. */
+    cpu = 0;
+    for (int sock = 0; sock < num_sockets; sock++) {
+        int sock_harts = riscv_socket_hart_count(machine, sock);
+        for (int h = 0; h < sock_harts; h++, cpu++) {
+            RISCVCPU *cpu_ptr = &s->soc[sock].harts[h];
+            uint32_t hartid = (uint32_t)cpu_ptr->env.mhartid;
+            char *cpu_name = g_strdup_printf("/cpus/cpu@%u", hartid);
+            char *intc_name = g_strdup_printf("/cpus/cpu@%u/interrupt-controller", hartid);
+
+            intc_phandles[cpu] = phandle++;
+
+            qemu_fdt_add_subnode(machine->fdt, cpu_name);
+            qemu_fdt_setprop_string(machine->fdt, cpu_name, "compatible", "riscv");
+            qemu_fdt_setprop_string(machine->fdt, cpu_name, "device_type", "cpu");
+            qemu_fdt_setprop_string(machine->fdt, cpu_name, "status", "okay");
+            if (cpu_ptr->cfg.satp_mode.supported != 0) {
+                bool is_32bit = riscv_cpu_mxl(&cpu_ptr->env) == MXL_RV32;
+                uint8_t satp_max = satp_mode_max_from_map(cpu_ptr->cfg.satp_mode.map);
+                qemu_fdt_setprop_string(machine->fdt, cpu_name, "mmu-type",
+                                        satp_mode_str(satp_max, is_32bit));
+            }
+            qemu_fdt_setprop_cell(machine->fdt, cpu_name, "reg", hartid);
+            riscv_isa_write_fdt(cpu_ptr, machine->fdt, cpu_name);
+
+            qemu_fdt_add_subnode(machine->fdt, intc_name);
+            qemu_fdt_setprop_string(machine->fdt, intc_name, "compatible",
+                                    "riscv,cpu-intc");
+            qemu_fdt_setprop(machine->fdt, intc_name, "interrupt-controller", NULL, 0);
+            qemu_fdt_setprop_cell(machine->fdt, intc_name, "#interrupt-cells", 1);
+            qemu_fdt_setprop_cell(machine->fdt, intc_name, "phandle",
+                                  intc_phandles[cpu]);
+
+            g_free(cpu_name);
+            g_free(intc_name);
+        } /* h loop */
+    } /* sock loop */
+
+    /* /memory */
+    nodename = g_strdup_printf("/memory@%" PRIx64, (uint64_t)memmap[NEMU_DRAM].base);
+    qemu_fdt_add_subnode(machine->fdt, nodename);
+    qemu_fdt_setprop_string(machine->fdt, nodename, "device_type", "memory");
+    qemu_fdt_setprop_cells(machine->fdt, nodename, "reg",
+        0x0, (uint32_t)memmap[NEMU_DRAM].base,
+        (uint32_t)(machine->ram_size >> 32), (uint32_t)machine->ram_size);
+    g_free(nodename);
+
+    /* /soc */
+    qemu_fdt_add_subnode(machine->fdt, "/soc");
+    qemu_fdt_setprop(machine->fdt, "/soc", "ranges", NULL, 0);
+    qemu_fdt_setprop_string(machine->fdt, "/soc", "compatible", "simple-bus");
+    qemu_fdt_setprop_cell(machine->fdt, "/soc", "#size-cells", 0x2);
+    qemu_fdt_setprop_cell(machine->fdt, "/soc", "#address-cells", 0x2);
+
+    cpu = 0;
+    for (int sock = 0; sock < num_sockets; sock++) {
+        int sock_harts = riscv_socket_hart_count(machine, sock);
+        uint64_t clint_base = memmap[NEMU_CLINT].base +
+                              (uint64_t)sock * memmap[NEMU_CLINT].size;
+        uint64_t plic_base = memmap[NEMU_PLIC].base +
+                             (uint64_t)sock * memmap[NEMU_PLIC].size;
+        uint32_t *clint_cells = g_new0(uint32_t, sock_harts * 4);
+        uint32_t *plic_cells = g_new0(uint32_t, sock_harts * 4);
+
+        for (int h = 0; h < sock_harts; h++, cpu++) {
+            clint_cells[h * 4 + 0] = cpu_to_be32(intc_phandles[cpu]);
+            clint_cells[h * 4 + 1] = cpu_to_be32(IRQ_M_SOFT);
+            clint_cells[h * 4 + 2] = cpu_to_be32(intc_phandles[cpu]);
+            clint_cells[h * 4 + 3] = cpu_to_be32(IRQ_M_TIMER);
+            plic_cells[h * 4 + 0] = cpu_to_be32(intc_phandles[cpu]);
+            plic_cells[h * 4 + 1] = cpu_to_be32(IRQ_M_EXT);
+            plic_cells[h * 4 + 2] = cpu_to_be32(intc_phandles[cpu]);
+            plic_cells[h * 4 + 3] = cpu_to_be32(IRQ_S_EXT);
+        }
+
+        nodename = g_strdup_printf("/soc/clint@%" PRIx64, clint_base);
+        qemu_fdt_add_subnode(machine->fdt, nodename);
+        qemu_fdt_setprop_string_array(machine->fdt, nodename, "compatible",
+                                      (char **)&clint_compat,
+                                      ARRAY_SIZE(clint_compat));
+        qemu_fdt_setprop_cells(machine->fdt, nodename, "reg",
+            0x0, (uint32_t)clint_base, 0x0, memmap[NEMU_CLINT].size);
+        qemu_fdt_setprop(machine->fdt, nodename, "interrupts-extended",
+            clint_cells, sock_harts * sizeof(uint32_t) * 4);
+        g_free(nodename);
+        g_free(clint_cells);
+
+        uint32_t plic_phandle = phandle++;
+        if (sock == 0) {
+            uart_plic_phandle = plic_phandle;
+        }
+        nodename = g_strdup_printf("/soc/plic@%" PRIx64, plic_base);
+        qemu_fdt_add_subnode(machine->fdt, nodename);
+        qemu_fdt_setprop_cell(machine->fdt, nodename, "#interrupt-cells", 1);
+        qemu_fdt_setprop_cell(machine->fdt, nodename, "#address-cells", 0);
+        qemu_fdt_setprop_string_array(machine->fdt, nodename, "compatible",
+                                      (char **)&plic_compat,
+                                      ARRAY_SIZE(plic_compat));
+        qemu_fdt_setprop(machine->fdt, nodename, "interrupt-controller", NULL, 0);
+        qemu_fdt_setprop(machine->fdt, nodename, "interrupts-extended",
+            plic_cells, sock_harts * sizeof(uint32_t) * 4);
+        qemu_fdt_setprop_cells(machine->fdt, nodename, "reg",
+            0x0, (uint32_t)plic_base, 0x0, memmap[NEMU_PLIC].size);
+        qemu_fdt_setprop_cell(machine->fdt, nodename, "riscv,ndev", PLIC_NUM_SOURCES - 1);
+        qemu_fdt_setprop_cell(machine->fdt, nodename, "phandle", plic_phandle);
+        g_free(nodename);
+        g_free(plic_cells);
+    }
+    g_free(intc_phandles);
+
+    /* UARTLite */
+    nodename = g_strdup_printf("/soc/serial@%" PRIx64, (uint64_t)memmap[NEMU_UARTLITE].base);
+    qemu_fdt_add_subnode(machine->fdt, nodename);
+    qemu_fdt_setprop_string(machine->fdt, nodename, "compatible",
+                            "xlnx,xps-uartlite-1.00.a");
+    qemu_fdt_setprop_cells(machine->fdt, nodename, "reg",
+        0x0, memmap[NEMU_UARTLITE].base, 0x0, memmap[NEMU_UARTLITE].size);
+    qemu_fdt_setprop_cell(machine->fdt, nodename, "interrupts", UART0_IRQ);
+    qemu_fdt_setprop_cell(machine->fdt, nodename, "interrupt-parent", uart_plic_phandle);
+    qemu_fdt_setprop_string(machine->fdt, "/chosen", "stdout-path", nodename);
+    g_free(nodename);
 }
 
 static DeviceState *nemu_create_plic(const MemMapEntry *memmap, int socket,
@@ -597,11 +790,30 @@ static void nemu_machine_init(MachineState *machine)
     memory_region_add_subregion(system_memory, memmap[NEMU_UARTLITE].base,
                                 sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
 
-    /* VirtIO MMIO devices */
+    /*
+     * VirtIO MMIO devices: instantiated for QEMU-internal use only
+     * (block device for checkpoint image loading, serial for sync).
+     * These are absent from the NEMU ISA simulator and are intentionally
+     * excluded from the generated device tree so guest software does not
+     * attempt to probe them.  External DTBs passed via -dtb may include
+     * virtio-mmio nodes if desired.
+     */
     for (i = 0; i < VIRTIO_COUNT; i++) {
         sysbus_create_simple("virtio-mmio",
             memmap[NEMU_VIRTIO].base + i * memmap[NEMU_VIRTIO].size,
             qdev_get_gpio_in(s->irqchip[0], VIRTIO_IRQ + i));
+    }
+
+    /* Load or generate device tree */
+    if (machine->dtb) {
+        int fdt_size;
+        machine->fdt = load_device_tree(machine->dtb, &fdt_size);
+        if (!machine->fdt) {
+            error_report("load_device_tree() failed");
+            exit(1);
+        }
+    } else {
+        nemu_create_fdt(s, memmap, machine);
     }
 
     simpoint_init(machine);
