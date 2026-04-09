@@ -63,8 +63,8 @@
 enum {
     UART0_IRQ = 10,
     RTC_IRQ = 11,
-    VIRTIO_IRQ = 5, /* 1 to 8 */
-    VIRTIO_COUNT = 2,
+    VIRTIO_IRQ = 1, /* From IRQ to (IRQ + COUNT - 1) */
+    VIRTIO_COUNT = 1,
 };
 
 enum {
@@ -95,14 +95,85 @@ enum {
 
 static const MemMapEntry nemu_memmap[] = {
     [NEMU_MROM] = { 0x1000, 0xf000 },
-    [NEMU_VIRTIO] ={ 0x10001000, 0x1000 },
+    [NEMU_VIRTIO] = { 0x10001000, 0x1000 },
     [NEMU_CLINT] = { 0x38000000, 0x10000 },
-    // [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
     [NEMU_PLIC] = { 0x3c000000, 0x6000000 },
     [NEMU_UARTLITE] = { 0x40600000, 0x1000 },
     [NEMU_GCPT] = { 0x50000000, 0x8000000 },
     [NEMU_DRAM] = { 0x80000000, 0x0 },
 };
+
+static void nemu_load_and_patch_fdt(MachineState *machine)
+{
+    const MemMapEntry *memmap = nemu_memmap;
+    void *resized_fdt;
+    char **virtio_nodes;
+    Error *err = NULL;
+    int fdt_size;
+    int ret;
+    int i;
+    uint32_t plic_phandle;
+
+    if (!machine->dtb) {
+        return;
+    }
+
+    machine->fdt = load_device_tree(machine->dtb, &fdt_size);
+    if (!machine->fdt) {
+        error_report("load_device_tree() failed for %s", machine->dtb);
+        exit(1);
+    }
+
+    resized_fdt = g_malloc0(fdt_size + 0x10000);
+    ret = fdt_open_into(machine->fdt, resized_fdt, fdt_size + 0x10000);
+    g_free(machine->fdt);
+    if (ret) {
+        error_report("fdt_open_into() failed: %s", fdt_strerror(ret));
+        exit(1);
+    }
+    machine->fdt = resized_fdt;
+
+    if (fdt_path_offset(machine->fdt, "/soc") < 0) {
+        qemu_fdt_add_path(machine->fdt, "/soc");
+        qemu_fdt_setprop(machine->fdt, "/soc", "ranges", NULL, 0);
+        qemu_fdt_setprop_string(machine->fdt, "/soc", "compatible",
+                                "simple-bus");
+        qemu_fdt_setprop_cell(machine->fdt, "/soc", "#size-cells", 0x2);
+        qemu_fdt_setprop_cell(machine->fdt, "/soc", "#address-cells", 0x2);
+    }
+
+    virtio_nodes = qemu_fdt_node_path(machine->fdt, NULL, "virtio,mmio", &err);
+    if (err) {
+        error_report_err(err);
+        exit(1);
+    }
+    for (char **node = virtio_nodes; node && *node; node++) {
+        qemu_fdt_nop_node(machine->fdt, *node);
+    }
+    g_strfreev(virtio_nodes);
+
+    plic_phandle = qemu_fdt_get_phandle(machine->fdt, "/plic@3c000000");
+    if (!plic_phandle) {
+        error_report("DTB %s is missing /plic@3c000000 phandle", machine->dtb);
+        exit(1);
+    }
+
+    for (i = 0; i < VIRTIO_COUNT; i++) {
+        g_autofree char *name = g_strdup_printf(
+            "/soc/virtio_mmio@%" PRIx64,
+            (uint64_t)(memmap[NEMU_VIRTIO].base + i * memmap[NEMU_VIRTIO].size));
+
+        qemu_fdt_add_subnode(machine->fdt, name);
+        qemu_fdt_setprop_string(machine->fdt, name, "compatible", "virtio,mmio");
+        qemu_fdt_setprop_cells(machine->fdt, name, "reg",
+                               0x0,
+                               memmap[NEMU_VIRTIO].base + i * memmap[NEMU_VIRTIO].size,
+                               0x0,
+                               memmap[NEMU_VIRTIO].size);
+        qemu_fdt_setprop_cells(machine->fdt, name, "interrupts-extended",
+                               plic_phandle, VIRTIO_IRQ + i);
+    }
+}
 
 static int load_checkpoint(MachineState *machine, const char *checkpoint_path)
 {
@@ -437,6 +508,7 @@ static void nemu_load_firmware(MachineState *machine)
     //    char *firmware_name;
     NEMUState *s = NEMU_MACHINE(machine);
     uint64_t firmware_end_addr = 0;
+    uint64_t fdt_load_addr = memmap[NEMU_DRAM].base;
     uint64_t kernel_entry = 0;
     uint64_t kernel_start_addr = 0;
 
@@ -475,10 +547,17 @@ static void nemu_load_firmware(MachineState *machine)
     }
 
 prepare_start:
+    if (machine->fdt) {
+        fdt_load_addr = riscv_compute_fdt_addr(memmap[NEMU_DRAM].base,
+                                               memmap[NEMU_DRAM].size,
+                                               machine);
+        riscv_load_fdt(fdt_load_addr, machine->fdt);
+    }
+
     /* load the reset vector */
     riscv_setup_rom_reset_vec(machine, &s->soc[0], memmap[NEMU_DRAM].base,
                               memmap[NEMU_MROM].base, memmap[NEMU_MROM].size,
-                              memmap[NEMU_DRAM].base, memmap[NEMU_DRAM].base);
+                              memmap[NEMU_DRAM].base, fdt_load_addr);
 }
 
 static DeviceState *nemu_create_plic(const MemMapEntry *memmap, int socket,
@@ -603,6 +682,8 @@ static void nemu_machine_init(MachineState *machine)
             memmap[NEMU_VIRTIO].base + i * memmap[NEMU_VIRTIO].size,
             qdev_get_gpio_in(s->irqchip[0], VIRTIO_IRQ + i));
     }
+
+    nemu_load_and_patch_fdt(machine);
 
     simpoint_init(machine);
     nemu_load_firmware(machine);
