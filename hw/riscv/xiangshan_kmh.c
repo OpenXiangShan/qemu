@@ -248,6 +248,11 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
     MemoryRegion *system_memory = get_system_memory();
     hwaddr start_addr = memmap[XIANGSHAN_KMH_DRAM].base;
+    target_ulong firmware_end_addr = start_addr;
+    target_ulong kernel_start_addr;
+    uint64_t kernel_entry = 0;
+    RISCVBootInfo boot_info;
+    const char *firmware_name;
 
     /* Initialize SoC */
     object_initialize_child(OBJECT(machine), "soc", &s->soc,
@@ -259,14 +264,30 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
                                 memmap[XIANGSHAN_KMH_DRAM].base,
                                 machine->ram);
 
+    firmware_name = riscv_default_firmware_name(&s->soc.cpus);
+    firmware_end_addr = riscv_find_and_load_firmware(machine, firmware_name,
+                                                     &start_addr, NULL);
+
+    riscv_boot_info_init(&boot_info, &s->soc.cpus);
+
+    if (machine->kernel_filename) {
+        kernel_start_addr = riscv_calc_kernel_start_addr(&boot_info,
+                                                         firmware_end_addr);
+        riscv_load_kernel(machine, &boot_info, kernel_start_addr,
+                          false, NULL);
+        kernel_entry = boot_info.image_low_addr;
+
+        if (machine->firmware && !strcmp(machine->firmware, "none")) {
+            start_addr = kernel_entry;
+        }
+    }
+
     /* ROM reset vector */
     riscv_setup_rom_reset_vec(machine, &s->soc.cpus,
                               start_addr,
                               memmap[XIANGSHAN_KMH_ROM].base,
-                              memmap[XIANGSHAN_KMH_ROM].size, 0, 0);
-    if (machine->firmware) {
-        riscv_load_firmware(machine->firmware, &start_addr, NULL);
-    }
+                              memmap[XIANGSHAN_KMH_ROM].size,
+                              kernel_entry, 0);
 
     /* Note: dtb has been integrated into firmware(OpenSBI) when compiling */
 
