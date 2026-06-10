@@ -85,13 +85,24 @@ Machine options
 ``autotest-rootfs-addr=<addr>``
    rootfs ext4 的 pmem/nvdimm 地址，默认 ``0x3c0000000``。
 
+``autotest-rootfs-size=<size>``
+   rootfs ext4 的 pmem/nvdimm 和 reserved-memory 大小，默认
+   ``0x20000000``。
+
 ``autotest-workload-addr=<addr>``
    测试集 ext4 的 pmem/nvdimm 地址，默认 ``0x3e0000000``。
+
+``autotest-workload-size=<size>``
+   测试集 ext4 的 pmem/nvdimm 和 reserved-memory 大小，默认
+   ``0x80000000``。
 
 ``autotest-trigger-addr=<addr>``
    trigger 文件的 reserved-memory 地址，默认 ``0x90000000``。QEMU 只负责
    在设备树中保留这段内存；trigger 内容解析和 ``task=`` bootargs overlay
    由 OpenSBI 负责。
+
+``autotest-trigger-size=<size>``
+   trigger 文件的 reserved-memory 大小，默认 ``0x200000``。
 
 ``iommu-sys=auto|on|off``
    是否打开系统 IOMMU platform device。最小 Linux 和 autotest 启动流程
@@ -276,8 +287,8 @@ QEMU 不生成 ``task=`` bootargs。trigger 文件仍然需要用 loader 放到
 * workload/test data 通过 ``/dev/pmem1`` 挂载。
 * 自动测试脚本从 trigger 指向的 task 配置启动测试。
 
-Change autotest addresses
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Change autotest addresses and sizes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 如果要改变 rootfs、workload 或 trigger 的加载地址，需要对应的 machine
 属性和 loader 地址保持一致：
@@ -285,6 +296,11 @@ Change autotest addresses
 * rootfs：``autotest-rootfs-addr`` 对应 rootfs ext4 的 loader 地址。
 * workload：``autotest-workload-addr`` 对应 workload ext4 的 loader 地址。
 * trigger：``autotest-trigger-addr`` 对应 trigger 文件的 loader 地址。
+
+如果对应文件大小超出默认保留区间，可以再配置大小属性；不配置时使用默认
+大小。``autotest-rootfs-size`` 和 ``autotest-workload-size`` 同时影响
+pmem/nvdimm 节点和 reserved-memory 区间，``autotest-trigger-size`` 只影响
+trigger reserved-memory 区间。
 
 例如把 rootfs 放到 ``0x3c0000000``，workload 放到 ``0x400000000``，
 trigger 放到 ``0x90000000``：
@@ -302,7 +318,8 @@ trigger 放到 ``0x90000000``：
 
 上面 rootfs 和 trigger 使用的是默认地址，所以实际命令里可以省略
 ``autotest-rootfs-addr`` 和 ``autotest-trigger-addr``。只有改成非默认地址时
-才需要显式传入对应 machine 属性。
+才需要显式传入对应 machine 属性。大小属性同理，只有需要覆盖默认大小时
+才需要显式传入。
 
 Dump generated DTB
 ~~~~~~~~~~~~~~~~~~

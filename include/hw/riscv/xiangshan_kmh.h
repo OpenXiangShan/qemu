@@ -51,6 +51,9 @@ typedef struct XiangshanKmhState {
     uint64_t autotest_rootfs_addr;
     uint64_t autotest_workload_addr;
     uint64_t autotest_trigger_addr;
+    uint64_t autotest_rootfs_size;
+    uint64_t autotest_workload_size;
+    uint64_t autotest_trigger_size;
     int fdt_size;
 } XiangshanKmhState;
 

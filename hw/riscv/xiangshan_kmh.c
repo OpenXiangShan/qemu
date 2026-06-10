@@ -334,11 +334,11 @@ static void xiangshan_kmh_fdt_add_memory(XiangshanKmhState *s)
             {
                 .start = s->autotest_rootfs_addr,
                 .end = xiangshan_kmh_range_end(s->autotest_rootfs_addr,
-                                               XIANGSHAN_KMH_AUTOTEST_ROOTFS_SIZE),
+                                               s->autotest_rootfs_size),
             }, {
                 .start = s->autotest_workload_addr,
                 .end = xiangshan_kmh_range_end(s->autotest_workload_addr,
-                                               XIANGSHAN_KMH_AUTOTEST_WORKLOAD_SIZE),
+                                               s->autotest_workload_size),
             }
         };
         XiangshanKmhMemRange merged[2];
@@ -403,6 +403,9 @@ static void xiangshan_kmh_fdt_add_autotest(XiangshanKmhState *s)
     hwaddr rootfs_addr = s->autotest_rootfs_addr;
     hwaddr workload_addr = s->autotest_workload_addr;
     hwaddr trigger_addr = s->autotest_trigger_addr;
+    uint64_t rootfs_size = s->autotest_rootfs_size;
+    uint64_t workload_size = s->autotest_workload_size;
+    uint64_t trigger_size = s->autotest_trigger_size;
 
     qemu_fdt_add_subnode(fdt, "/reserved-memory");
     qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#address-cells", 2);
@@ -416,7 +419,7 @@ static void xiangshan_kmh_fdt_add_autotest(XiangshanKmhState *s)
         xiangshan_kmh_fdt_add_reg_node(fdt,
                                        "/reserved-memory/region@%"HWADDR_PRIx,
                                        rootfs_addr,
-                                       XIANGSHAN_KMH_AUTOTEST_ROOTFS_SIZE,
+                                       rootfs_size,
                                        NULL, NULL);
         qemu_fdt_setprop(fdt, name, "no-map", NULL, 0);
     }
@@ -428,7 +431,7 @@ static void xiangshan_kmh_fdt_add_autotest(XiangshanKmhState *s)
         xiangshan_kmh_fdt_add_reg_node(fdt,
                                        "/reserved-memory/region@%"HWADDR_PRIx,
                                        workload_addr,
-                                       XIANGSHAN_KMH_AUTOTEST_WORKLOAD_SIZE,
+                                       workload_size,
                                        NULL, NULL);
         qemu_fdt_setprop(fdt, name, "no-map", NULL, 0);
     }
@@ -436,17 +439,15 @@ static void xiangshan_kmh_fdt_add_autotest(XiangshanKmhState *s)
     xiangshan_kmh_fdt_add_reg_node(fdt,
                                    "/reserved-memory/my_reserved_buffer@%"HWADDR_PRIx,
                                    trigger_addr,
-                                   XIANGSHAN_KMH_AUTOTEST_TRIGGER_SIZE,
+                                   trigger_size,
                                    "my,reserved-mem", "okay");
 
     /*
      * qemu_fdt_add_subnode() prepends children. Add workload first so rootfs
      * remains before workload in the DT and is normally probed as /dev/pmem0.
      */
-    xiangshan_kmh_fdt_add_pmem(fdt, workload_addr,
-                               XIANGSHAN_KMH_AUTOTEST_WORKLOAD_SIZE);
-    xiangshan_kmh_fdt_add_pmem(fdt, rootfs_addr,
-                               XIANGSHAN_KMH_AUTOTEST_ROOTFS_SIZE);
+    xiangshan_kmh_fdt_add_pmem(fdt, workload_addr, workload_size);
+    xiangshan_kmh_fdt_add_pmem(fdt, rootfs_addr, rootfs_size);
 }
 
 static uint32_t xiangshan_kmh_fdt_add_iommu_sys(XiangshanKmhState *s,
@@ -1011,6 +1012,9 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->autotest_rootfs_addr = XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR;
     s->autotest_workload_addr = XIANGSHAN_KMH_AUTOTEST_WORKLOAD_ADDR;
     s->autotest_trigger_addr = XIANGSHAN_KMH_AUTOTEST_TRIGGER_ADDR;
+    s->autotest_rootfs_size = XIANGSHAN_KMH_AUTOTEST_ROOTFS_SIZE;
+    s->autotest_workload_size = XIANGSHAN_KMH_AUTOTEST_WORKLOAD_SIZE;
+    s->autotest_trigger_size = XIANGSHAN_KMH_AUTOTEST_TRIGGER_SIZE;
 }
 
 static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *data)
@@ -1059,10 +1063,16 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                               "Autotest Image loader address");
     XIANGSHAN_KMH_UINT64_PROP("autotest-rootfs-addr", autotest_rootfs_addr,
                               "Autotest rootfs pmem loader address");
+    XIANGSHAN_KMH_UINT64_PROP("autotest-rootfs-size", autotest_rootfs_size,
+                              "Autotest rootfs pmem and reserved-memory size");
     XIANGSHAN_KMH_UINT64_PROP("autotest-workload-addr", autotest_workload_addr,
                               "Autotest workload pmem loader address");
+    XIANGSHAN_KMH_UINT64_PROP("autotest-workload-size", autotest_workload_size,
+                              "Autotest workload pmem and reserved-memory size");
     XIANGSHAN_KMH_UINT64_PROP("autotest-trigger-addr", autotest_trigger_addr,
                               "Autotest trigger reserved-memory loader address");
+    XIANGSHAN_KMH_UINT64_PROP("autotest-trigger-size", autotest_trigger_size,
+                              "Autotest trigger reserved-memory size");
 }
 
 #undef XIANGSHAN_KMH_UINT64_PROP
