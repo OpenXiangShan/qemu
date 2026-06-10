@@ -63,12 +63,14 @@
 #define XIANGSHAN_KMH_AUTOTEST_TRIGGER_SIZE 0x200000ULL
 #define XIANGSHAN_KMH_UART0_CLOCK 50000000
 #define FDT_IRQ_TYPE_EDGE_RISING 4
+#define DESIGNWARE_PCIE_IRQ_MSI 4
 
 static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_ROM]      =        {     0x1000,       0x40000 },
     [XIANGSHAN_KMH_FLASH]    =        { 0x10000000,     0x4000000 },
     [XIANGSHAN_KMH_UART0]    =        { 0x310B0000,       0x10000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
+    [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
     [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },
     [XIANGSHAN_KMH_APLIC_M]  =        { 0x31100000,        0x4000 },
     [XIANGSHAN_KMH_APLIC_S]  =        { 0x31120000,        0x4000 },
@@ -76,35 +78,34 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_IMSIC_M]  =        { 0x3A800000,       0x10000 },
     [XIANGSHAN_KMH_IMSIC_S]  =        { 0x3B000000,       0x80000 },
     [XIANGSHAN_KMH_UART1]    =        { 0x40600000,        0x1000 },
+    [XIANGSHAN_KMH_PCIE0_BAR] =       { 0x60000000,     0x7ff0000 },
     [XIANGSHAN_KMH_DRAM]     =        { 0x80000000,           0x0 },
 };
 
 static void xiangshan_kmh_dw_pcie_init(XiangshanKmhSoCState *s)
 {
     DesignwarePCIEHost *pcie0 = &s->pcie0;
-    qemu_irq irq;
+    const MemMapEntry *memmap = xiangshan_kmh_memmap;
+    PCIHostState *pci_host;
 
     /*
      * PCIE RC0
      */
     sysbus_realize(SYS_BUS_DEVICE(pcie0), &error_abort);
-    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0, 0x32000000);
-    create_unimplemented_device("pcie0-phy", 0x60000000, 512 * MiB);
+    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0,
+                    memmap[XIANGSHAN_KMH_PCIE0_DBI].base);
 
-    irq = qdev_get_gpio_in(DEVICE(s->irqchip), XIANGSHAN_KMH_RC_MSI0_IRQ); //MSI
-    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), 0, irq);
-    irq = qdev_get_gpio_in(DEVICE(s->irqchip), XIANGSHAN_KMH_RC_HP_IRQ); //HP
-    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), 0, irq);
-    //DESIGNWARE_PCIE_IRQ_MSI
-    pcie0->pci.irqs[3] = qdev_get_gpio_in(DEVICE(s->irqchip), XIANGSHAN_KMH_RC_MSI0_IRQ);
-    //FIXME: How to add imisc_s mr on pci.address_space ,  Does have other api???
-    pcie0->pci.address_space.root = get_system_memory();
-}
+    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), DESIGNWARE_PCIE_IRQ_MSI,
+                       qdev_get_gpio_in(DEVICE(s->irqchip),
+                                        XIANGSHAN_KMH_RC_MSI0_IRQ));
 
-static void xiangshan_kmh_fill_pcie_memmap(void)
-{
-    create_unimplemented_device("pcie0-cfg1", 0x40000000, 512 * MiB);
-    create_unimplemented_device("pcie0-phy1", 0x4000000000, 640 * GiB); // 0x40_0000_0000 ~ 0xE0_0000_0000
+    pci_host = PCI_HOST_BRIDGE(pcie0);
+    /*
+     * The generated DT uses IMSIC as the PCI MSI parent. Without the optional
+     * IOMMU, let PCI devices issue DMA/MSI writes directly to system memory.
+     */
+    pci_host->bus->iommu_ops = NULL;
+    pci_host->bus->iommu_opaque = NULL;
 }
 
 static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts)
@@ -214,10 +215,6 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                                 &s->flash);
 
     xiangshan_kmh_dw_pcie_init(s);
-    /*
-     * PCIe PHY
-     */
-    xiangshan_kmh_fill_pcie_memmap();
 }
 
 static void xiangshan_kmh_soc_class_init(ObjectClass *klass, const void *data)
