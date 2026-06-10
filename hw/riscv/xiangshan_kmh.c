@@ -65,6 +65,10 @@
 #define FDT_IRQ_TYPE_EDGE_RISING 4
 #define DESIGNWARE_PCIE_IRQ_MSI 4
 
+#define XIANGSHAN_KMH_PCIE0_CFG_BASE 0x67ff0000ULL
+#define XIANGSHAN_KMH_PCIE0_CFG_SIZE 0x00010000ULL
+#define XIANGSHAN_KMH_PCIE0_LOW_BUS_BASE 0x40000000ULL
+
 static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_ROM]      =        {     0x1000,       0x40000 },
     [XIANGSHAN_KMH_FLASH]    =        { 0x10000000,     0x4000000 },
@@ -260,7 +264,7 @@ static bool xiangshan_kmh_should_generate_dtb(XiangshanKmhState *s)
 
     return s->generated_dtb == ON_OFF_AUTO_ON ||
            (s->generated_dtb == ON_OFF_AUTO_AUTO && !machine->dtb &&
-            (machine->kernel_filename || s->autotest_dtb));
+            (machine->kernel_filename || s->autotest_dtb || s->pcie_dtb));
 }
 
 static uint64_t xiangshan_kmh_fw_jump_fdt_addr(XiangshanKmhState *s)
@@ -443,6 +447,56 @@ static void xiangshan_kmh_fdt_add_autotest(XiangshanKmhState *s)
                                XIANGSHAN_KMH_AUTOTEST_WORKLOAD_SIZE);
     xiangshan_kmh_fdt_add_pmem(fdt, rootfs_addr,
                                XIANGSHAN_KMH_AUTOTEST_ROOTFS_SIZE);
+}
+
+static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
+                                        uint32_t aplic_s_phandle,
+                                        uint32_t imsic_s_phandle)
+{
+    MachineState *ms = MACHINE(s);
+    const MemMapEntry *memmap = xiangshan_kmh_memmap;
+    void *fdt = ms->fdt;
+    g_autofree char *name = g_strdup_printf("/soc/pcie@%"HWADDR_PRIx,
+        memmap[XIANGSHAN_KMH_PCIE0_DBI].base);
+    static const char * const reg_names[2] = {
+        "dbi", "config"
+    };
+    static const char * const interrupt_names[2] = {
+        "msi", "hp"
+    };
+
+    qemu_fdt_add_subnode(fdt, name);
+    qemu_fdt_setprop_string(fdt, name, "compatible", "snps,dw-pcie");
+    qemu_fdt_setprop_sized_cells(fdt, name, "reg",
+                                 2, memmap[XIANGSHAN_KMH_PCIE0_DBI].base,
+                                 2, memmap[XIANGSHAN_KMH_PCIE0_DBI].size,
+                                 2, XIANGSHAN_KMH_PCIE0_CFG_BASE,
+                                 2, XIANGSHAN_KMH_PCIE0_CFG_SIZE);
+    qemu_fdt_setprop_string_array(fdt, name, "reg-names",
+                                  (char **)&reg_names,
+                                  ARRAY_SIZE(reg_names));
+    qemu_fdt_setprop_cell(fdt, name, "#address-cells", 3);
+    qemu_fdt_setprop_cell(fdt, name, "#size-cells", 2);
+    qemu_fdt_setprop_string(fdt, name, "device_type", "pci");
+    qemu_fdt_setprop_cells(fdt, name, "bus-range", 0x0, 0xff);
+    qemu_fdt_setprop_sized_cells(fdt, name, "ranges",
+                                 1, FDT_PCI_RANGE_MMIO,
+                                 2, XIANGSHAN_KMH_PCIE0_LOW_BUS_BASE,
+                                 2, memmap[XIANGSHAN_KMH_PCIE0_BAR].base,
+                                 2, memmap[XIANGSHAN_KMH_PCIE0_BAR].size);
+    qemu_fdt_setprop_cell(fdt, name, "num-ib-windows", 1);
+    qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
+    qemu_fdt_setprop_cell(fdt, name, "msi-parent", imsic_s_phandle);
+    qemu_fdt_setprop_cells(fdt, name, "interrupts",
+                           XIANGSHAN_KMH_RC_MSI0_IRQ,
+                           FDT_IRQ_TYPE_EDGE_RISING,
+                           XIANGSHAN_KMH_RC_HP_IRQ,
+                           FDT_IRQ_TYPE_EDGE_RISING);
+    qemu_fdt_setprop_string_array(fdt, name, "interrupt-names",
+                                  (char **)&interrupt_names,
+                                  ARRAY_SIZE(interrupt_names));
+    qemu_fdt_setprop_cell(fdt, name, "num-lanes", 1);
+    qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
 static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
@@ -665,6 +719,10 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
         qemu_fdt_setprop_string(fdt, name, "status", "okay");
     }
 
+    if (s->pcie_dtb) {
+        xiangshan_kmh_fdt_add_pcie(s, aplic_s_phandle, imsic_s_phandle);
+    }
+
     if (s->autotest_dtb) {
         xiangshan_kmh_fdt_add_autotest(s);
     }
@@ -696,9 +754,10 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
                                 machine->ram);
 
     generate_dtb = xiangshan_kmh_should_generate_dtb(s);
-    if (machine->dtb && (s->generated_dtb == ON_OFF_AUTO_ON || s->autotest_dtb)) {
+    if (machine->dtb && (s->generated_dtb == ON_OFF_AUTO_ON ||
+                         s->autotest_dtb || s->pcie_dtb)) {
         error_report("-dtb cannot be combined with generated-dtb=on or "
-                     "autotest-dtb=on");
+                     "autotest-dtb=on or pcie-dtb=on");
         exit(1);
     }
 
@@ -828,6 +887,20 @@ static void xiangshan_kmh_set_autotest_dtb(Object *obj, bool value, Error **errp
     s->autotest_dtb = value;
 }
 
+static bool xiangshan_kmh_get_pcie_dtb(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->pcie_dtb;
+}
+
+static void xiangshan_kmh_set_pcie_dtb(Object *obj, bool value, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->pcie_dtb = value;
+}
+
 static void xiangshan_kmh_get_uint64(Object *obj, Visitor *v, const char *name,
                                      void *opaque, Error **errp)
 {
@@ -862,6 +935,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->iommu_sys = ON_OFF_AUTO_AUTO;
     s->generated_dtb = ON_OFF_AUTO_AUTO;
     s->autotest_dtb = false;
+    s->pcie_dtb = false;
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
     s->autotest_image_addr = XIANGSHAN_KMH_AUTOTEST_IMAGE_ADDR;
     s->autotest_rootfs_addr = XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR;
@@ -902,6 +976,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_autotest_dtb);
     object_class_property_set_description(klass, "autotest-dtb",
                                           "Add autotest nvdimm and reserved-memory nodes");
+
+    object_class_property_add_bool(klass, "pcie-dtb",
+                                   xiangshan_kmh_get_pcie_dtb,
+                                   xiangshan_kmh_set_pcie_dtb);
+    object_class_property_set_description(klass, "pcie-dtb",
+                                          "Add DWC PCIe host node to the generated device tree");
 
     XIANGSHAN_KMH_UINT64_PROP("fw-jump-fdt-addr", fw_jump_fdt_addr,
                               "Generated DTB load address for fw_jump boot");

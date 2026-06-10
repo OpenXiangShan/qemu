@@ -52,13 +52,17 @@ Machine options
 
 ``generated-dtb=auto|on|off``
    是否使用 QEMU 生成的设备树。默认是 ``auto``：使用 ``-kernel`` 启动
-   或打开 ``autotest-dtb=on`` 时自动生成；使用普通 ``-bios`` 且没有
-   ``-kernel`` 时默认不生成。需要用 ``fw_jump.bin`` 加 loader 启动内核时，
-   建议显式设置 ``generated-dtb=on``。
+   或打开 ``autotest-dtb=on``/``pcie-dtb=on`` 时自动生成；使用普通
+   ``-bios`` 且没有 ``-kernel`` 时默认不生成。需要用 ``fw_jump.bin`` 加
+   loader 启动内核时，建议显式设置 ``generated-dtb=on``。
 
 ``autotest-dtb=on|off``
    是否在 QEMU 生成的设备树里加入自动测试节点。打开后会隐含需要
    QEMU 生成设备树，并且不能同时使用 ``-dtb``。
+
+``pcie-dtb=on|off``
+   是否在 QEMU 生成的设备树里加入 DWC PCIe RC0 节点。默认 ``off``。
+   打开后会隐含需要 QEMU 生成设备树，并且不能同时使用 ``-dtb``。
 
 ``fw-jump-fdt-addr=<addr>``
    ``-bios fw_jump.bin`` + ``-device loader`` 启动时，QEMU 生成 DTB 的入口
@@ -186,6 +190,46 @@ OpenSBI 入口看到的 FDT 源地址；OpenSBI 打印的 ``Next Arg1`` 是传�
 如果这里有输出，需要确认该 ``fw_jump.bin`` 的平台代码是否真的使用入口
 ``a1`` 或 OpenSBI scratch 中的 ``next_arg1`` 作为 FDT 来源。
 
+Use DWC PCIe
+~~~~~~~~~~~~
+
+打开 ``pcie-dtb=on`` 后，QEMU 生成的设备树会加入 RC0
+``/soc/pcie@32000000``，compatible 为 ``snps,dw-pcie``。当前实现先建模
+最小可用 PCIe host：
+
+* DBI window：``0x32000000``，参考 KMH DTS 的 ``dbi`` reg。
+* config window：``0x67ff0000``，大小 ``0x10000``。
+* 低 MMIO window：CPU ``0x60000000..0x67feffff`` 映射到 PCI
+  ``0x40000000..0x47feffff``。
+* MSI 使用生成 DTB 中的 ``msi-parent = <&imsics_s>``，也就是 RISC-V
+  IMSIC 外部 MSI 域。
+
+QEMU DWC root port 的下游 bus 名为 ``dw-pcie``。例如挂一个 virtio PCIe
+网卡：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,pcie-dtb=on \
+       -smp 4 -m 16G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image,addr=0x80400000 \
+       -netdev user,id=n0 \
+       -device virtio-net-pci,netdev=n0,bus=dw-pcie
+
+启动日志中预期可以看到类似输出：
+
+.. code-block:: text
+
+   dw-pcie 32000000.pcie: PCI host bridge to bus 0000:00
+   pci 0000:01:00.0: [1af4:1041] type 00 class 0x020000 PCIe Endpoint
+
+当前生成 DTB 按 ``kmh-v2-synps-pcie.dtsi`` 保留 ``interrupts = <12>, <13>``
+和 ``interrupt-names = "msi", "hp"``，但暂不生成 PCI legacy INTx
+``interrupt-map``。因此 ``pcieport ... of_irq_parse_pci: failed`` 这类 legacy
+INTx 解析日志是预期现象；优先使用 MSI/MSI-X 设备。真实 DTS 中其它 RC 和
+64-bit high MMIO window 还没有在 QEMU 生成 DTB 中打开。
+
 Run autotest with pmem/nvdimm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -263,6 +307,7 @@ Dump generated DTB
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image,addr=0x80400000
 
-``generated-dtb=on`` 或 ``autotest-dtb=on`` 不能和 ``-dtb`` 同时使用。
+``generated-dtb=on``、``autotest-dtb=on`` 或 ``pcie-dtb=on`` 不能和
+``-dtb`` 同时使用。
 如果需要完全使用外部设备树，请关闭 QEMU 生成 DTB 的路径，并确认固件和内核
 都使用同一份 DTB。
