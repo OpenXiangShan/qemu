@@ -264,7 +264,8 @@ static bool xiangshan_kmh_should_generate_dtb(XiangshanKmhState *s)
 
     return s->generated_dtb == ON_OFF_AUTO_ON ||
            (s->generated_dtb == ON_OFF_AUTO_AUTO && !machine->dtb &&
-            (machine->kernel_filename || s->autotest_dtb || s->pcie_dtb));
+            (machine->kernel_filename || s->autotest_dtb || s->pcie_dtb ||
+             kmh_is_iommu_sys_enabled(s)));
 }
 
 static uint64_t xiangshan_kmh_fw_jump_fdt_addr(XiangshanKmhState *s)
@@ -449,9 +450,47 @@ static void xiangshan_kmh_fdt_add_autotest(XiangshanKmhState *s)
                                XIANGSHAN_KMH_AUTOTEST_ROOTFS_SIZE);
 }
 
+static uint32_t xiangshan_kmh_fdt_add_iommu_sys(XiangshanKmhState *s,
+                                                uint32_t aplic_s_phandle,
+                                                uint32_t imsic_s_phandle,
+                                                uint32_t *phandle)
+{
+    MachineState *ms = MACHINE(s);
+    const MemMapEntry *memmap = xiangshan_kmh_memmap;
+    void *fdt = ms->fdt;
+    uint32_t iommu_phandle = (*phandle)++;
+    uint32_t iommu_irqs[RISCV_IOMMU_INTR_COUNT] = {
+        XIANGSHAN_KMH_IOMMU_SYS_IRQ + RISCV_IOMMU_INTR_CQ,
+        XIANGSHAN_KMH_IOMMU_SYS_IRQ + RISCV_IOMMU_INTR_FQ,
+        XIANGSHAN_KMH_IOMMU_SYS_IRQ + RISCV_IOMMU_INTR_PM,
+        XIANGSHAN_KMH_IOMMU_SYS_IRQ + RISCV_IOMMU_INTR_PQ,
+    };
+    g_autofree char *name = g_strdup_printf("/soc/iommu@%"HWADDR_PRIx,
+        memmap[XIANGSHAN_KMH_IOMMU_SYS].base);
+
+    qemu_fdt_add_subnode(fdt, name);
+    qemu_fdt_setprop_string(fdt, name, "compatible", "riscv,iommu");
+    qemu_fdt_setprop_cell(fdt, name, "#iommu-cells", 1);
+    qemu_fdt_setprop_cell(fdt, name, "phandle", iommu_phandle);
+    qemu_fdt_setprop_sized_cells(fdt, name, "reg",
+                                 2, memmap[XIANGSHAN_KMH_IOMMU_SYS].base,
+                                 2, memmap[XIANGSHAN_KMH_IOMMU_SYS].size);
+    qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
+    qemu_fdt_setprop_cells(fdt, name, "interrupts",
+                           iommu_irqs[0], FDT_IRQ_TYPE_EDGE_LOW,
+                           iommu_irqs[1], FDT_IRQ_TYPE_EDGE_LOW,
+                           iommu_irqs[2], FDT_IRQ_TYPE_EDGE_LOW,
+                           iommu_irqs[3], FDT_IRQ_TYPE_EDGE_LOW);
+    qemu_fdt_setprop_cell(fdt, name, "msi-parent", imsic_s_phandle);
+    qemu_fdt_setprop_string(fdt, name, "status", "okay");
+
+    return iommu_phandle;
+}
+
 static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
                                         uint32_t aplic_s_phandle,
-                                        uint32_t imsic_s_phandle)
+                                        uint32_t imsic_s_phandle,
+                                        uint32_t iommu_sys_phandle)
 {
     MachineState *ms = MACHINE(s);
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
@@ -492,6 +531,11 @@ static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
                            FDT_IRQ_TYPE_EDGE_RISING,
                            XIANGSHAN_KMH_RC_HP_IRQ,
                            FDT_IRQ_TYPE_EDGE_RISING);
+    if (iommu_sys_phandle) {
+        qemu_fdt_setprop_cells(fdt, name, "iommu-map",
+                               0, iommu_sys_phandle, 0, 0,
+                               0, iommu_sys_phandle, 0, 0xffff);
+    }
     qemu_fdt_setprop_string_array(fdt, name, "interrupt-names",
                                   (char **)&interrupt_names,
                                   ARRAY_SIZE(interrupt_names));
@@ -506,6 +550,7 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     uint32_t phandle = 1;
     uint32_t imsic_m_phandle, imsic_s_phandle;
     uint32_t aplic_m_phandle, aplic_s_phandle;
+    uint32_t iommu_sys_phandle = 0;
     g_autofree uint32_t *intc_phandles = g_new0(uint32_t, ms->smp.cpus);
     g_autofree uint32_t *clint_cells = g_new0(uint32_t, ms->smp.cpus * 4);
     g_autofree uint32_t *imsic_m_cells = g_new0(uint32_t, ms->smp.cpus * 2);
@@ -719,12 +764,51 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
         qemu_fdt_setprop_string(fdt, name, "status", "okay");
     }
 
+    if (kmh_is_iommu_sys_enabled(s)) {
+        iommu_sys_phandle = xiangshan_kmh_fdt_add_iommu_sys(
+            s, aplic_s_phandle, imsic_s_phandle, &phandle);
+    }
+
     if (s->pcie_dtb) {
-        xiangshan_kmh_fdt_add_pcie(s, aplic_s_phandle, imsic_s_phandle);
+        xiangshan_kmh_fdt_add_pcie(s, aplic_s_phandle, imsic_s_phandle,
+                                   iommu_sys_phandle);
     }
 
     if (s->autotest_dtb) {
         xiangshan_kmh_fdt_add_autotest(s);
+    }
+}
+
+static void xiangshan_kmh_create_iommu_sys(XiangshanKmhState *s)
+{
+    const MemMapEntry *memmap = xiangshan_kmh_memmap;
+    DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
+    XiangshanKmhSoCState *soc = &s->soc;
+    DesignwarePCIEHost *pcie0 = &soc->pcie0;
+    PCIHostState *pci_host = PCI_HOST_BRIDGE(pcie0);
+    PCIBus *bus = pci_host->bus;
+    Object *iommu_obj;
+    RISCVIOMMUState *iommu;
+
+    object_property_set_uint(OBJECT(iommu_sys), "addr",
+                             memmap[XIANGSHAN_KMH_IOMMU_SYS].base,
+                             &error_fatal);
+    object_property_set_uint(OBJECT(iommu_sys), "base-irq",
+                             XIANGSHAN_KMH_IOMMU_SYS_IRQ, &error_fatal);
+    object_property_set_link(OBJECT(iommu_sys), "irqchip",
+                             OBJECT(soc->irqchip), &error_fatal);
+
+    iommu_obj = object_resolve_path_component(OBJECT(iommu_sys), "iommu");
+    if (!iommu_obj) {
+        error_report("failed to resolve KMH system IOMMU child object");
+        exit(1);
+    }
+    iommu = RISCV_IOMMU(iommu_obj);
+
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
+
+    if (!bus->iommu_ops && !bus->iommu_opaque) {
+        riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
     }
 }
 
@@ -809,30 +893,7 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
                               kernel_entry, fdt_load_addr);
 
     if (kmh_is_iommu_sys_enabled(s)) {
-        DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
-
-        object_property_set_uint(OBJECT(iommu_sys), "addr",
-                                 memmap[XIANGSHAN_KMH_IOMMU_SYS].base,
-                                 &error_fatal);
-        object_property_set_uint(OBJECT(iommu_sys), "base-irq",
-                                 XIANGSHAN_KMH_IOMMU_SYS_IRQ,
-                                 &error_fatal);
-        object_property_set_link(OBJECT(iommu_sys), "irqchip",
-                                 OBJECT(s->soc.irqchip),
-                                 &error_fatal);
-
-        sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
-
-        XiangshanKmhSoCState *soc = &s->soc;;
-        DesignwarePCIEHost *pcie0 = &soc->pcie0;
-        PCIHostState *pci_host = PCI_HOST_BRIDGE(pcie0);;
-        PCIBus *bus = pci_host->bus;
-
-        bus->iommu_ops = NULL;
-        bus->iommu_opaque = NULL;
-        RISCVIOMMUState *iommu = (RISCVIOMMUState *)object_resolve_path_type("", TYPE_RISCV_IOMMU, NULL);
-
-        riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
+        xiangshan_kmh_create_iommu_sys(s);
     }
 }
 

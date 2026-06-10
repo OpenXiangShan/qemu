@@ -52,9 +52,10 @@ Machine options
 
 ``generated-dtb=auto|on|off``
    是否使用 QEMU 生成的设备树。默认是 ``auto``：使用 ``-kernel`` 启动
-   或打开 ``autotest-dtb=on``/``pcie-dtb=on`` 时自动生成；使用普通
-   ``-bios`` 且没有 ``-kernel`` 时默认不生成。需要用 ``fw_jump.bin`` 加
-   loader 启动内核时，建议显式设置 ``generated-dtb=on``。
+   或打开 ``autotest-dtb=on``/``pcie-dtb=on``/``iommu-sys=on`` 时自动
+   生成；使用普通 ``-bios`` 且没有 ``-kernel`` 时默认不生成。需要用
+   ``fw_jump.bin`` 加 loader 启动内核时，建议显式设置
+   ``generated-dtb=on``。
 
 ``autotest-dtb=on|off``
    是否在 QEMU 生成的设备树里加入自动测试节点。打开后会隐含需要
@@ -63,6 +64,12 @@ Machine options
 ``pcie-dtb=on|off``
    是否在 QEMU 生成的设备树里加入 DWC PCIe RC0 节点。默认 ``off``。
    打开后会隐含需要 QEMU 生成设备树，并且不能同时使用 ``-dtb``。
+
+``iommu-sys=auto|on|off``
+   是否创建 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
+   ``off``。打开 ``on`` 后，QEMU 生成的设备树会加入 ``riscv,iommu``
+   节点；如果同时打开 ``pcie-dtb=on``，PCIe 节点会加入 ``iommu-map``。
+   使用外部 ``-dtb`` 时，需要外部设备树自己描述同一个 IOMMU。
 
 ``fw-jump-fdt-addr=<addr>``
    ``-bios fw_jump.bin`` + ``-device loader`` 启动时，QEMU 生成 DTB 的入口
@@ -203,6 +210,8 @@ Use DWC PCIe
   ``0x40000000..0x47feffff``。
 * MSI 使用生成 DTB 中的 ``msi-parent = <&imsics_s>``，也就是 RISC-V
   IMSIC 外部 MSI 域。
+* 如果同时打开 ``iommu-sys=on``，PCIe 节点会加入指向 system IOMMU 的
+  ``iommu-map``。
 
 QEMU DWC root port 的下游 bus 名为 ``dw-pcie``。例如挂一个 virtio PCIe
 网卡：
