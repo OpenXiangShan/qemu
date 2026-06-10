@@ -42,6 +42,14 @@ typedef struct XiangshanKmhState {
     /*< public >*/
     XiangshanKmhSoCState soc;
     OnOffAuto iommu_sys;
+    OnOffAuto generated_dtb;
+    bool autotest_dtb;
+    uint64_t fw_jump_fdt_addr;
+    uint64_t autotest_image_addr;
+    uint64_t autotest_rootfs_addr;
+    uint64_t autotest_workload_addr;
+    uint64_t autotest_trigger_addr;
+    int fdt_size;
 } XiangshanKmhState;
 
 #define TYPE_XIANGSHAN_KMH_MACHINE MACHINE_TYPE_NAME("xiangshan-kunminghu")

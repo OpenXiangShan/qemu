@@ -124,6 +124,7 @@ config XIANGSHAN_KUNMINGHU
     bool
     default y
     depends on RISCV64
+    select DEVICE_TREE
     select RISCV_ACLINT
     select RISCV_APLIC
     select RISCV_IMSIC
