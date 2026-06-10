@@ -29,6 +29,7 @@ typedef struct XiangshanKmhSoCState {
     MemoryRegion sram;
     MemoryRegion flash;
     DesignwarePCIEHost pcie0;
+    bool dw_pcie;
 } XiangshanKmhSoCState;
 
 #define TYPE_XIANGSHAN_KMH_SOC "xiangshan.kunminghu.soc"
@@ -44,7 +45,7 @@ typedef struct XiangshanKmhState {
     OnOffAuto iommu_sys;
     OnOffAuto generated_dtb;
     bool autotest_dtb;
-    bool pcie_dtb;
+    bool dw_pcie;
     uint64_t fw_jump_fdt_addr;
     uint64_t autotest_image_addr;
     uint64_t autotest_rootfs_addr;

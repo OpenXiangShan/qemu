@@ -218,7 +218,9 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     memory_region_add_subregion(system_memory, memmap[XIANGSHAN_KMH_FLASH].base,
                                 &s->flash);
 
-    xiangshan_kmh_dw_pcie_init(s);
+    if (s->dw_pcie) {
+        xiangshan_kmh_dw_pcie_init(s);
+    }
 }
 
 static void xiangshan_kmh_soc_class_init(ObjectClass *klass, const void *data)
@@ -233,10 +235,8 @@ static void xiangshan_kmh_soc_class_init(ObjectClass *klass, const void *data)
 static void xiangshan_kmh_soc_instance_init(Object *obj)
 {
     XiangshanKmhSoCState *s = XIANGSHAN_KMH_SOC(obj);
-    MachineState *ms = MACHINE(qdev_get_machine());
 
     object_initialize_child(obj, "cpus", &s->cpus, TYPE_RISCV_HART_ARRAY);
-    object_initialize_child(OBJECT(ms), "pcie0", &s->pcie0, TYPE_DESIGNWARE_PCIE_HOST);
 }
 
 static const TypeInfo xiangshan_kmh_soc_info = {
@@ -264,8 +264,7 @@ static bool xiangshan_kmh_should_generate_dtb(XiangshanKmhState *s)
 
     return s->generated_dtb == ON_OFF_AUTO_ON ||
            (s->generated_dtb == ON_OFF_AUTO_AUTO && !machine->dtb &&
-            (machine->kernel_filename || s->autotest_dtb || s->pcie_dtb ||
-             kmh_is_iommu_sys_enabled(s)));
+            (machine->kernel_filename || s->autotest_dtb));
 }
 
 static uint64_t xiangshan_kmh_fw_jump_fdt_addr(XiangshanKmhState *s)
@@ -769,7 +768,7 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
             s, aplic_s_phandle, imsic_s_phandle, &phandle);
     }
 
-    if (s->pcie_dtb) {
+    if (s->dw_pcie) {
         xiangshan_kmh_fdt_add_pcie(s, aplic_s_phandle, imsic_s_phandle,
                                    iommu_sys_phandle);
     }
@@ -784,11 +783,16 @@ static void xiangshan_kmh_create_iommu_sys(XiangshanKmhState *s)
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
     DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
     XiangshanKmhSoCState *soc = &s->soc;
-    DesignwarePCIEHost *pcie0 = &soc->pcie0;
-    PCIHostState *pci_host = PCI_HOST_BRIDGE(pcie0);
-    PCIBus *bus = pci_host->bus;
+    PCIBus *bus = NULL;
     Object *iommu_obj;
     RISCVIOMMUState *iommu;
+
+    if (s->dw_pcie) {
+        DesignwarePCIEHost *pcie0 = &soc->pcie0;
+        PCIHostState *pci_host = PCI_HOST_BRIDGE(pcie0);
+
+        bus = pci_host->bus;
+    }
 
     object_property_set_uint(OBJECT(iommu_sys), "addr",
                              memmap[XIANGSHAN_KMH_IOMMU_SYS].base,
@@ -807,7 +811,7 @@ static void xiangshan_kmh_create_iommu_sys(XiangshanKmhState *s)
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
 
-    if (!bus->iommu_ops && !bus->iommu_opaque) {
+    if (bus && !bus->iommu_ops && !bus->iommu_opaque) {
         riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
     }
 }
@@ -830,6 +834,11 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     /* Initialize SoC */
     object_initialize_child(OBJECT(machine), "soc", &s->soc,
                             TYPE_XIANGSHAN_KMH_SOC);
+    s->soc.dw_pcie = s->dw_pcie;
+    if (s->dw_pcie) {
+        object_initialize_child(OBJECT(machine), "pcie0", &s->soc.pcie0,
+                                TYPE_DESIGNWARE_PCIE_HOST);
+    }
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 
     /* Register RAM */
@@ -839,9 +848,9 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
 
     generate_dtb = xiangshan_kmh_should_generate_dtb(s);
     if (machine->dtb && (s->generated_dtb == ON_OFF_AUTO_ON ||
-                         s->autotest_dtb || s->pcie_dtb)) {
+                         s->autotest_dtb)) {
         error_report("-dtb cannot be combined with generated-dtb=on or "
-                     "autotest-dtb=on or pcie-dtb=on");
+                     "autotest-dtb=on");
         exit(1);
     }
 
@@ -948,18 +957,18 @@ static void xiangshan_kmh_set_autotest_dtb(Object *obj, bool value, Error **errp
     s->autotest_dtb = value;
 }
 
-static bool xiangshan_kmh_get_pcie_dtb(Object *obj, Error **errp)
+static bool xiangshan_kmh_get_dw_pcie(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
 
-    return s->pcie_dtb;
+    return s->dw_pcie;
 }
 
-static void xiangshan_kmh_set_pcie_dtb(Object *obj, bool value, Error **errp)
+static void xiangshan_kmh_set_dw_pcie(Object *obj, bool value, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
 
-    s->pcie_dtb = value;
+    s->dw_pcie = value;
 }
 
 static void xiangshan_kmh_get_uint64(Object *obj, Visitor *v, const char *name,
@@ -996,7 +1005,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->iommu_sys = ON_OFF_AUTO_AUTO;
     s->generated_dtb = ON_OFF_AUTO_AUTO;
     s->autotest_dtb = false;
-    s->pcie_dtb = false;
+    s->dw_pcie = false;
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
     s->autotest_image_addr = XIANGSHAN_KMH_AUTOTEST_IMAGE_ADDR;
     s->autotest_rootfs_addr = XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR;
@@ -1038,11 +1047,11 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
     object_class_property_set_description(klass, "autotest-dtb",
                                           "Add autotest nvdimm and reserved-memory nodes");
 
-    object_class_property_add_bool(klass, "pcie-dtb",
-                                   xiangshan_kmh_get_pcie_dtb,
-                                   xiangshan_kmh_set_pcie_dtb);
-    object_class_property_set_description(klass, "pcie-dtb",
-                                          "Add DWC PCIe host node to the generated device tree");
+    object_class_property_add_bool(klass, "dw-pcie",
+                                   xiangshan_kmh_get_dw_pcie,
+                                   xiangshan_kmh_set_dw_pcie);
+    object_class_property_set_description(klass, "dw-pcie",
+                                          "Enable DWC PCIe host controller");
 
     XIANGSHAN_KMH_UINT64_PROP("fw-jump-fdt-addr", fw_jump_fdt_addr,
                               "Generated DTB load address for fw_jump boot");

@@ -52,24 +52,25 @@ Machine options
 
 ``generated-dtb=auto|on|off``
    是否使用 QEMU 生成的设备树。默认是 ``auto``：使用 ``-kernel`` 启动
-   或打开 ``autotest-dtb=on``/``pcie-dtb=on``/``iommu-sys=on`` 时自动
-   生成；使用普通 ``-bios`` 且没有 ``-kernel`` 时默认不生成。需要用
-   ``fw_jump.bin`` 加 loader 启动内核时，建议显式设置
-   ``generated-dtb=on``。
+   或打开 ``autotest-dtb=on`` 时自动生成；使用普通 ``-bios`` 且没有
+   ``-kernel`` 时默认不生成。需要用 ``fw_jump.bin`` 加 loader 启动内核时，
+   建议显式设置 ``generated-dtb=on``。
 
 ``autotest-dtb=on|off``
    是否在 QEMU 生成的设备树里加入自动测试节点。打开后会隐含需要
    QEMU 生成设备树，并且不能同时使用 ``-dtb``。
 
-``pcie-dtb=on|off``
-   是否在 QEMU 生成的设备树里加入 DWC PCIe RC0 节点。默认 ``off``。
-   打开后会隐含需要 QEMU 生成设备树，并且不能同时使用 ``-dtb``。
+``dw-pcie=on|off``
+   是否创建 DWC PCIe RC0 设备。默认 ``off``。如果 QEMU 当前使用生成的
+   设备树，打开后会在设备树里加入 DWC PCIe RC0 节点；使用外部 ``-dtb``
+   时，需要外部设备树自己描述同一个 PCIe host。
 
 ``iommu-sys=auto|on|off``
    是否创建 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
-   ``off``。打开 ``on`` 后，QEMU 生成的设备树会加入 ``riscv,iommu``
-   节点；如果同时打开 ``pcie-dtb=on``，PCIe 节点会加入 ``iommu-map``。
-   使用外部 ``-dtb`` 时，需要外部设备树自己描述同一个 IOMMU。
+   ``off``。如果 QEMU 当前使用生成的设备树，打开 ``on`` 后会加入
+   ``riscv,iommu`` 节点；如果同时打开 ``dw-pcie=on``，PCIe 节点会加入
+   ``iommu-map``。使用外部 ``-dtb`` 时，需要外部设备树自己描述同一个
+   IOMMU。
 
 ``fw-jump-fdt-addr=<addr>``
    ``-bios fw_jump.bin`` + ``-device loader`` 启动时，QEMU 生成 DTB 的入口
@@ -200,9 +201,9 @@ OpenSBI 入口看到的 FDT 源地址；OpenSBI 打印的 ``Next Arg1`` 是传�
 Use DWC PCIe
 ~~~~~~~~~~~~
 
-打开 ``pcie-dtb=on`` 后，QEMU 生成的设备树会加入 RC0
-``/soc/pcie@32000000``，compatible 为 ``snps,dw-pcie``。当前实现先建模
-最小可用 PCIe host：
+打开 ``dw-pcie=on`` 后，QEMU 会创建 DWC PCIe RC0 设备。如果当前使用
+QEMU 生成的设备树，设备树会加入 ``/soc/pcie@32000000``，compatible 为
+``snps,dw-pcie``。当前实现先建模最小可用 PCIe host：
 
 * DBI window：``0x32000000``，参考 KMH DTS 的 ``dbi`` reg。
 * config window：``0x67ff0000``，大小 ``0x10000``。
@@ -219,7 +220,7 @@ QEMU DWC root port 的下游 bus 名为 ``dw-pcie``。例如挂一个 virtio PCI
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,pcie-dtb=on \
+       -M xiangshan-kunminghu,generated-dtb=on,dw-pcie=on \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image,addr=0x80400000 \
@@ -316,7 +317,6 @@ Dump generated DTB
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image,addr=0x80400000
 
-``generated-dtb=on``、``autotest-dtb=on`` 或 ``pcie-dtb=on`` 不能和
-``-dtb`` 同时使用。
+``generated-dtb=on`` 或 ``autotest-dtb=on`` 不能和 ``-dtb`` 同时使用。
 如果需要完全使用外部设备树，请关闭 QEMU 生成 DTB 的路径，并确认固件和内核
 都使用同一份 DTB。
