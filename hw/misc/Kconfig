@@ -235,4 +235,13 @@ config IOSB
 config XLNX_VERSAL_TRNG
     bool
 
+config MY_VIRTIO_BLK
+    bool
+
+config MY_VIRTIO_NET
+    bool
+
+config MY_VIRTIO_CONSOLE
+    bool
+
 source macio/Kconfig

@@ -46,6 +46,7 @@
 #include "hw/riscv/riscv_hart.h"
 #include "system/system.h"
 #include "hw/misc/unimp.h"
+#include "hw/misc/my_virtio.h"
 #include "hw/riscv/iommu.h"
 #include "hw/riscv/riscv-iommu.h"
 #include "hw/riscv/riscv-iommu-bits.h"
@@ -72,6 +73,9 @@
 static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_ROM]      =        {     0x1000,       0x40000 },
     [XIANGSHAN_KMH_FLASH]    =        { 0x10000000,     0x4000000 },
+    [XIANGSHAN_KMH_MY_VIRTIO_CONSOLE] = { 0x31080000,      0x1000 },
+    [XIANGSHAN_KMH_MY_VIRTIO_NET] =   { 0x31090000,        0x1000 },
+    [XIANGSHAN_KMH_MY_VIRTIO_BLK] =   { 0x310A0000,        0x1000 },
     [XIANGSHAN_KMH_UART0]    =        { 0x310B0000,       0x10000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
@@ -220,6 +224,28 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
 
     if (s->dw_pcie) {
         xiangshan_kmh_dw_pcie_init(s);
+    }
+
+    if (s->my_virtio_blk) {
+        my_virtio_blk_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].base,
+                             memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].size,
+                             qdev_get_gpio_in(DEVICE(s->irqchip),
+                                              XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ));
+    }
+
+    if (s->my_virtio_net) {
+        my_virtio_net_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_NET].base,
+                             memmap[XIANGSHAN_KMH_MY_VIRTIO_NET].size,
+                             qdev_get_gpio_in(DEVICE(s->irqchip),
+                                              XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ));
+    }
+
+    if (s->my_virtio_console) {
+        my_virtio_console_create(
+            memmap[XIANGSHAN_KMH_MY_VIRTIO_CONSOLE].base,
+            memmap[XIANGSHAN_KMH_MY_VIRTIO_CONSOLE].size,
+            qdev_get_gpio_in(DEVICE(s->irqchip),
+                             XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ));
     }
 }
 
@@ -543,6 +569,29 @@ static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
     qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
+static void xiangshan_kmh_fdt_add_my_virtio(XiangshanKmhState *s,
+                                            const char *node_name,
+                                            int memmap_index,
+                                            int irq,
+                                            uint32_t aplic_s_phandle)
+{
+    MachineState *ms = MACHINE(s);
+    const MemMapEntry *memmap = xiangshan_kmh_memmap;
+    void *fdt = ms->fdt;
+    g_autofree char *name = g_strdup_printf("/soc/%s@%"HWADDR_PRIx,
+        node_name, memmap[memmap_index].base);
+
+    qemu_fdt_add_subnode(fdt, name);
+    qemu_fdt_setprop_string(fdt, name, "compatible", "virtio,mmio");
+    qemu_fdt_setprop_sized_cells(fdt, name, "reg",
+                                 2, memmap[memmap_index].base,
+                                 2, memmap[memmap_index].size);
+    qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
+    qemu_fdt_setprop_cells(fdt, name, "interrupts",
+                           irq, FDT_IRQ_TYPE_EDGE_RISING);
+    qemu_fdt_setprop_string(fdt, name, "status", "okay");
+}
+
 static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
 {
     MachineState *ms = MACHINE(s);
@@ -583,9 +632,18 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     qemu_fdt_add_subnode(fdt, "/chosen");
     qemu_fdt_setprop_string(fdt, "/chosen", "stdout-path",
                             "/soc/serial@310b0000:115200n8");
+    if (s->my_virtio_console) {
+        qemu_fdt_setprop_string(fdt, "/chosen", "stdout-path",
+                                "/soc/my_virtio_console@31080000");
+    }
     if (ms->kernel_cmdline && *ms->kernel_cmdline) {
         qemu_fdt_setprop_string(fdt, "/chosen", "bootargs",
                                 ms->kernel_cmdline);
+    } else if (s->my_virtio_console) {
+        qemu_fdt_setprop_string(
+            fdt, "/chosen", "bootargs",
+            "console=hvc1 earlycon=sbi vt.nr_consoles=6 "
+            "task=0x0000000000 guest_task=0x0000000000");
     }
 
     qemu_fdt_add_subnode(fdt, "/cpus");
@@ -764,6 +822,27 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
         qemu_fdt_setprop_string(fdt, name, "status", "okay");
     }
 
+    if (s->my_virtio_blk) {
+        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_blk",
+                                        XIANGSHAN_KMH_MY_VIRTIO_BLK,
+                                        XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ,
+                                        aplic_s_phandle);
+    }
+
+    if (s->my_virtio_net) {
+        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_net",
+                                        XIANGSHAN_KMH_MY_VIRTIO_NET,
+                                        XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ,
+                                        aplic_s_phandle);
+    }
+
+    if (s->my_virtio_console) {
+        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_console",
+                                        XIANGSHAN_KMH_MY_VIRTIO_CONSOLE,
+                                        XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ,
+                                        aplic_s_phandle);
+    }
+
     if (kmh_is_iommu_sys_enabled(s)) {
         iommu_sys_phandle = xiangshan_kmh_fdt_add_iommu_sys(
             s, aplic_s_phandle, imsic_s_phandle, &phandle);
@@ -836,6 +915,9 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     object_initialize_child(OBJECT(machine), "soc", &s->soc,
                             TYPE_XIANGSHAN_KMH_SOC);
     s->soc.dw_pcie = s->dw_pcie;
+    s->soc.my_virtio_blk = s->my_virtio_blk;
+    s->soc.my_virtio_net = s->my_virtio_net;
+    s->soc.my_virtio_console = s->my_virtio_console;
     if (s->dw_pcie) {
         object_initialize_child(OBJECT(machine), "pcie0", &s->soc.pcie0,
                                 TYPE_DESIGNWARE_PCIE_HOST);
@@ -972,6 +1054,51 @@ static void xiangshan_kmh_set_dw_pcie(Object *obj, bool value, Error **errp)
     s->dw_pcie = value;
 }
 
+static bool xiangshan_kmh_get_my_virtio_blk(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_blk;
+}
+
+static void xiangshan_kmh_set_my_virtio_blk(Object *obj, bool value,
+                                            Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_blk = value;
+}
+
+static bool xiangshan_kmh_get_my_virtio_net(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_net;
+}
+
+static void xiangshan_kmh_set_my_virtio_net(Object *obj, bool value,
+                                            Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_net = value;
+}
+
+static bool xiangshan_kmh_get_my_virtio_console(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_console;
+}
+
+static void xiangshan_kmh_set_my_virtio_console(Object *obj, bool value,
+                                                Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_console = value;
+}
+
 static void xiangshan_kmh_get_uint64(Object *obj, Visitor *v, const char *name,
                                      void *opaque, Error **errp)
 {
@@ -1007,6 +1134,9 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->generated_dtb = ON_OFF_AUTO_AUTO;
     s->autotest_dtb = false;
     s->dw_pcie = false;
+    s->my_virtio_blk = false;
+    s->my_virtio_net = false;
+    s->my_virtio_console = false;
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
     s->autotest_image_addr = XIANGSHAN_KMH_AUTOTEST_IMAGE_ADDR;
     s->autotest_rootfs_addr = XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR;
@@ -1056,6 +1186,24 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_dw_pcie);
     object_class_property_set_description(klass, "dw-pcie",
                                           "Enable DWC PCIe host controller");
+
+    object_class_property_add_bool(klass, "my-virtio-blk",
+                                   xiangshan_kmh_get_my_virtio_blk,
+                                   xiangshan_kmh_set_my_virtio_blk);
+    object_class_property_set_description(klass, "my-virtio-blk",
+                                          "Enable my-virtio block device");
+
+    object_class_property_add_bool(klass, "my-virtio-net",
+                                   xiangshan_kmh_get_my_virtio_net,
+                                   xiangshan_kmh_set_my_virtio_net);
+    object_class_property_set_description(klass, "my-virtio-net",
+                                          "Enable my-virtio network device");
+
+    object_class_property_add_bool(klass, "my-virtio-console",
+                                   xiangshan_kmh_get_my_virtio_console,
+                                   xiangshan_kmh_set_my_virtio_console);
+    object_class_property_set_description(klass, "my-virtio-console",
+                                          "Enable my-virtio console device");
 
     XIANGSHAN_KMH_UINT64_PROP("fw-jump-fdt-addr", fw_jump_fdt_addr,
                               "Generated DTB load address for fw_jump boot");

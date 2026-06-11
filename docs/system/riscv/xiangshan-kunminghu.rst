@@ -22,6 +22,7 @@ The ``xiangshan-kunminghu`` machine supports the following devices:
 * 1 UART
 * PCIe host bridge
 * Optional system IOMMU platform device
+* Optional my-virtio MMIO blk/net/console devices
 
 Boot options
 ------------
@@ -71,6 +72,29 @@ Machine options
    ``riscv,iommu`` 节点；如果同时打开 ``dw-pcie=on``，PCIe 节点会加入
    ``iommu-map``。使用外部 ``-dtb`` 时，需要外部设备树自己描述同一个
    IOMMU。
+
+``my-virtio-blk=on|off``
+   是否创建基于 libMyVirtio 的 virtio-mmio blk 设备，默认 ``off``。
+   如果 QEMU 当前使用生成的设备树，打开后会加入
+   ``/soc/my_virtio_blk@310a0000``。blk backend 的 ``-drive`` id 固定为
+   ``my-virtio-blk``；传入 ``readonly=on`` 时 QEMU 只申请读权限。
+
+``my-virtio-net=on|off``
+   是否创建基于 libMyVirtio 的 virtio-mmio net 设备，默认 ``off``。
+   如果 QEMU 当前使用生成的设备树，打开后会加入
+   ``/soc/my_virtio_net@31090000``。当前 net 实现使用 ``/dev/net/tun`` 和
+   ``tap0``，通常需要 root 或额外权限。
+
+``my-virtio-console=on|off``
+   是否创建基于 libMyVirtio 的 virtio-mmio console 设备，默认 ``off``。
+   如果 QEMU 当前使用生成的设备树，打开后会加入
+   ``/soc/my_virtio_console@31080000``，并把 ``stdout-path`` 指到该节点。
+   如果没有外部 command line，QEMU 会给生成 DTB 设置
+   ``console=hvc1 earlycon=sbi vt.nr_consoles=6`` 这一类默认 bootargs。
+   该设备使用 QEMU 第三路 ``-serial`` 后端，也就是 ``serial_hd(2)``。
+   ``hvc0`` 保留给 SBI HVC/earlycon；当前 OpenSBI virtio-console 只实现
+   ``putc``，``getc`` 返回 ``-1``，所以登录控制台需要绑定到 Linux
+   virtio-console 驱动注册出来的 ``hvc1``。
 
 ``fw-jump-fdt-addr=<addr>``
    ``-bios fw_jump.bin`` + ``-device loader`` 启动时，QEMU 生成 DTB 的入口
@@ -251,6 +275,74 @@ QEMU DWC root port 的下游 bus 名为 ``dw-pcie``。例如挂一个 virtio PCI
 INTx 解析日志是预期现象；优先使用 MSI/MSI-X 设备。真实 DTS 中其它 RC 和
 64-bit high MMIO window 还没有在 QEMU 生成 DTB 中打开。
 
+Use my-virtio MMIO devices
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``my-virtio-blk``、``my-virtio-net`` 和 ``my-virtio-console`` 的 machine
+属性只控制是否创建设备。设备树仍然由 ``-kernel``、``generated-dtb=on`` 或
+``autotest-dtb=on`` 这些已有路径决定；使用外部 ``-dtb`` 时，需要外部设备树
+自己描述已打开的 my-virtio 设备。
+
+blk 设备需要传入 id 为 ``my-virtio-blk`` 的 backend：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on \
+       -smp 4 -m 16G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image-virtio,addr=0x80400000 \
+       -drive if=none,id=my-virtio-blk,file=/path/to/disk.img,format=raw
+
+只读挂载时，在 ``-drive`` 后面加 ``readonly=on`` 即可，QEMU 会按只读权限
+打开 backend。
+
+virtio-console 使用第三路 ``-serial`` 后端。下面的命令会让 UART0、UART1 和
+my-virtio-console 分别监听三个 TCP 端口；连接第三个端口可以看到 Linux
+virtio-console 的 ``hvc1`` 输出：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-console=on \
+       -smp 4 -m 16G -nographic \
+       -serial tcp:127.0.0.1:2234,server,nowait \
+       -serial tcp:127.0.0.1:2235,server,nowait \
+       -serial tcp:127.0.0.1:2236,server,nowait \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image-virtio,addr=0x80400000
+
+如果使用 ``fw_payload.bin``，bootargs 来自固件里打包的 DTB，需要确认该 DTB
+同样使用 ``console=hvc1 earlycon=sbi``。旧的 ``console=hvc0`` 会把登录输入
+绑定到 SBI HVC，而当前 OpenSBI 的 virtio-console ``getc`` 不会从 virtio RX
+queue 取字符。
+
+使用 ``Image-virtio`` 时还要确认 OpenSBI 的 FDT 位置没有覆盖内核镜像。当前
+generic OpenSBI 常见配置 ``FW_JUMP_FDT_OFFSET=0x2200000`` 会让传给 Linux 的
+FDT 落在 ``0x82200000``；如果 Image 从 ``0x80400000`` 加载且镜像约 60MiB，
+这个位置会落在 Image/initramfs 区间内，Linux 会在解压 rootfs 时报
+``uncompression error``。这种情况下需要重编 ``fw_jump.bin``，把
+``FW_JUMP_FDT_OFFSET`` 或 ``FW_JUMP_FDT_ADDR`` 放到 Image 之后，或者调整
+Image/FDT 的加载地址组合。
+
+blk 和 console 可以一起打开：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-console=on \
+       -smp 4 -m 16G -nographic \
+       -serial tcp:127.0.0.1:2234,server,nowait \
+       -serial tcp:127.0.0.1:2235,server,nowait \
+       -serial tcp:127.0.0.1:2236,server,nowait \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image-virtio,addr=0x80400000 \
+       -drive if=none,id=my-virtio-blk,file=/path/to/disk.img,format=raw
+
+``my-virtio-net=on`` 会创建 net 设备并在生成 DTB 中加入
+``/soc/my_virtio_net@31090000``，但当前实现固定尝试打开 ``tap0``，测试前
+需要先准备对应 tap 设备和权限。
+
 Run autotest with pmem/nvdimm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -262,8 +354,10 @@ Run autotest with pmem/nvdimm
 * ``/memory`` 会避开 rootfs 和 workload pmem 区间，避免 Linux 把它们当作
   System RAM 使用。
 
-QEMU 不生成 ``task=`` bootargs。trigger 文件仍然需要用 loader 放到
+autotest 不依赖 QEMU 解析 trigger。trigger 文件仍然需要用 loader 放到
 ``autotest-trigger-addr``，OpenSBI 会解析 trigger 并对设备树做 overlay。
+如果同时打开 ``my-virtio-console=on``，QEMU 生成 DTB 的默认 bootargs 会
+包含 ``task=`` 占位符，最终值仍由 OpenSBI overlay 更新。
 
 默认自动测试命令：
 
@@ -308,7 +402,7 @@ trigger 放到 ``0x90000000``：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,autotest-dtb=on,autotest-rootfs-addr=0x3c0000000,autotest-workload-addr=0x400000000,autotest-trigger-addr=0x90000000 \
+       -M xiangshan-kunminghu,autotest-dtb=on,autotest-workload-addr=0x400000000 \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image,addr=0x80400000 \

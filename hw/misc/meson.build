@@ -161,3 +161,12 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+
+system_ss.add(declare_dependency(
+  link_args: [join_paths(meson.current_source_dir(), 'libMyVirtio.a')]))
+system_ss.add(when: 'CONFIG_MY_VIRTIO_BLK',
+              if_true: files('my_virtio_blk.c'))
+system_ss.add(when: 'CONFIG_MY_VIRTIO_NET',
+              if_true: files('my_virtio_net.c'))
+system_ss.add(when: 'CONFIG_MY_VIRTIO_CONSOLE',
+              if_true: files('my_virtio_console.c'))

@@ -133,6 +133,9 @@ config XIANGSHAN_KUNMINGHU
     select PCI_EXPRESS_XILINX
     select XILINX
     select PCI_EXPRESS_DESIGNWARE
+    select MY_VIRTIO_BLK
+    select MY_VIRTIO_NET
+    select MY_VIRTIO_CONSOLE
 
 config XIANGSHAN_NANHUV5
     bool

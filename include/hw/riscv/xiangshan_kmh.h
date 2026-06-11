@@ -30,6 +30,9 @@ typedef struct XiangshanKmhSoCState {
     MemoryRegion flash;
     DesignwarePCIEHost pcie0;
     bool dw_pcie;
+    bool my_virtio_blk;
+    bool my_virtio_net;
+    bool my_virtio_console;
 } XiangshanKmhSoCState;
 
 #define TYPE_XIANGSHAN_KMH_SOC "xiangshan.kunminghu.soc"
@@ -46,6 +49,9 @@ typedef struct XiangshanKmhState {
     OnOffAuto generated_dtb;
     bool autotest_dtb;
     bool dw_pcie;
+    bool my_virtio_blk;
+    bool my_virtio_net;
+    bool my_virtio_console;
     uint64_t fw_jump_fdt_addr;
     uint64_t autotest_image_addr;
     uint64_t autotest_rootfs_addr;
@@ -64,6 +70,9 @@ DECLARE_INSTANCE_CHECKER(XiangshanKmhState, XIANGSHAN_KMH_MACHINE,
 enum {
     XIANGSHAN_KMH_ROM,
     XIANGSHAN_KMH_FLASH,
+    XIANGSHAN_KMH_MY_VIRTIO_CONSOLE,
+    XIANGSHAN_KMH_MY_VIRTIO_NET,
+    XIANGSHAN_KMH_MY_VIRTIO_BLK,
     XIANGSHAN_KMH_UART0,
     XIANGSHAN_KMH_CLINT,
     XIANGSHAN_KMH_APLIC_M,
@@ -83,6 +92,9 @@ enum {
     XIANGSHAN_KMH_UART1_IRQ = 11,
     XIANGSHAN_KMH_RC_MSI0_IRQ = 12,
     XIANGSHAN_KMH_RC_HP_IRQ = 13,
+    XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ = 15,
+    XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ = 16,
+    XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ = 17,
     XIANGSHAN_KMH_IOMMU_SYS_IRQ = 0x24,
 };
 
