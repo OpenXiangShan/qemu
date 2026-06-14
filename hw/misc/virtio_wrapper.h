@@ -61,4 +61,33 @@ int virtio_mmio_write(virtio_handle_t handle, uint64_t addr, uint32_t val,
 virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
 				   struct libvirtio_ops *ops, void *priv);
 
+/* PCIe ECAM access interface */
+#define VIRTIO_PCI_BDF(bus, dev, func)	(((bus) << 8) | ((dev) << 3) | (func))
+#define VIRTIO_PCI_BDF_BUS(bdf)		(((bdf) >> 8) & 0xff)
+#define VIRTIO_PCI_BDF_DEV(bdf)		(((bdf) >> 3) & 0x1f)
+#define VIRTIO_PCI_BDF_FUNC(bdf)	((bdf) & 0x07)
+
+/* ECAM offset encoding: offset = (bus << 20) | (dev << 15) | (func << 12) | reg */
+#define VIRTIO_PCI_ECAM_OFFSET(bdf, reg) \
+	((VIRTIO_PCI_BDF_BUS(bdf) << 20) | \
+	 (VIRTIO_PCI_BDF_DEV(bdf) << 15) | \
+	 (VIRTIO_PCI_BDF_FUNC(bdf) << 12) | \
+	 ((reg) & 0xfff))
+
+virtio_handle_t virtio_pci_ecam_create(const char *name, uint64_t ecam_base,
+				       uint64_t ecam_size,
+				       uint64_t bar_base, uint64_t bar_size,
+				       struct libvirtio_ops *ops, void *priv);
+int virtio_pci_ecam_read(virtio_handle_t handle, uint64_t offset,
+			 void *dst, int len);
+int virtio_pci_ecam_write(virtio_handle_t handle, uint64_t offset,
+			  void *src, int len);
+virtio_handle_t virtio_pci_create(const char *name, virtio_handle_t ecam_handle,
+				  uint32_t bdf);
+int virtio_pci_bar_read(virtio_handle_t ecam_handle,
+			uint64_t offset, void *dst, int len);
+int virtio_pci_bar_write(virtio_handle_t ecam_handle,
+			 uint64_t offset, void *src, int len,
+			 int *is_doorbell);
+
 #endif

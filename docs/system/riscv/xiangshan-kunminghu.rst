@@ -76,14 +76,44 @@ Machine options
 ``my-virtio-blk=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio blk 设备，默认 ``off``。
    如果 QEMU 当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_blk@310a0000``。blk backend 的 ``-drive`` id 固定为
-   ``my-virtio-blk``；传入 ``readonly=on`` 时 QEMU 只申请读权限。
+   ``/soc/my_virtio_blk@310a0000``。blk backend 使用
+   ``my-virtio-blk-image`` 指定的 raw image 文件。
+
+``my-virtio-blk-image=<path>``
+   my-virtio blk 后端镜像路径，默认 ``disk.img``。建议运行时使用绝对路径。
 
 ``my-virtio-net=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio net 设备，默认 ``off``。
    如果 QEMU 当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_net@31090000``。当前 net 实现使用 ``/dev/net/tun`` 和
-   ``tap0``，通常需要 root 或额外权限。
+   ``/soc/my_virtio_net@31090000``。net backend 使用 libslirp user-mode
+   网络，不需要 ``/dev/net/tun`` 或 ``tap0`` 权限。
+
+``my-virtio-net-hostfwd=<rules>``
+   my-virtio net 的 libslirp hostfwd 规则，默认空字符串表示不占用宿主端口。
+   格式示例：``tcp:0.0.0.0:2222:10.0.2.15:22``。
+   也可以省略 host bind IP 和 guest IP，例如 ``tcp::2222::22``；
+   host bind IP 默认 ``0.0.0.0``，guest IP 默认使用当前
+   ``my-virtio-net-dhcp-start``。
+
+``my-virtio-net-network=<ipv4>``
+   my-virtio net 的 libslirp IPv4 network，默认使用 backend 默认值
+   ``10.0.2.0``。
+
+``my-virtio-net-netmask=<ipv4>``
+   my-virtio net 的 libslirp IPv4 netmask，默认使用 backend 默认值
+   ``255.255.255.0``。
+
+``my-virtio-net-host-ip=<ipv4>``
+   my-virtio net 的 libslirp host IPv4 地址，默认使用 backend 默认值
+   ``10.0.2.2``。
+
+``my-virtio-net-dhcp-start=<ipv4>``
+   my-virtio net 的 libslirp DHCP 起始地址，默认使用 backend 默认值
+   ``10.0.2.15``。这个地址也是 hostfwd 规则省略 guest IP 时使用的默认值。
+
+``my-virtio-net-dns-ip=<ipv4>``
+   my-virtio net 的 libslirp DNS IPv4 地址，默认使用 backend 默认值
+   ``10.0.2.3``。
 
 ``my-virtio-console=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio console 设备，默认 ``off``。
@@ -283,19 +313,15 @@ Use my-virtio MMIO devices
 ``autotest-dtb=on`` 这些已有路径决定；使用外部 ``-dtb`` 时，需要外部设备树
 自己描述已打开的 my-virtio 设备。
 
-blk 设备需要传入 id 为 ``my-virtio-blk`` 的 backend：
+blk 设备需要通过 ``my-virtio-blk-image`` 指定 raw image 文件：
 
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-blk-image=/path/to/disk.img \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
-       -device loader,file=/path/to/Image-virtio,addr=0x80400000 \
-       -drive if=none,id=my-virtio-blk,file=/path/to/disk.img,format=raw
-
-只读挂载时，在 ``-drive`` 后面加 ``readonly=on`` 即可，QEMU 会按只读权限
-打开 backend。
+       -device loader,file=/path/to/Image-virtio,addr=0x80400000
 
 virtio-console 使用第三路 ``-serial`` 后端。下面的命令会让 UART0、UART1 和
 my-virtio-console 分别监听三个 TCP 端口；连接第三个端口可以看到 Linux
@@ -330,18 +356,26 @@ blk 和 console 可以一起打开：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-console=on \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-console=on,my-virtio-blk-image=/path/to/disk.img \
        -smp 4 -m 16G -nographic \
        -serial tcp:127.0.0.1:2234,server,nowait \
        -serial tcp:127.0.0.1:2235,server,nowait \
        -serial tcp:127.0.0.1:2236,server,nowait \
        -bios /path/to/fw_jump.bin \
-       -device loader,file=/path/to/Image-virtio,addr=0x80400000 \
-       -drive if=none,id=my-virtio-blk,file=/path/to/disk.img,format=raw
+       -device loader,file=/path/to/Image-virtio,addr=0x80400000
 
 ``my-virtio-net=on`` 会创建 net 设备并在生成 DTB 中加入
-``/soc/my_virtio_net@31090000``，但当前实现固定尝试打开 ``tap0``，测试前
-需要先准备对应 tap 设备和权限。
+``/soc/my_virtio_net@31090000``。如需从宿主机转发 SSH 到 guest，可以加上：
+
+.. code-block:: bash
+
+   -M xiangshan-kunminghu,generated-dtb=on,my-virtio-net=on,my-virtio-net-hostfwd=tcp:0.0.0.0:2222:10.0.2.15:22
+
+也可以让 hostfwd 的 guest IP 跟随当前 DHCP 配置：
+
+.. code-block:: bash
+
+   -M xiangshan-kunminghu,generated-dtb=on,my-virtio-net=on,my-virtio-net-hostfwd=tcp::2222::22,my-virtio-net-network=10.10.0.0,my-virtio-net-netmask=255.255.255.0,my-virtio-net-host-ip=10.10.0.2,my-virtio-net-dhcp-start=10.10.0.15,my-virtio-net-dns-ip=10.10.0.3
 
 Run autotest with pmem/nvdimm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

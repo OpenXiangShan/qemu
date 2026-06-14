@@ -230,14 +230,21 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
         my_virtio_blk_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].base,
                              memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].size,
                              qdev_get_gpio_in(DEVICE(s->irqchip),
-                                              XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ));
+                                              XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ),
+                             s->my_virtio_blk_image);
     }
 
     if (s->my_virtio_net) {
         my_virtio_net_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_NET].base,
                              memmap[XIANGSHAN_KMH_MY_VIRTIO_NET].size,
                              qdev_get_gpio_in(DEVICE(s->irqchip),
-                                              XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ));
+                                              XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ),
+                             s->my_virtio_net_hostfwd,
+                             s->my_virtio_net_network,
+                             s->my_virtio_net_netmask,
+                             s->my_virtio_net_host_ip,
+                             s->my_virtio_net_dhcp_start,
+                             s->my_virtio_net_dns_ip);
     }
 
     if (s->my_virtio_console) {
@@ -245,7 +252,10 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             memmap[XIANGSHAN_KMH_MY_VIRTIO_CONSOLE].base,
             memmap[XIANGSHAN_KMH_MY_VIRTIO_CONSOLE].size,
             qdev_get_gpio_in(DEVICE(s->irqchip),
-                             XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ));
+                             XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ),
+            s->my_virtio_console_backend,
+            s->my_virtio_console_input_path,
+            s->my_virtio_console_output_path);
     }
 }
 
@@ -918,6 +928,16 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_blk = s->my_virtio_blk;
     s->soc.my_virtio_net = s->my_virtio_net;
     s->soc.my_virtio_console = s->my_virtio_console;
+    s->soc.my_virtio_blk_image = s->my_virtio_blk_image;
+    s->soc.my_virtio_net_hostfwd = s->my_virtio_net_hostfwd;
+    s->soc.my_virtio_net_network = s->my_virtio_net_network;
+    s->soc.my_virtio_net_netmask = s->my_virtio_net_netmask;
+    s->soc.my_virtio_net_host_ip = s->my_virtio_net_host_ip;
+    s->soc.my_virtio_net_dhcp_start = s->my_virtio_net_dhcp_start;
+    s->soc.my_virtio_net_dns_ip = s->my_virtio_net_dns_ip;
+    s->soc.my_virtio_console_backend = s->my_virtio_console_backend;
+    s->soc.my_virtio_console_input_path = s->my_virtio_console_input_path;
+    s->soc.my_virtio_console_output_path = s->my_virtio_console_output_path;
     if (s->dw_pcie) {
         object_initialize_child(OBJECT(machine), "pcie0", &s->soc.pcie0,
                                 TYPE_DESIGNWARE_PCIE_HOST);
@@ -1099,6 +1119,122 @@ static void xiangshan_kmh_set_my_virtio_console(Object *obj, bool value,
     s->my_virtio_console = value;
 }
 
+static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_blk_image ? s->my_virtio_blk_image : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_blk_image(Object *obj,
+                                                  const char *value,
+                                                  Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_blk_image);
+    s->my_virtio_blk_image = g_strdup(value && *value ? value : "disk.img");
+}
+
+static char *xiangshan_kmh_get_my_virtio_net_hostfwd(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_net_hostfwd ? s->my_virtio_net_hostfwd : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_net_hostfwd(Object *obj,
+                                                    const char *value,
+                                                    Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_net_hostfwd);
+    s->my_virtio_net_hostfwd = g_strdup(value ? value : "");
+}
+
+#define XIANGSHAN_KMH_NET_STR_PROP_ACCESSORS(_suffix, _field) \
+    static char *xiangshan_kmh_get_my_virtio_net_##_suffix(Object *obj, \
+                                                           Error **errp) \
+    { \
+        XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj); \
+        return g_strdup(s->_field ? s->_field : ""); \
+    } \
+    static void xiangshan_kmh_set_my_virtio_net_##_suffix(Object *obj, \
+                                                          const char *value, \
+                                                          Error **errp) \
+    { \
+        XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj); \
+        g_free(s->_field); \
+        s->_field = g_strdup(value ? value : ""); \
+    }
+
+XIANGSHAN_KMH_NET_STR_PROP_ACCESSORS(network, my_virtio_net_network)
+XIANGSHAN_KMH_NET_STR_PROP_ACCESSORS(netmask, my_virtio_net_netmask)
+XIANGSHAN_KMH_NET_STR_PROP_ACCESSORS(host_ip, my_virtio_net_host_ip)
+XIANGSHAN_KMH_NET_STR_PROP_ACCESSORS(dhcp_start, my_virtio_net_dhcp_start)
+XIANGSHAN_KMH_NET_STR_PROP_ACCESSORS(dns_ip, my_virtio_net_dns_ip)
+
+#undef XIANGSHAN_KMH_NET_STR_PROP_ACCESSORS
+
+static char *xiangshan_kmh_get_my_virtio_console_backend(Object *obj,
+                                                         Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_console_backend ?
+                    s->my_virtio_console_backend : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_console_backend(Object *obj,
+                                                        const char *value,
+                                                        Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_console_backend);
+    s->my_virtio_console_backend = g_strdup(value && *value ? value :
+                                            "external");
+}
+
+static char *xiangshan_kmh_get_my_virtio_console_input_path(Object *obj,
+                                                            Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_console_input_path ?
+                    s->my_virtio_console_input_path : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_console_input_path(Object *obj,
+                                                           const char *value,
+                                                           Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_console_input_path);
+    s->my_virtio_console_input_path = g_strdup(value ? value : "");
+}
+
+static char *xiangshan_kmh_get_my_virtio_console_output_path(Object *obj,
+                                                             Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_console_output_path ?
+                    s->my_virtio_console_output_path : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_console_output_path(Object *obj,
+                                                            const char *value,
+                                                            Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_console_output_path);
+    s->my_virtio_console_output_path = g_strdup(value ? value : "");
+}
+
 static void xiangshan_kmh_get_uint64(Object *obj, Visitor *v, const char *name,
                                      void *opaque, Error **errp)
 {
@@ -1137,6 +1273,16 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_blk = false;
     s->my_virtio_net = false;
     s->my_virtio_console = false;
+    s->my_virtio_blk_image = g_strdup("disk.img");
+    s->my_virtio_net_hostfwd = g_strdup("");
+    s->my_virtio_net_network = g_strdup("");
+    s->my_virtio_net_netmask = g_strdup("");
+    s->my_virtio_net_host_ip = g_strdup("");
+    s->my_virtio_net_dhcp_start = g_strdup("");
+    s->my_virtio_net_dns_ip = g_strdup("");
+    s->my_virtio_console_backend = g_strdup("external");
+    s->my_virtio_console_input_path = g_strdup("");
+    s->my_virtio_console_output_path = g_strdup("");
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
     s->autotest_image_addr = XIANGSHAN_KMH_AUTOTEST_IMAGE_ADDR;
     s->autotest_rootfs_addr = XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR;
@@ -1204,6 +1350,66 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_console);
     object_class_property_set_description(klass, "my-virtio-console",
                                           "Enable my-virtio console device");
+
+    object_class_property_add_str(klass, "my-virtio-blk-image",
+                                  xiangshan_kmh_get_my_virtio_blk_image,
+                                  xiangshan_kmh_set_my_virtio_blk_image);
+    object_class_property_set_description(klass, "my-virtio-blk-image",
+                                          "Disk image path for my-virtio block device");
+
+    object_class_property_add_str(klass, "my-virtio-net-hostfwd",
+                                  xiangshan_kmh_get_my_virtio_net_hostfwd,
+                                  xiangshan_kmh_set_my_virtio_net_hostfwd);
+    object_class_property_set_description(klass, "my-virtio-net-hostfwd",
+                                          "libslirp hostfwd rules for my-virtio network device");
+
+    object_class_property_add_str(klass, "my-virtio-net-network",
+                                  xiangshan_kmh_get_my_virtio_net_network,
+                                  xiangshan_kmh_set_my_virtio_net_network);
+    object_class_property_set_description(klass, "my-virtio-net-network",
+                                          "IPv4 network for my-virtio libslirp backend");
+
+    object_class_property_add_str(klass, "my-virtio-net-netmask",
+                                  xiangshan_kmh_get_my_virtio_net_netmask,
+                                  xiangshan_kmh_set_my_virtio_net_netmask);
+    object_class_property_set_description(klass, "my-virtio-net-netmask",
+                                          "IPv4 netmask for my-virtio libslirp backend");
+
+    object_class_property_add_str(klass, "my-virtio-net-host-ip",
+                                  xiangshan_kmh_get_my_virtio_net_host_ip,
+                                  xiangshan_kmh_set_my_virtio_net_host_ip);
+    object_class_property_set_description(klass, "my-virtio-net-host-ip",
+                                          "Host IPv4 address for my-virtio libslirp backend");
+
+    object_class_property_add_str(klass, "my-virtio-net-dhcp-start",
+                                  xiangshan_kmh_get_my_virtio_net_dhcp_start,
+                                  xiangshan_kmh_set_my_virtio_net_dhcp_start);
+    object_class_property_set_description(klass, "my-virtio-net-dhcp-start",
+                                          "DHCP start IPv4 address for my-virtio libslirp backend");
+
+    object_class_property_add_str(klass, "my-virtio-net-dns-ip",
+                                  xiangshan_kmh_get_my_virtio_net_dns_ip,
+                                  xiangshan_kmh_set_my_virtio_net_dns_ip);
+    object_class_property_set_description(klass, "my-virtio-net-dns-ip",
+                                          "DNS IPv4 address for my-virtio libslirp backend");
+
+    object_class_property_add_str(klass, "my-virtio-console-backend",
+                                  xiangshan_kmh_get_my_virtio_console_backend,
+                                  xiangshan_kmh_set_my_virtio_console_backend);
+    object_class_property_set_description(klass, "my-virtio-console-backend",
+                                          "Backend for my-virtio console: external, stdio, fd, or pty");
+
+    object_class_property_add_str(klass, "my-virtio-console-input",
+                                  xiangshan_kmh_get_my_virtio_console_input_path,
+                                  xiangshan_kmh_set_my_virtio_console_input_path);
+    object_class_property_set_description(klass, "my-virtio-console-input",
+                                          "Input path for my-virtio console fd backend");
+
+    object_class_property_add_str(klass, "my-virtio-console-output",
+                                  xiangshan_kmh_get_my_virtio_console_output_path,
+                                  xiangshan_kmh_set_my_virtio_console_output_path);
+    object_class_property_set_description(klass, "my-virtio-console-output",
+                                          "Output path for my-virtio console fd backend");
 
     XIANGSHAN_KMH_UINT64_PROP("fw-jump-fdt-addr", fw_jump_fdt_addr,
                               "Generated DTB load address for fw_jump boot");

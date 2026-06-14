@@ -33,6 +33,16 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_blk;
     bool my_virtio_net;
     bool my_virtio_console;
+    char *my_virtio_blk_image;
+    char *my_virtio_net_hostfwd;
+    char *my_virtio_net_network;
+    char *my_virtio_net_netmask;
+    char *my_virtio_net_host_ip;
+    char *my_virtio_net_dhcp_start;
+    char *my_virtio_net_dns_ip;
+    char *my_virtio_console_backend;
+    char *my_virtio_console_input_path;
+    char *my_virtio_console_output_path;
 } XiangshanKmhSoCState;
 
 #define TYPE_XIANGSHAN_KMH_SOC "xiangshan.kunminghu.soc"
@@ -52,6 +62,16 @@ typedef struct XiangshanKmhState {
     bool my_virtio_blk;
     bool my_virtio_net;
     bool my_virtio_console;
+    char *my_virtio_blk_image;
+    char *my_virtio_net_hostfwd;
+    char *my_virtio_net_network;
+    char *my_virtio_net_netmask;
+    char *my_virtio_net_host_ip;
+    char *my_virtio_net_dhcp_start;
+    char *my_virtio_net_dns_ip;
+    char *my_virtio_console_backend;
+    char *my_virtio_console_input_path;
+    char *my_virtio_console_output_path;
     uint64_t fw_jump_fdt_addr;
     uint64_t autotest_image_addr;
     uint64_t autotest_rootfs_addr;

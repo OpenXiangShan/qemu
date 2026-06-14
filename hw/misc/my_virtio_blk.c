@@ -3,14 +3,13 @@
 #include "qemu/typedefs.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
+#include "qemu/main-loop.h"
 #include "hw/irq.h"
 #include "hw/virtio/virtio-mmio.h"
 #include "hw/sysbus.h"
-#include "system/block-backend.h"
-#include "block/block.h"
 #include "virtio_wrapper.h"
+#include "virtio_backend.h"
 #include "hw/misc/my_virtio.h"
-#include "block/block.h"
 
 struct myBlkRequest {
     uint64_t sector;
@@ -27,9 +26,10 @@ struct MyVirtioStateBlk {
 
     qemu_irq irq;
 
-    BlockBackend *blk;
-
     virtio_handle_t handle;
+    virtio_backend_handle_t backend;
+    QEMUBH *rw_bh;
+    char *image_path;
 };
 
 #define TYPE_MY_VIRTIO_BLK "my-virtio-blk"
@@ -59,14 +59,14 @@ static void my_virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
                                  unsigned size)
 {
     MyVirtioStateBlk *s = opaque;
-    AioContext *ctx = blk_get_aio_context(s->blk);
     int is_doorbell = 0;
 
 //    printf("%s offset:0x%lx size:%d value:0x%lx\n", __FUNCTION__, offset, size, value);
     virtio_mmio_write(s->handle, base + offset, (uint32_t)value, size, &is_doorbell);
 
-    if (is_doorbell)
-        aio_bh_schedule_oneshot(ctx, my_blk_rw_bh, s);
+    if (is_doorbell) {
+        qemu_bh_schedule(s->rw_bh);
+    }
 }
 
 static const MemoryRegionOps my_virtio_blk_mmio_ops = {
@@ -107,20 +107,37 @@ static int my_guest_memory_write(uint64_t gpa, void *src, uint32_t len)
 static int my_get_blk_capacity(void *priv)
 {
     MyVirtioStateBlk *s = (MyVirtioStateBlk *)priv;
+    struct virtio_backend_info info;
 
-    return blk_getlength(s->blk) / 512;
+    if (virtio_backend_get_info(s->backend, &info) < 0 ||
+        info.type != VIRTIO_BACKEND_BLK) {
+        return 0;
+    }
+
+    return info.u.blk.capacity < 0 ? 0 : info.u.blk.capacity;
 }
 
 static int my_submit_blk_io(uint64_t sector, void *buf, int len, uint8_t flags, void *priv)
 {
     MyVirtioStateBlk *s = (MyVirtioStateBlk *)priv;
+    struct virtio_backend_io io = {
+        .type = VIRTIO_BACKEND_IO_BLK,
+        .buf = buf,
+        .len = len,
+        .cap = len,
+        .u.blk.sector = sector,
+    };
 
-    if (flags == MY_BLK_REQ_READ)
-        blk_pread(s->blk, (int64_t)sector * 512, len, buf, 0);
-    else
-        blk_pwrite(s->blk, (int64_t)sector * 512, len, buf, 0);
+    if (flags == MY_BLK_REQ_READ) {
+        io.u.blk.op = VIRTIO_BACKEND_BLK_READ;
+        return virtio_backend_read(s->backend, &io);
+    } else if (flags == MY_BLK_REQ_WRITE) {
+        io.u.blk.op = VIRTIO_BACKEND_BLK_WRITE;
+        return virtio_backend_write(s->backend, &io);
+    }
 
-    return 0;
+    io.u.blk.op = VIRTIO_BACKEND_BLK_FLUSH;
+    return virtio_backend_write(s->backend, &io);
 }
 
 static int my_set_irq(void *priv)
@@ -145,12 +162,14 @@ static struct libvirtio_ops ops = {
     },
 };
 
-void my_virtio_blk_create(hwaddr start, hwaddr size, qemu_irq irq)
+void my_virtio_blk_create(hwaddr start, hwaddr size, qemu_irq irq,
+                          const char *image_path)
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(qdev_new("my-virtio-blk"));
 
     base = start;
     len = size;
+    s->image_path = g_strdup(image_path && *image_path ? image_path : "disk.img");
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, base);
@@ -163,8 +182,9 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
-    uint64_t perm = BLK_PERM_CONSISTENT_READ;
-    int ret;
+    struct virtio_backend_config backend_config = {
+        .type = VIRTIO_BACKEND_BLK,
+    };
 
     memory_region_init_io(&s->iomem, OBJECT(dev), &my_virtio_blk_mmio_ops, s,
         "my-virtio-blk-regs", 0x1000);
@@ -173,26 +193,36 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
 
     sysbus_init_irq(sbd, &s->irq);
 
-    s->blk = blk_by_name("my-virtio-blk");
-    if (!s->blk) {
-        printf("my-virtio-blk not found\n");
+    s->rw_bh = qemu_bh_new(my_blk_rw_bh, s);
+
+    backend_config.u.blk.image_path = s->image_path;
+    s->backend = virtio_backend_create(&backend_config);
+    if (!s->backend) {
+        error_setg(errp, "failed to create my-virtio-blk backend image=%s",
+                   s->image_path ? s->image_path : "");
         return;
     }
-    if (blk_supports_write_perm(s->blk)) {
-        perm |= BLK_PERM_WRITE;
-    }
-    ret = blk_set_perm(s->blk, perm, BLK_PERM_ALL, errp);
-    if (ret < 0)
-        return;
 
     s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_BLK, base, len, &ops, (void *)s);
-    if (s->handle)
+    if (s->handle) {
         return;
+    }
+
+    error_setg(errp, "failed to create my-virtio-blk protocol device");
 }
 
 static void my_virtio_blk_unrealize(DeviceState *dev)
 {
+    MyVirtioStateBlk *s = MY_VIRTIO_BLK(dev);
 
+    if (s->rw_bh) {
+        qemu_bh_delete(s->rw_bh);
+        s->rw_bh = NULL;
+    }
+    virtio_backend_destroy(s->backend);
+    s->backend = NULL;
+    g_free(s->image_path);
+    s->image_path = NULL;
 }
 
 static void my_virtio_blk_class_init(ObjectClass *klass, const void* data)

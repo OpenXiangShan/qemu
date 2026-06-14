@@ -7,13 +7,11 @@
 #include "hw/virtio/virtio-mmio.h"
 #include "hw/sysbus.h"
 #include "virtio_wrapper.h"
+#include "virtio_backend.h"
 #include "hw/misc/my_virtio.h"
 #include "qemu/main-loop.h"
 
-#include "tap-linux.h"
 #include "qemu/cutils.h"
-#include <net/if.h>
-#include <sys/ioctl.h>
 
 struct MyVirtioStateNet {
     /*< private >*/
@@ -23,8 +21,15 @@ struct MyVirtioStateNet {
     qemu_irq irq;
 
     virtio_handle_t handle;
-    int tap_fd;
-    uint8_t buf[4096 + 65536];
+    virtio_backend_handle_t backend;
+    QEMUBH *rx_bh;
+    char *hostfwd;
+    char *network;
+    char *netmask;
+    char *host_ip;
+    char *dhcp_start;
+    char *dns_ip;
+    uint8_t mac[6];
 };
 
 #define TYPE_MY_VIRTIO_NET "my-virtio-net"
@@ -52,6 +57,9 @@ static void my_virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
 
     //printf("%s offset:0x%lx size:%d value:0x%lx\n", __FUNCTION__, offset, size, value);
     virtio_mmio_write(s->handle, base + offset, (uint32_t)value, size, &is_doorbell);
+    if (is_doorbell) {
+        qemu_bh_schedule(s->rx_bh);
+    }
 }
 
 static const MemoryRegionOps my_virtio_net_mmio_ops = {
@@ -98,48 +106,72 @@ static int my_set_irq(void *priv)
     return 0;
 }
 
-static void my_receive_callback(void *opaque)
+static void my_virtio_net_drain_rx(MyVirtioStateNet *s)
 {
-    int len = 0;
+    for (;;) {
+        uint8_t buf[65536];
+        struct virtio_backend_io io = {
+            .type = VIRTIO_BACKEND_IO_PACKET,
+            .buf = buf,
+            .cap = sizeof(buf),
+        };
+        int ret;
+
+        ret = virtio_backend_read(s->backend, &io);
+        if (ret < 0) {
+            break;
+        }
+
+        ret = virtio_receive(s->handle, io.buf, io.len);
+        if (ret) {
+            virtio_backend_read_done(s->backend, io.token, 0);
+            break;
+        }
+
+        virtio_backend_read_done(s->backend, io.token, 1);
+    }
+}
+
+static void my_virtio_net_rx_bh(void *opaque)
+{
     MyVirtioStateNet *s = opaque;
 
-    len = read(s->tap_fd, s->buf, sizeof(s->buf));
-    if (len > 0) {
-        virtio_receive(s->handle, s->buf, len);
-    }
+    my_virtio_net_drain_rx(s);
 }
 
 static void my_virtio_net_set_mac(uint8_t *mac, void *priv)
 {
-    mac[0] = 0x52;
-    mac[1] = 0x54;
-    mac[2] = 0x00;
-    mac[3] = 0x12;
-    mac[4] = 0x34;
-    mac[5] = 0x56;
-}
-
-static int my_virtio_net_read_tap(uint64_t offset, void *buf, int len, void *priv)
-{
     MyVirtioStateNet *s = priv;
 
-    return read(s->tap_fd, buf, len);
+    memcpy(mac, s->mac, sizeof(s->mac));
 }
 
 static int my_virtio_net_write_tap(uint64_t offset, void *buf, int len, void *priv)
 {
     MyVirtioStateNet *s = priv;
+    struct virtio_backend_io io = {
+        .type = VIRTIO_BACKEND_IO_PACKET,
+        .buf = buf,
+        .len = len,
+    };
 
-    return write(s->tap_fd, buf, len);
+    return virtio_backend_write(s->backend, &io);
 }
 
 static int my_virtio_net_ctrl_mq(int vq_pairs, void *priv)
 {
-    MyVirtioStateNet *s = priv;
+    return (vq_pairs == 1) ? 0 : -1;
+}
 
-    qemu_set_fd_handler(s->tap_fd, my_receive_callback, NULL, s);
+static void my_virtio_net_backend_event(void *opaque,
+                                        virtio_backend_handle_t handle,
+                                        unsigned int events)
+{
+    MyVirtioStateNet *s = opaque;
 
-    return 0;
+    if (events & VIRTIO_BACKEND_EVENT_READABLE) {
+        qemu_bh_schedule(s->rx_bh);
+    }
 }
 
 static struct libvirtio_ops ops = {
@@ -152,17 +184,26 @@ static struct libvirtio_ops ops = {
     .net_ops = {
         .set_mac = my_virtio_net_set_mac,
         .ctrl_mq = my_virtio_net_ctrl_mq,
-        .read_tap = my_virtio_net_read_tap,
+        .read_tap = NULL,
         .write_tap = my_virtio_net_write_tap,
     },
 };
 
-void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq)
+void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq,
+                          const char *hostfwd, const char *network,
+                          const char *netmask, const char *host_ip,
+                          const char *dhcp_start, const char *dns_ip)
 {
     MyVirtioStateNet *s = MY_VIRTIO_NET(qdev_new("my-virtio-net"));
 
     base = start;
     len = size;
+    s->hostfwd = g_strdup(hostfwd ? hostfwd : "");
+    s->network = g_strdup(network ? network : "");
+    s->netmask = g_strdup(netmask ? netmask : "");
+    s->host_ip = g_strdup(host_ip ? host_ip : "");
+    s->dhcp_start = g_strdup(dhcp_start ? dhcp_start : "");
+    s->dns_ip = g_strdup(dns_ip ? dns_ip : "");
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, base);
@@ -173,9 +214,16 @@ void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq)
 
 static void my_virtio_net_realize(DeviceState *dev, Error **errp)
 {
-    struct ifreq ifr = { 0 };
     MyVirtioStateNet *s = MY_VIRTIO_NET(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_backend_callbacks backend_callbacks = {
+        .event = my_virtio_net_backend_event,
+    };
+    struct virtio_backend_config backend_config = {
+        .type = VIRTIO_BACKEND_NET,
+        .callbacks = &backend_callbacks,
+        .callback_opaque = s,
+    };
 
     memory_region_init_io(&s->iomem, OBJECT(dev), &my_virtio_net_mmio_ops, s,
         "my-virtio-net-regs", 0x1000);
@@ -184,27 +232,56 @@ static void my_virtio_net_realize(DeviceState *dev, Error **errp)
 
     sysbus_init_irq(sbd, &s->irq);
 
-    s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_NET, base, len, &ops, (void *)s);
+    s->mac[0] = 0x52;
+    s->mac[1] = 0x54;
+    s->mac[2] = 0x00;
+    s->mac[3] = 0x12;
+    s->mac[4] = 0x34;
+    s->mac[5] = 0x56;
 
-    s->tap_fd = open("/dev/net/tun", O_RDWR | O_NONBLOCK);
-    if (s->tap_fd < 0) {
-        printf("open %s failed\n", "/dev/net/tun");
+    s->rx_bh = qemu_bh_new(my_virtio_net_rx_bh, s);
+    backend_config.u.net.hostfwd = s->hostfwd;
+    backend_config.u.net.mac = s->mac;
+    backend_config.u.net.network = s->network;
+    backend_config.u.net.netmask = s->netmask;
+    backend_config.u.net.host_ip = s->host_ip;
+    backend_config.u.net.dhcp_start = s->dhcp_start;
+    backend_config.u.net.dns_ip = s->dns_ip;
+    s->backend = virtio_backend_create(&backend_config);
+    if (!s->backend) {
+        error_setg(errp, "failed to create my-virtio-net backend");
         return;
     }
 
-    ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
-    strncpy(ifr.ifr_name, "tap0", IFNAMSIZ);
-
-    if (ioctl(s->tap_fd, TUNSETIFF, (void *)&ifr) < 0) {
-        printf("ioctl TUNSETIFF failed\n");
-        close(s->tap_fd);
+    s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_NET, base, len, &ops, (void *)s);
+    if (!s->handle) {
+        error_setg(errp, "failed to create my-virtio-net protocol device");
         return;
     }
 }
 
 static void my_virtio_net_unrealize(DeviceState *dev)
 {
+    MyVirtioStateNet *s = MY_VIRTIO_NET(dev);
 
+    if (s->rx_bh) {
+        qemu_bh_delete(s->rx_bh);
+        s->rx_bh = NULL;
+    }
+    virtio_backend_destroy(s->backend);
+    s->backend = NULL;
+    g_free(s->hostfwd);
+    s->hostfwd = NULL;
+    g_free(s->network);
+    s->network = NULL;
+    g_free(s->netmask);
+    s->netmask = NULL;
+    g_free(s->host_ip);
+    s->host_ip = NULL;
+    g_free(s->dhcp_start);
+    s->dhcp_start = NULL;
+    g_free(s->dns_ip);
+    s->dns_ip = NULL;
 }
 
 static void my_virtio_net_class_init(ObjectClass *klass, const void* data)
