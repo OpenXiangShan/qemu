@@ -165,8 +165,6 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 my_virtio_backend_link_args = [
   join_paths(meson.current_source_dir(), 'libMyVirtio.a'),
   join_paths(meson.current_source_dir(), 'libMyVirtio_backend.a'),
-  join_paths(meson.project_source_root(), '..', 'libvncserver',
-             'build-myvirtio', 'libvncserver.a'),
 ]
 my_virtio_slirp = dependency('slirp', required: true, static: false)
 
