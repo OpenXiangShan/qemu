@@ -16,5 +16,11 @@ void *my_virtio_ui_create_vnc(const char *listen, uint32_t width,
                               uint32_t height);
 void my_virtio_ui_destroy(void *ui);
 void my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq, void *ui);
+void my_virtio_keyboard_create(hwaddr start, hwaddr size, qemu_irq irq,
+                               const char *backend, const char *evdev_path,
+                               void *ui);
+void my_virtio_mouse_create(hwaddr start, hwaddr size, qemu_irq irq,
+                            const char *backend, const char *evdev_path,
+                            void *ui);
 
 #endif

@@ -182,3 +182,5 @@ system_ss.add(when: 'CONFIG_MY_VIRTIO_CONSOLE',
               if_true: files('my_virtio_console.c'))
 system_ss.add(when: 'CONFIG_MY_VIRTIO_GPU',
               if_true: files('my_virtio_gpu.c'))
+system_ss.add(when: 'CONFIG_MY_VIRTIO_INPUT',
+              if_true: files('my_virtio_input.c'))

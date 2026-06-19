@@ -13,6 +13,7 @@ enum virtio_backend_type {
 	VIRTIO_BACKEND_NET,
 	VIRTIO_BACKEND_CONSOLE,
 	VIRTIO_BACKEND_GPU,
+	VIRTIO_BACKEND_INPUT,
 };
 
 enum virtio_backend_event {
@@ -25,6 +26,7 @@ enum virtio_backend_io_type {
 	VIRTIO_BACKEND_IO_PACKET,
 	VIRTIO_BACKEND_IO_STREAM,
 	VIRTIO_BACKEND_IO_GPU_CMD,
+	VIRTIO_BACKEND_IO_INPUT_EVENT,
 };
 
 enum virtio_backend_blk_op {
@@ -45,6 +47,11 @@ enum virtio_backend_input_profile {
 	VIRTIO_BACKEND_INPUT_MOUSE,
 };
 
+enum virtio_backend_input_source {
+	VIRTIO_BACKEND_INPUT_SOURCE_EXTERNAL = 0,
+	VIRTIO_BACKEND_INPUT_SOURCE_EVDEV,
+	VIRTIO_BACKEND_INPUT_SOURCE_UI,
+};
 
 struct virtio_backend_input_event {
 	uint16_t type;
@@ -107,6 +114,12 @@ struct virtio_backend_config {
 			void *opaque;
 		} gpu;
 
+		struct {
+			enum virtio_backend_input_profile profile;
+			enum virtio_backend_input_source source;
+			const char *evdev_path;
+			virtio_backend_ui_handle_t ui;
+		} input;
 	} u;
 };
 
@@ -144,6 +157,11 @@ struct virtio_backend_info {
 			const char *pty_path;
 		} console;
 
+		struct {
+			enum virtio_backend_input_profile profile;
+			enum virtio_backend_input_source source;
+			uint8_t led_state;
+		} input;
 	} u;
 };
 
@@ -176,6 +194,11 @@ int virtio_backend_read_done(virtio_backend_handle_t handle,
  *
  * Net: inject one host-to-guest RX packet. This is mainly for external/test
  * users; the built-in slirp backend feeds RX packets through its own path.
+ *
+ * Input: with VIRTIO_BACKEND_INPUT_SOURCE_EXTERNAL, inject one or more struct
+ * virtio_backend_input_event records into the guest-visible event queue. With
+ * VIRTIO_BACKEND_INPUT_SOURCE_EVDEV, the backend reads Linux evdev events from
+ * evdev_path, or scans /dev/input/event* when evdev_path is NULL or empty.
  */
 int virtio_backend_push_readable(virtio_backend_handle_t handle,
 				 const void *buf, size_t len);

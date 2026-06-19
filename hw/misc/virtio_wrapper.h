@@ -9,6 +9,8 @@
 #define VIRTIO_EMU_NAME_NET     "virtio_net"
 #define VIRTIO_EMU_NAME_CONSOLE "virtio_console"
 #define VIRTIO_EMU_NAME_GPU     "virtio_gpu"
+#define VIRTIO_EMU_NAME_KEYBOARD "virtio_keyboard"
+#define VIRTIO_EMU_NAME_MOUSE   "virtio_mouse"
 
 typedef void *virtio_handle_t;
 
@@ -41,6 +43,10 @@ struct libvirtio_gpu_ops {
 			     int *resp_len, void *priv);
 };
 
+struct libvirtio_input_ops {
+	int (*status)(void *event, int len, void *priv);
+};
+
 struct libvirtio_ops {
 	int      (*vprint)(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0)));
 	uint64_t (*mm_alloc)(int size);
@@ -56,6 +62,7 @@ struct libvirtio_ops {
 	struct   libvirtio_net_ops net_ops;
 	struct   libvirtio_console_ops console_ops;
 	struct   libvirtio_gpu_ops gpu_ops;
+	struct   libvirtio_input_ops input_ops;
 };
 
 int virtio_receive(virtio_handle_t handle, void *buf, int len);

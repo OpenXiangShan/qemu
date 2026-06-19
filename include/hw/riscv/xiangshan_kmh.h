@@ -34,6 +34,8 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_net;
     bool my_virtio_console;
     bool my_virtio_gpu;
+    bool my_virtio_keyboard;
+    bool my_virtio_mouse;
     bool my_virtio_vnc;
     void *my_virtio_ui;
     char *my_virtio_blk_image;
@@ -46,6 +48,10 @@ typedef struct XiangshanKmhSoCState {
     char *my_virtio_console_backend;
     char *my_virtio_console_input_path;
     char *my_virtio_console_output_path;
+    char *my_virtio_keyboard_backend;
+    char *my_virtio_keyboard_evdev_path;
+    char *my_virtio_mouse_backend;
+    char *my_virtio_mouse_evdev_path;
     char *my_virtio_vnc_listen;
 } XiangshanKmhSoCState;
 
@@ -67,6 +73,8 @@ typedef struct XiangshanKmhState {
     bool my_virtio_net;
     bool my_virtio_console;
     bool my_virtio_gpu;
+    bool my_virtio_keyboard;
+    bool my_virtio_mouse;
     bool my_virtio_vnc;
     void *my_virtio_ui;
     char *my_virtio_blk_image;
@@ -79,6 +87,10 @@ typedef struct XiangshanKmhState {
     char *my_virtio_console_backend;
     char *my_virtio_console_input_path;
     char *my_virtio_console_output_path;
+    char *my_virtio_keyboard_backend;
+    char *my_virtio_keyboard_evdev_path;
+    char *my_virtio_mouse_backend;
+    char *my_virtio_mouse_evdev_path;
     char *my_virtio_vnc_listen;
     uint64_t fw_jump_fdt_addr;
     uint64_t autotest_image_addr;
@@ -103,6 +115,8 @@ enum {
     XIANGSHAN_KMH_MY_VIRTIO_BLK,
     XIANGSHAN_KMH_UART0,
     XIANGSHAN_KMH_MY_VIRTIO_GPU,
+    XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD,
+    XIANGSHAN_KMH_MY_VIRTIO_MOUSE,
     XIANGSHAN_KMH_CLINT,
     XIANGSHAN_KMH_APLIC_M,
     XIANGSHAN_KMH_APLIC_S,
@@ -125,6 +139,8 @@ enum {
     XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ = 16,
     XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ = 17,
     XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ = 18,
+    XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD_IRQ = 19,
+    XIANGSHAN_KMH_MY_VIRTIO_MOUSE_IRQ = 20,
     XIANGSHAN_KMH_IOMMU_SYS_IRQ = 0x24,
 };
 

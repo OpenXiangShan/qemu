@@ -137,6 +137,7 @@ config XIANGSHAN_KUNMINGHU
     select MY_VIRTIO_NET
     select MY_VIRTIO_CONSOLE
     select MY_VIRTIO_GPU
+    select MY_VIRTIO_INPUT
 
 config XIANGSHAN_NANHUV5
     bool
