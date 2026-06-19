@@ -22,6 +22,7 @@ struct MyVirtioStateGpu {
     hwaddr size;
     uint32_t width;
     uint32_t height;
+    virtio_backend_ui_handle_t ui;
 };
 
 #define TYPE_MY_VIRTIO_GPU "my-virtio-gpu"
@@ -192,12 +193,24 @@ static struct libvirtio_ops ops = {
     },
 };
 
-void my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq)
+void *my_virtio_ui_create_vnc(const char *listen, uint32_t width,
+                              uint32_t height)
+{
+    return virtio_backend_ui_create_vnc(listen, width, height);
+}
+
+void my_virtio_ui_destroy(void *ui)
+{
+    virtio_backend_ui_destroy(ui);
+}
+
+void my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq, void *ui)
 {
     MyVirtioStateGpu *s = MY_VIRTIO_GPU(qdev_new(TYPE_MY_VIRTIO_GPU));
 
     s->base = start;
     s->size = size;
+    s->ui = ui;
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, start);
     sysbus_connect_irq(SYS_BUS_DEVICE(s), 0, irq);
@@ -213,6 +226,7 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
             .width = 1280,
             .height = 800,
             .max_outputs = 1,
+            .ui = s->ui,
             .guest_read = my_virtio_gpu_guest_read,
             .scanout_update = my_virtio_gpu_scanout_update,
             .scanout_disable = my_virtio_gpu_scanout_disable,

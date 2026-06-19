@@ -227,6 +227,17 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
         xiangshan_kmh_dw_pcie_init(s);
     }
 
+    if (s->my_virtio_vnc) {
+        s->my_virtio_ui = my_virtio_ui_create_vnc(
+            s->my_virtio_vnc_listen, 1280, 800);
+        if (!s->my_virtio_ui) {
+            error_setg(errp, "failed to create my-virtio VNC backend at %s",
+                       s->my_virtio_vnc_listen ?
+                       s->my_virtio_vnc_listen : "");
+            return;
+        }
+    }
+
     if (s->my_virtio_blk) {
         my_virtio_blk_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].base,
                              memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].size,
@@ -263,7 +274,18 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
         my_virtio_gpu_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].base,
                              memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].size,
                              qdev_get_gpio_in(DEVICE(s->irqchip),
-                                              XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ));
+                                              XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ),
+                             s->my_virtio_ui);
+    }
+}
+
+static void xiangshan_kmh_soc_unrealize(DeviceState *dev)
+{
+    XiangshanKmhSoCState *s = XIANGSHAN_KMH_SOC(dev);
+
+    if (s->my_virtio_ui) {
+        my_virtio_ui_destroy(s->my_virtio_ui);
+        s->my_virtio_ui = NULL;
     }
 }
 
@@ -272,6 +294,7 @@ static void xiangshan_kmh_soc_class_init(ObjectClass *klass, const void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = xiangshan_kmh_soc_realize;
+    dc->unrealize = xiangshan_kmh_soc_unrealize;
     dc->user_creatable = false;
     
 }
@@ -944,6 +967,7 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_net = s->my_virtio_net;
     s->soc.my_virtio_console = s->my_virtio_console;
     s->soc.my_virtio_gpu = s->my_virtio_gpu;
+    s->soc.my_virtio_vnc = s->my_virtio_vnc;
     s->soc.my_virtio_blk_image = s->my_virtio_blk_image;
     s->soc.my_virtio_net_hostfwd = s->my_virtio_net_hostfwd;
     s->soc.my_virtio_net_network = s->my_virtio_net_network;
@@ -954,6 +978,7 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_console_backend = s->my_virtio_console_backend;
     s->soc.my_virtio_console_input_path = s->my_virtio_console_input_path;
     s->soc.my_virtio_console_output_path = s->my_virtio_console_output_path;
+    s->soc.my_virtio_vnc_listen = s->my_virtio_vnc_listen;
     if (s->dw_pcie) {
         object_initialize_child(OBJECT(machine), "pcie0", &s->soc.pcie0,
                                 TYPE_DESIGNWARE_PCIE_HOST);
@@ -1150,6 +1175,21 @@ static void xiangshan_kmh_set_my_virtio_gpu(Object *obj, bool value,
     s->my_virtio_gpu = value;
 }
 
+static bool xiangshan_kmh_get_my_virtio_vnc(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_vnc;
+}
+
+static void xiangshan_kmh_set_my_virtio_vnc(Object *obj, bool value,
+                                            Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_vnc = value;
+}
+
 static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1266,6 +1306,24 @@ static void xiangshan_kmh_set_my_virtio_console_output_path(Object *obj,
     s->my_virtio_console_output_path = g_strdup(value ? value : "");
 }
 
+static char *xiangshan_kmh_get_my_virtio_vnc_listen(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_vnc_listen ? s->my_virtio_vnc_listen : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_vnc_listen(Object *obj,
+                                                   const char *value,
+                                                   Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_vnc_listen);
+    s->my_virtio_vnc_listen = g_strdup(value && *value ? value :
+                                       "127.0.0.1:5915");
+}
+
 static void xiangshan_kmh_get_uint64(Object *obj, Visitor *v, const char *name,
                                      void *opaque, Error **errp)
 {
@@ -1305,6 +1363,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_net = false;
     s->my_virtio_console = false;
     s->my_virtio_gpu = false;
+    s->my_virtio_vnc = false;
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
     s->my_virtio_net_network = g_strdup("");
@@ -1315,6 +1374,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_console_backend = g_strdup("external");
     s->my_virtio_console_input_path = g_strdup("");
     s->my_virtio_console_output_path = g_strdup("");
+    s->my_virtio_vnc_listen = g_strdup("127.0.0.1:5915");
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
     s->autotest_image_addr = XIANGSHAN_KMH_AUTOTEST_IMAGE_ADDR;
     s->autotest_rootfs_addr = XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR;
@@ -1389,6 +1449,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
     object_class_property_set_description(klass, "my-virtio-gpu",
                                           "Enable my-virtio GPU device");
 
+    object_class_property_add_bool(klass, "my-virtio-vnc",
+                                   xiangshan_kmh_get_my_virtio_vnc,
+                                   xiangshan_kmh_set_my_virtio_vnc);
+    object_class_property_set_description(klass, "my-virtio-vnc",
+                                          "Enable backend VNC server for my-virtio GPU");
+
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   xiangshan_kmh_get_my_virtio_blk_image,
                                   xiangshan_kmh_set_my_virtio_blk_image);
@@ -1448,6 +1514,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                   xiangshan_kmh_set_my_virtio_console_output_path);
     object_class_property_set_description(klass, "my-virtio-console-output",
                                           "Output path for my-virtio console fd backend");
+
+    object_class_property_add_str(klass, "my-virtio-vnc-listen",
+                                  xiangshan_kmh_get_my_virtio_vnc_listen,
+                                  xiangshan_kmh_set_my_virtio_vnc_listen);
+    object_class_property_set_description(klass, "my-virtio-vnc-listen",
+                                          "Listen address for backend VNC server, host:port");
 
     XIANGSHAN_KMH_UINT64_PROP("fw-jump-fdt-addr", fw_jump_fdt_addr,
                               "Generated DTB load address for fw_jump boot");
