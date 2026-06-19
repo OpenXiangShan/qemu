@@ -12,5 +12,6 @@ void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq,
 void my_virtio_console_create(hwaddr start, hwaddr size, qemu_irq irq,
                               const char *backend, const char *input_path,
                               const char *output_path);
+void my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq);
 
 #endif

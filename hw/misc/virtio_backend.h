@@ -11,6 +11,7 @@ enum virtio_backend_type {
 	VIRTIO_BACKEND_BLK = 1,
 	VIRTIO_BACKEND_NET,
 	VIRTIO_BACKEND_CONSOLE,
+	VIRTIO_BACKEND_GPU,
 };
 
 enum virtio_backend_event {
@@ -22,6 +23,7 @@ enum virtio_backend_io_type {
 	VIRTIO_BACKEND_IO_BLK = 1,
 	VIRTIO_BACKEND_IO_PACKET,
 	VIRTIO_BACKEND_IO_STREAM,
+	VIRTIO_BACKEND_IO_GPU_CMD,
 };
 
 enum virtio_backend_blk_op {
@@ -72,6 +74,24 @@ struct virtio_backend_config {
 			int output_fd;
 			int close_fds;
 		} console;
+
+		struct {
+			uint32_t width;
+			uint32_t height;
+			uint32_t max_outputs;
+			int (*guest_read)(void *opaque, uint64_t gpa,
+					  void *dst, uint32_t len);
+			void (*scanout_update)(void *opaque, uint32_t scanout_id,
+					       const void *pixels,
+					       uint32_t width,
+					       uint32_t height,
+					       uint32_t stride,
+					       uint32_t x, uint32_t y,
+					       uint32_t w, uint32_t h);
+			void (*scanout_disable)(void *opaque,
+						uint32_t scanout_id);
+			void *opaque;
+		} gpu;
 	} u;
 };
 
@@ -89,6 +109,10 @@ struct virtio_backend_io {
 			enum virtio_backend_blk_op op;
 			uint64_t sector;
 		} blk;
+		struct {
+			void *resp;
+			size_t *resp_len;
+		} gpu;
 	} u;
 };
 

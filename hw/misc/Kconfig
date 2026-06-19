@@ -244,4 +244,7 @@ config MY_VIRTIO_NET
 config MY_VIRTIO_CONSOLE
     bool
 
+config MY_VIRTIO_GPU
+    bool
+
 source macio/Kconfig

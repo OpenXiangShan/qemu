@@ -8,6 +8,7 @@
 #define VIRTIO_EMU_NAME_BLK     "virtio_blk"
 #define VIRTIO_EMU_NAME_NET     "virtio_net"
 #define VIRTIO_EMU_NAME_CONSOLE "virtio_console"
+#define VIRTIO_EMU_NAME_GPU     "virtio_gpu"
 
 typedef void *virtio_handle_t;
 
@@ -33,6 +34,13 @@ struct libvirtio_console_ops {
 	int (*send)(void *buf, int len, void *priv);
 };
 
+struct libvirtio_gpu_ops {
+	int (*submit_ctrl)(void *cmd, int cmd_len, void *resp, int resp_cap,
+			   int *resp_len, void *priv);
+	int (*submit_cursor)(void *cmd, int cmd_len, void *resp, int resp_cap,
+			     int *resp_len, void *priv);
+};
+
 struct libvirtio_ops {
 	int      (*vprint)(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0)));
 	uint64_t (*mm_alloc)(int size);
@@ -47,6 +55,7 @@ struct libvirtio_ops {
 	struct   libvirtio_blk_ops blk_ops;
 	struct   libvirtio_net_ops net_ops;
 	struct   libvirtio_console_ops console_ops;
+	struct   libvirtio_gpu_ops gpu_ops;
 };
 
 int virtio_receive(virtio_handle_t handle, void *buf, int len);

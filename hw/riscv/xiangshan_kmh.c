@@ -77,6 +77,7 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_MY_VIRTIO_NET] =   { 0x31090000,        0x1000 },
     [XIANGSHAN_KMH_MY_VIRTIO_BLK] =   { 0x310A0000,        0x1000 },
     [XIANGSHAN_KMH_UART0]    =        { 0x310B0000,       0x10000 },
+    [XIANGSHAN_KMH_MY_VIRTIO_GPU] =   { 0x310C0000,        0x1000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
     [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },
@@ -256,6 +257,13 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             s->my_virtio_console_backend,
             s->my_virtio_console_input_path,
             s->my_virtio_console_output_path);
+    }
+
+    if (s->my_virtio_gpu) {
+        my_virtio_gpu_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].base,
+                             memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].size,
+                             qdev_get_gpio_in(DEVICE(s->irqchip),
+                                              XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ));
     }
 }
 
@@ -853,6 +861,13 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
                                         aplic_s_phandle);
     }
 
+    if (s->my_virtio_gpu) {
+        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_gpu",
+                                        XIANGSHAN_KMH_MY_VIRTIO_GPU,
+                                        XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ,
+                                        aplic_s_phandle);
+    }
+
     if (kmh_is_iommu_sys_enabled(s)) {
         iommu_sys_phandle = xiangshan_kmh_fdt_add_iommu_sys(
             s, aplic_s_phandle, imsic_s_phandle, &phandle);
@@ -928,6 +943,7 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_blk = s->my_virtio_blk;
     s->soc.my_virtio_net = s->my_virtio_net;
     s->soc.my_virtio_console = s->my_virtio_console;
+    s->soc.my_virtio_gpu = s->my_virtio_gpu;
     s->soc.my_virtio_blk_image = s->my_virtio_blk_image;
     s->soc.my_virtio_net_hostfwd = s->my_virtio_net_hostfwd;
     s->soc.my_virtio_net_network = s->my_virtio_net_network;
@@ -1119,6 +1135,21 @@ static void xiangshan_kmh_set_my_virtio_console(Object *obj, bool value,
     s->my_virtio_console = value;
 }
 
+static bool xiangshan_kmh_get_my_virtio_gpu(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_gpu;
+}
+
+static void xiangshan_kmh_set_my_virtio_gpu(Object *obj, bool value,
+                                            Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_gpu = value;
+}
+
 static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1273,6 +1304,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_blk = false;
     s->my_virtio_net = false;
     s->my_virtio_console = false;
+    s->my_virtio_gpu = false;
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
     s->my_virtio_net_network = g_strdup("");
@@ -1350,6 +1382,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_console);
     object_class_property_set_description(klass, "my-virtio-console",
                                           "Enable my-virtio console device");
+
+    object_class_property_add_bool(klass, "my-virtio-gpu",
+                                   xiangshan_kmh_get_my_virtio_gpu,
+                                   xiangshan_kmh_set_my_virtio_gpu);
+    object_class_property_set_description(klass, "my-virtio-gpu",
+                                          "Enable my-virtio GPU device");
 
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   xiangshan_kmh_get_my_virtio_blk_image,

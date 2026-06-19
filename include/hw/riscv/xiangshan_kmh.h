@@ -33,6 +33,7 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_blk;
     bool my_virtio_net;
     bool my_virtio_console;
+    bool my_virtio_gpu;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
     char *my_virtio_net_network;
@@ -62,6 +63,7 @@ typedef struct XiangshanKmhState {
     bool my_virtio_blk;
     bool my_virtio_net;
     bool my_virtio_console;
+    bool my_virtio_gpu;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
     char *my_virtio_net_network;
@@ -94,6 +96,7 @@ enum {
     XIANGSHAN_KMH_MY_VIRTIO_NET,
     XIANGSHAN_KMH_MY_VIRTIO_BLK,
     XIANGSHAN_KMH_UART0,
+    XIANGSHAN_KMH_MY_VIRTIO_GPU,
     XIANGSHAN_KMH_CLINT,
     XIANGSHAN_KMH_APLIC_M,
     XIANGSHAN_KMH_APLIC_S,
@@ -115,6 +118,7 @@ enum {
     XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ = 15,
     XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ = 16,
     XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ = 17,
+    XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ = 18,
     XIANGSHAN_KMH_IOMMU_SYS_IRQ = 0x24,
 };
 

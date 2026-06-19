@@ -162,12 +162,15 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
+my_virtio_backend_link_args = [
+  join_paths(meson.current_source_dir(), 'libMyVirtio.a'),
+  join_paths(meson.current_source_dir(), 'libMyVirtio_backend.a'),
+]
+my_virtio_slirp = dependency('slirp', required: true, static: false)
+
 my_virtio_backend = declare_dependency(
-  dependencies: slirp,
-  link_args: [
-    join_paths(meson.current_source_dir(), 'libMyVirtio.a'),
-    join_paths(meson.current_source_dir(), 'libMyVirtio_backend.a'),
-  ])
+  dependencies: my_virtio_slirp,
+  link_args: my_virtio_backend_link_args)
 system_ss.add(my_virtio_backend)
 system_ss.add(when: 'CONFIG_MY_VIRTIO_BLK',
               if_true: files('my_virtio_blk.c'))
@@ -175,3 +178,5 @@ system_ss.add(when: 'CONFIG_MY_VIRTIO_NET',
               if_true: files('my_virtio_net.c'))
 system_ss.add(when: 'CONFIG_MY_VIRTIO_CONSOLE',
               if_true: files('my_virtio_console.c'))
+system_ss.add(when: 'CONFIG_MY_VIRTIO_GPU',
+              if_true: files('my_virtio_gpu.c'))
