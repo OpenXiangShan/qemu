@@ -1644,7 +1644,7 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                   xiangshan_kmh_get_my_virtio_keyboard_backend,
                                   xiangshan_kmh_set_my_virtio_keyboard_backend);
     object_class_property_set_description(klass, "my-virtio-keyboard-backend",
-                                          "Backend for my-virtio keyboard: external, evdev, vnc, or ui");
+                                          "Backend for my-virtio keyboard: evdev, vnc, or ui");
 
     object_class_property_add_str(klass, "my-virtio-keyboard-evdev",
                                   xiangshan_kmh_get_my_virtio_keyboard_evdev,
@@ -1656,7 +1656,7 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                   xiangshan_kmh_get_my_virtio_mouse_backend,
                                   xiangshan_kmh_set_my_virtio_mouse_backend);
     object_class_property_set_description(klass, "my-virtio-mouse-backend",
-                                          "Backend for my-virtio mouse: external, evdev, vnc, or ui");
+                                          "Backend for my-virtio mouse: evdev, vnc, or ui");
 
     object_class_property_add_str(klass, "my-virtio-mouse-evdev",
                                   xiangshan_kmh_get_my_virtio_mouse_evdev,
@@ -1668,7 +1668,7 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                   xiangshan_kmh_get_my_virtio_tablet_backend,
                                   xiangshan_kmh_set_my_virtio_tablet_backend);
     object_class_property_set_description(klass, "my-virtio-tablet-backend",
-                                          "Backend for my-virtio tablet: external, evdev, vnc, or ui");
+                                          "Backend for my-virtio tablet: evdev, vnc, or ui");
 
     object_class_property_add_str(klass, "my-virtio-tablet-evdev",
                                   xiangshan_kmh_get_my_virtio_tablet_evdev,

@@ -7,13 +7,9 @@
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
 #include "hw/qdev-properties.h"
-#include "ui/input.h"
-#include "ui/console.h"
 #include "virtio_wrapper.h"
 #include "virtio_backend.h"
 #include "hw/misc/my_virtio.h"
-
-#include "standard-headers/linux/input-event-codes.h"
 
 typedef struct MyVirtioStateInput {
     SysBusDevice parent_obj;
@@ -22,7 +18,6 @@ typedef struct MyVirtioStateInput {
 
     virtio_handle_t handle;
     virtio_backend_handle_t backend;
-    QemuInputHandlerState *handler_state;
     QEMUBH *rx_bh;
     hwaddr base;
     hwaddr size;
@@ -37,24 +32,6 @@ typedef struct MyVirtioStateInput {
 #define TYPE_MY_VIRTIO_MOUSE "my-virtio-mouse"
 #define TYPE_MY_VIRTIO_TABLET "my-virtio-tablet"
 OBJECT_DECLARE_SIMPLE_TYPE(MyVirtioStateInput, MY_VIRTIO_INPUT)
-
-static const unsigned short button_map[INPUT_BUTTON__MAX] = {
-    [INPUT_BUTTON_LEFT] = BTN_LEFT,
-    [INPUT_BUTTON_RIGHT] = BTN_RIGHT,
-    [INPUT_BUTTON_MIDDLE] = BTN_MIDDLE,
-    [INPUT_BUTTON_SIDE] = BTN_SIDE,
-    [INPUT_BUTTON_EXTRA] = BTN_EXTRA,
-};
-
-static const unsigned short rel_axis_map[INPUT_AXIS__MAX] = {
-    [INPUT_AXIS_X] = REL_X,
-    [INPUT_AXIS_Y] = REL_Y,
-};
-
-static const unsigned short abs_axis_map[INPUT_AXIS__MAX] = {
-    [INPUT_AXIS_X] = ABS_X,
-    [INPUT_AXIS_Y] = ABS_Y,
-};
 
 static uint64_t my_virtio_input_mmio_read(void *opaque, hwaddr offset,
                                           unsigned size)
@@ -198,145 +175,6 @@ static struct libvirtio_ops ops = {
     },
 };
 
-static void my_virtio_input_push(MyVirtioStateInput *s, uint16_t type,
-                                 uint16_t code, int32_t value)
-{
-    struct virtio_backend_input_event event = {
-        .type = type,
-        .code = code,
-        .value = value,
-    };
-
-    if (virtio_backend_push_readable(s->backend, &event, sizeof(event)) < 0) {
-        warn_report("my-virtio input event dropped type=%u code=%u value=%d",
-                    type, code, value);
-    }
-}
-
-static void my_virtio_keyboard_event(DeviceState *dev, QemuConsole *src,
-                                     InputEvent *evt)
-{
-    MyVirtioStateInput *s = MY_VIRTIO_INPUT(dev);
-    InputKeyEvent *key;
-    int qcode;
-
-    if (evt->type != INPUT_EVENT_KIND_KEY) {
-        return;
-    }
-
-    key = evt->u.key.data;
-    qcode = qemu_input_key_value_to_qcode(key->key);
-    if (qcode >= 0 && qcode < qemu_input_map_qcode_to_linux_len &&
-        qemu_input_map_qcode_to_linux[qcode]) {
-        my_virtio_input_push(s, EV_KEY, qemu_input_map_qcode_to_linux[qcode],
-                             key->down ? 1 : 0);
-    } else if (key->down) {
-        warn_report("my-virtio-keyboard unmapped qcode=%d", qcode);
-    }
-}
-
-static void my_virtio_mouse_event(DeviceState *dev, QemuConsole *src,
-                                  InputEvent *evt)
-{
-    MyVirtioStateInput *s = MY_VIRTIO_INPUT(dev);
-
-    switch (evt->type) {
-    case INPUT_EVENT_KIND_BTN: {
-        InputBtnEvent *btn = evt->u.btn.data;
-
-        if ((btn->button == INPUT_BUTTON_WHEEL_UP ||
-             btn->button == INPUT_BUTTON_WHEEL_DOWN) && btn->down) {
-            my_virtio_input_push(s, EV_REL, REL_WHEEL,
-                                 btn->button == INPUT_BUTTON_WHEEL_UP ?
-                                 1 : -1);
-        } else if (btn->button < INPUT_BUTTON__MAX &&
-                   button_map[btn->button]) {
-            my_virtio_input_push(s, EV_KEY, button_map[btn->button],
-                                 btn->down ? 1 : 0);
-        } else if (btn->down) {
-            warn_report("my-virtio-mouse unmapped button=%d", btn->button);
-        }
-        break;
-    }
-    case INPUT_EVENT_KIND_REL: {
-        InputMoveEvent *move = evt->u.rel.data;
-
-        if (move->axis < INPUT_AXIS__MAX && rel_axis_map[move->axis]) {
-            my_virtio_input_push(s, EV_REL, rel_axis_map[move->axis],
-                                 move->value);
-        }
-        break;
-    }
-    default:
-        break;
-    }
-}
-
-static void my_virtio_tablet_event(DeviceState *dev, QemuConsole *src,
-                                   InputEvent *evt)
-{
-    MyVirtioStateInput *s = MY_VIRTIO_INPUT(dev);
-
-    switch (evt->type) {
-    case INPUT_EVENT_KIND_BTN: {
-        InputBtnEvent *btn = evt->u.btn.data;
-
-        if ((btn->button == INPUT_BUTTON_WHEEL_UP ||
-             btn->button == INPUT_BUTTON_WHEEL_DOWN) && btn->down) {
-            my_virtio_input_push(s, EV_REL, REL_WHEEL,
-                                 btn->button == INPUT_BUTTON_WHEEL_UP ?
-                                 1 : -1);
-        } else if (btn->button < INPUT_BUTTON__MAX &&
-                   button_map[btn->button]) {
-            my_virtio_input_push(s, EV_KEY, button_map[btn->button],
-                                 btn->down ? 1 : 0);
-        } else if (btn->down) {
-            warn_report("my-virtio-tablet unmapped button=%d", btn->button);
-        }
-        break;
-    }
-    case INPUT_EVENT_KIND_ABS: {
-        InputMoveEvent *move = evt->u.abs.data;
-
-        if (move->axis < INPUT_AXIS__MAX && abs_axis_map[move->axis]) {
-            my_virtio_input_push(s, EV_ABS, abs_axis_map[move->axis],
-                                 move->value);
-        }
-        break;
-    }
-    default:
-        break;
-    }
-}
-
-static void my_virtio_input_sync(DeviceState *dev)
-{
-    MyVirtioStateInput *s = MY_VIRTIO_INPUT(dev);
-
-    my_virtio_input_push(s, EV_SYN, SYN_REPORT, 0);
-}
-
-static const QemuInputHandler my_virtio_keyboard_handler = {
-    .name = "my-virtio-keyboard",
-    .mask = INPUT_EVENT_MASK_KEY,
-    .event = my_virtio_keyboard_event,
-    .sync = my_virtio_input_sync,
-};
-
-static const QemuInputHandler my_virtio_mouse_handler = {
-    .name = "my-virtio-mouse",
-    .mask = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_REL,
-    .event = my_virtio_mouse_event,
-    .sync = my_virtio_input_sync,
-};
-
-static const QemuInputHandler my_virtio_tablet_handler = {
-    .name = "my-virtio-tablet",
-    .mask = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS,
-    .event = my_virtio_tablet_event,
-    .sync = my_virtio_input_sync,
-};
-
 static void my_virtio_input_create(hwaddr start, hwaddr size, qemu_irq irq,
                                    const char *type, const char *backend,
                                    const char *evdev_path, void *ui)
@@ -346,7 +184,7 @@ static void my_virtio_input_create(hwaddr start, hwaddr size, qemu_irq irq,
     s->base = start;
     s->size = size;
     s->ui = ui;
-    qdev_prop_set_string(DEVICE(s), "backend", backend ? backend : "external");
+    qdev_prop_set_string(DEVICE(s), "backend", backend ? backend : "vnc");
     if (evdev_path && *evdev_path) {
         qdev_prop_set_string(DEVICE(s), "evdev-path", evdev_path);
     }
@@ -393,60 +231,56 @@ static void my_virtio_input_realize(DeviceState *dev, Error **errp)
         .u.input.profile = s->profile,
     };
     enum virtio_backend_input_source source =
-        VIRTIO_BACKEND_INPUT_SOURCE_EXTERNAL;
+        VIRTIO_BACKEND_INPUT_SOURCE_UI;
+    const char *backend_name = s->backend_name && *s->backend_name ?
+                               s->backend_name : "vnc";
     const char *emu_name;
-    const QemuInputHandler *handler;
+    const char *device_name;
 
-    if (!s->backend_name || !*s->backend_name ||
-        !g_strcmp0(s->backend_name, "external")) {
-        source = VIRTIO_BACKEND_INPUT_SOURCE_EXTERNAL;
-    } else if (!g_strcmp0(s->backend_name, "evdev")) {
+    if (!g_strcmp0(backend_name, "evdev")) {
         source = VIRTIO_BACKEND_INPUT_SOURCE_EVDEV;
-    } else if (!g_strcmp0(s->backend_name, "vnc") ||
-               !g_strcmp0(s->backend_name, "ui")) {
+    } else if (!g_strcmp0(backend_name, "vnc") ||
+               !g_strcmp0(backend_name, "ui")) {
         source = VIRTIO_BACKEND_INPUT_SOURCE_UI;
     } else {
         error_setg(errp,
-                   "invalid my-virtio input backend '%s', expected external, evdev, vnc, or ui",
-                   s->backend_name);
+                   "invalid my-virtio input backend '%s', expected evdev, vnc, or ui",
+                   backend_name);
         return;
     }
+
+    if (s->profile == VIRTIO_BACKEND_INPUT_KEYBOARD) {
+        emu_name = VIRTIO_EMU_NAME_KEYBOARD;
+        device_name = "my-virtio-keyboard";
+    } else if (s->profile == VIRTIO_BACKEND_INPUT_TABLET) {
+        emu_name = VIRTIO_EMU_NAME_TABLET;
+        device_name = "my-virtio-tablet";
+    } else {
+        emu_name = VIRTIO_EMU_NAME_MOUSE;
+        device_name = "my-virtio-mouse";
+    }
+
     backend_config.u.input.source = source;
     if (source == VIRTIO_BACKEND_INPUT_SOURCE_EVDEV) {
         backend_config.u.input.evdev_path = s->evdev_path;
-    } else if (source == VIRTIO_BACKEND_INPUT_SOURCE_UI) {
+    } else {
         if (!s->ui) {
             error_setg(errp, "%s backend '%s' requires my-virtio-gpu=on",
-                       s->profile == VIRTIO_BACKEND_INPUT_KEYBOARD ?
-                       "my-virtio-keyboard" :
-                       s->profile == VIRTIO_BACKEND_INPUT_TABLET ?
-                       "my-virtio-tablet" : "my-virtio-mouse",
-                       s->backend_name);
+                       device_name, backend_name);
             return;
         }
         backend_config.u.input.ui = s->ui;
     }
 
-    if (s->profile == VIRTIO_BACKEND_INPUT_KEYBOARD) {
-        emu_name = VIRTIO_EMU_NAME_KEYBOARD;
-        handler = &my_virtio_keyboard_handler;
-    } else if (s->profile == VIRTIO_BACKEND_INPUT_TABLET) {
-        emu_name = VIRTIO_EMU_NAME_TABLET;
-        handler = &my_virtio_tablet_handler;
-    } else {
-        emu_name = VIRTIO_EMU_NAME_MOUSE;
-        handler = &my_virtio_mouse_handler;
-    }
-
     memory_region_init_io(&s->iomem, OBJECT(dev), &my_virtio_input_mmio_ops, s,
-                          handler->name, 0x1000);
+                          device_name, 0x1000);
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->irq);
 
     s->rx_bh = qemu_bh_new(my_virtio_input_rx_bh, s);
     s->backend = virtio_backend_create(&backend_config);
     if (!s->backend) {
-        error_setg(errp, "failed to create %s backend", handler->name);
+        error_setg(errp, "failed to create %s backend", device_name);
         qemu_bh_delete(s->rx_bh);
         s->rx_bh = NULL;
         return;
@@ -455,7 +289,7 @@ static void my_virtio_input_realize(DeviceState *dev, Error **errp)
     s->handle = virtio_mmio_create(emu_name, s->base, s->size, &ops, s);
     if (!s->handle) {
         error_setg(errp, "failed to create %s protocol device",
-                   handler->name);
+                   device_name);
         virtio_backend_destroy(s->backend);
         s->backend = NULL;
         qemu_bh_delete(s->rx_bh);
@@ -463,16 +297,13 @@ static void my_virtio_input_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    if (source == VIRTIO_BACKEND_INPUT_SOURCE_EXTERNAL) {
-        s->handler_state = qemu_input_handler_register(dev, handler);
-        qemu_input_handler_activate(s->handler_state);
-    } else if (source == VIRTIO_BACKEND_INPUT_SOURCE_EVDEV) {
+    if (source == VIRTIO_BACKEND_INPUT_SOURCE_EVDEV) {
         info_report("%s using evdev backend%s%s",
-                    handler->name,
+                    device_name,
                     s->evdev_path && *s->evdev_path ? " path=" : "",
                     s->evdev_path && *s->evdev_path ? s->evdev_path : "");
     } else {
-        info_report("%s using backend VNC input", handler->name);
+        info_report("%s using backend VNC input", device_name);
     }
 }
 
@@ -480,10 +311,6 @@ static void my_virtio_input_unrealize(DeviceState *dev)
 {
     MyVirtioStateInput *s = MY_VIRTIO_INPUT(dev);
 
-    if (s->handler_state) {
-        qemu_input_handler_unregister(s->handler_state);
-        s->handler_state = NULL;
-    }
     if (s->rx_bh) {
         qemu_bh_delete(s->rx_bh);
         s->rx_bh = NULL;
