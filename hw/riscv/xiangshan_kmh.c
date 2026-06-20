@@ -1407,19 +1407,19 @@ static void xiangshan_kmh_set_my_virtio_console_output_path(Object *obj,
 
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(keyboard_backend,
                                        my_virtio_keyboard_backend,
-                                       "external")
+                                       "vnc")
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(keyboard_evdev,
                                        my_virtio_keyboard_evdev_path,
                                        "")
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(mouse_backend,
                                        my_virtio_mouse_backend,
-                                       "external")
+                                       "vnc")
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(mouse_evdev,
                                        my_virtio_mouse_evdev_path,
                                        "")
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(tablet_backend,
                                        my_virtio_tablet_backend,
-                                       "external")
+                                       "vnc")
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(tablet_evdev,
                                        my_virtio_tablet_evdev_path,
                                        "")
@@ -1481,11 +1481,11 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_console_backend = g_strdup("external");
     s->my_virtio_console_input_path = g_strdup("");
     s->my_virtio_console_output_path = g_strdup("");
-    s->my_virtio_keyboard_backend = g_strdup("external");
+    s->my_virtio_keyboard_backend = g_strdup("vnc");
     s->my_virtio_keyboard_evdev_path = g_strdup("");
-    s->my_virtio_mouse_backend = g_strdup("external");
+    s->my_virtio_mouse_backend = g_strdup("vnc");
     s->my_virtio_mouse_evdev_path = g_strdup("");
-    s->my_virtio_tablet_backend = g_strdup("external");
+    s->my_virtio_tablet_backend = g_strdup("vnc");
     s->my_virtio_tablet_evdev_path = g_strdup("");
     s->my_virtio_vnc_listen = g_strdup("127.0.0.1:5915");
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
