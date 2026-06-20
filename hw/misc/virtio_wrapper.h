@@ -11,6 +11,7 @@
 #define VIRTIO_EMU_NAME_GPU     "virtio_gpu"
 #define VIRTIO_EMU_NAME_KEYBOARD "virtio_keyboard"
 #define VIRTIO_EMU_NAME_MOUSE   "virtio_mouse"
+#define VIRTIO_EMU_NAME_TABLET  "virtio_tablet"
 
 typedef void *virtio_handle_t;
 

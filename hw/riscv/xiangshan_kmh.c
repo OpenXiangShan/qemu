@@ -80,6 +80,7 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_MY_VIRTIO_GPU] =   { 0x310C0000,        0x1000 },
     [XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD] = { 0x310D0000,      0x1000 },
     [XIANGSHAN_KMH_MY_VIRTIO_MOUSE] = { 0x310E0000,         0x1000 },
+    [XIANGSHAN_KMH_MY_VIRTIO_TABLET] = { 0x310F0000,        0x1000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
     [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },
@@ -299,6 +300,17 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              XIANGSHAN_KMH_MY_VIRTIO_MOUSE_IRQ),
             s->my_virtio_mouse_backend,
             s->my_virtio_mouse_evdev_path,
+            s->my_virtio_ui);
+    }
+
+    if (s->my_virtio_tablet) {
+        my_virtio_tablet_create(
+            memmap[XIANGSHAN_KMH_MY_VIRTIO_TABLET].base,
+            memmap[XIANGSHAN_KMH_MY_VIRTIO_TABLET].size,
+            qdev_get_gpio_in(DEVICE(s->irqchip),
+                             XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ),
+            s->my_virtio_tablet_backend,
+            s->my_virtio_tablet_evdev_path,
             s->my_virtio_ui);
     }
 }
@@ -929,6 +941,13 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
                                         aplic_s_phandle);
     }
 
+    if (s->my_virtio_tablet) {
+        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_tablet",
+                                        XIANGSHAN_KMH_MY_VIRTIO_TABLET,
+                                        XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ,
+                                        aplic_s_phandle);
+    }
+
     if (kmh_is_iommu_sys_enabled(s)) {
         iommu_sys_phandle = xiangshan_kmh_fdt_add_iommu_sys(
             s, aplic_s_phandle, imsic_s_phandle, &phandle);
@@ -1007,6 +1026,7 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_gpu = s->my_virtio_gpu;
     s->soc.my_virtio_keyboard = s->my_virtio_keyboard;
     s->soc.my_virtio_mouse = s->my_virtio_mouse;
+    s->soc.my_virtio_tablet = s->my_virtio_tablet;
     s->soc.my_virtio_vnc = s->my_virtio_vnc;
     s->soc.my_virtio_blk_image = s->my_virtio_blk_image;
     s->soc.my_virtio_net_hostfwd = s->my_virtio_net_hostfwd;
@@ -1022,6 +1042,8 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_keyboard_evdev_path = s->my_virtio_keyboard_evdev_path;
     s->soc.my_virtio_mouse_backend = s->my_virtio_mouse_backend;
     s->soc.my_virtio_mouse_evdev_path = s->my_virtio_mouse_evdev_path;
+    s->soc.my_virtio_tablet_backend = s->my_virtio_tablet_backend;
+    s->soc.my_virtio_tablet_evdev_path = s->my_virtio_tablet_evdev_path;
     s->soc.my_virtio_vnc_listen = s->my_virtio_vnc_listen;
     if (s->dw_pcie) {
         object_initialize_child(OBJECT(machine), "pcie0", &s->soc.pcie0,
@@ -1249,6 +1271,21 @@ static void xiangshan_kmh_set_my_virtio_mouse(Object *obj, bool value,
     s->my_virtio_mouse = value;
 }
 
+static bool xiangshan_kmh_get_my_virtio_tablet(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_tablet;
+}
+
+static void xiangshan_kmh_set_my_virtio_tablet(Object *obj, bool value,
+                                               Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_tablet = value;
+}
+
 static bool xiangshan_kmh_get_my_virtio_vnc(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1408,6 +1445,12 @@ XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(mouse_backend,
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(mouse_evdev,
                                        my_virtio_mouse_evdev_path,
                                        "")
+XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(tablet_backend,
+                                       my_virtio_tablet_backend,
+                                       "external")
+XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(tablet_evdev,
+                                       my_virtio_tablet_evdev_path,
+                                       "")
 XIANGSHAN_KMH_INPUT_STR_PROP_ACCESSORS(vnc_listen,
                                        my_virtio_vnc_listen,
                                        "127.0.0.1:5915")
@@ -1455,6 +1498,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_gpu = false;
     s->my_virtio_keyboard = false;
     s->my_virtio_mouse = false;
+    s->my_virtio_tablet = false;
     s->my_virtio_vnc = false;
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
@@ -1470,6 +1514,8 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_keyboard_evdev_path = g_strdup("");
     s->my_virtio_mouse_backend = g_strdup("external");
     s->my_virtio_mouse_evdev_path = g_strdup("");
+    s->my_virtio_tablet_backend = g_strdup("external");
+    s->my_virtio_tablet_evdev_path = g_strdup("");
     s->my_virtio_vnc_listen = g_strdup("127.0.0.1:5915");
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
     s->autotest_image_addr = XIANGSHAN_KMH_AUTOTEST_IMAGE_ADDR;
@@ -1556,6 +1602,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_mouse);
     object_class_property_set_description(klass, "my-virtio-mouse",
                                           "Enable my-virtio mouse input device");
+
+    object_class_property_add_bool(klass, "my-virtio-tablet",
+                                   xiangshan_kmh_get_my_virtio_tablet,
+                                   xiangshan_kmh_set_my_virtio_tablet);
+    object_class_property_set_description(klass, "my-virtio-tablet",
+                                          "Enable my-virtio absolute tablet input device");
 
     object_class_property_add_bool(klass, "my-virtio-vnc",
                                    xiangshan_kmh_get_my_virtio_vnc,
@@ -1646,6 +1698,18 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                   xiangshan_kmh_set_my_virtio_mouse_evdev);
     object_class_property_set_description(klass, "my-virtio-mouse-evdev",
                                           "Linux evdev event path for my-virtio mouse evdev backend");
+
+    object_class_property_add_str(klass, "my-virtio-tablet-backend",
+                                  xiangshan_kmh_get_my_virtio_tablet_backend,
+                                  xiangshan_kmh_set_my_virtio_tablet_backend);
+    object_class_property_set_description(klass, "my-virtio-tablet-backend",
+                                          "Backend for my-virtio tablet: external, evdev, vnc, or ui");
+
+    object_class_property_add_str(klass, "my-virtio-tablet-evdev",
+                                  xiangshan_kmh_get_my_virtio_tablet_evdev,
+                                  xiangshan_kmh_set_my_virtio_tablet_evdev);
+    object_class_property_set_description(klass, "my-virtio-tablet-evdev",
+                                          "Linux evdev event path for my-virtio tablet evdev backend");
 
     object_class_property_add_str(klass, "my-virtio-vnc-listen",
                                   xiangshan_kmh_get_my_virtio_vnc_listen,

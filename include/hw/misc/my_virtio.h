@@ -22,5 +22,8 @@ void my_virtio_keyboard_create(hwaddr start, hwaddr size, qemu_irq irq,
 void my_virtio_mouse_create(hwaddr start, hwaddr size, qemu_irq irq,
                             const char *backend, const char *evdev_path,
                             void *ui);
+void my_virtio_tablet_create(hwaddr start, hwaddr size, qemu_irq irq,
+                             const char *backend, const char *evdev_path,
+                             void *ui);
 
 #endif

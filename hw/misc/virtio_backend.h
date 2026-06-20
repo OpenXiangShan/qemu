@@ -45,6 +45,7 @@ enum virtio_backend_console_backend {
 enum virtio_backend_input_profile {
 	VIRTIO_BACKEND_INPUT_KEYBOARD = 0,
 	VIRTIO_BACKEND_INPUT_MOUSE,
+	VIRTIO_BACKEND_INPUT_TABLET,
 };
 
 enum virtio_backend_input_source {
