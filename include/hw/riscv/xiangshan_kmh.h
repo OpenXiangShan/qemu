@@ -37,7 +37,6 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_keyboard;
     bool my_virtio_mouse;
     bool my_virtio_tablet;
-    bool my_virtio_vnc;
     void *my_virtio_ui;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
@@ -79,7 +78,6 @@ typedef struct XiangshanKmhState {
     bool my_virtio_keyboard;
     bool my_virtio_mouse;
     bool my_virtio_tablet;
-    bool my_virtio_vnc;
     void *my_virtio_ui;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;

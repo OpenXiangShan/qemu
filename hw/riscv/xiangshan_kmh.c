@@ -230,17 +230,6 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
         xiangshan_kmh_dw_pcie_init(s);
     }
 
-    if (s->my_virtio_vnc) {
-        s->my_virtio_ui = my_virtio_ui_create_vnc(
-            s->my_virtio_vnc_listen, 1280, 800);
-        if (!s->my_virtio_ui) {
-            error_setg(errp, "failed to create my-virtio VNC backend at %s",
-                       s->my_virtio_vnc_listen ?
-                       s->my_virtio_vnc_listen : "");
-            return;
-        }
-    }
-
     if (s->my_virtio_blk) {
         my_virtio_blk_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].base,
                              memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].size,
@@ -274,11 +263,13 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     }
 
     if (s->my_virtio_gpu) {
-        my_virtio_gpu_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].base,
-                             memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].size,
-                             qdev_get_gpio_in(DEVICE(s->irqchip),
-                                              XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ),
-                             s->my_virtio_ui);
+        s->my_virtio_ui =
+            my_virtio_gpu_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].base,
+                                 memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].size,
+                                 qdev_get_gpio_in(
+                                     DEVICE(s->irqchip),
+                                     XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ),
+                                 s->my_virtio_vnc_listen);
     }
 
     if (s->my_virtio_keyboard) {
@@ -319,10 +310,7 @@ static void xiangshan_kmh_soc_unrealize(DeviceState *dev)
 {
     XiangshanKmhSoCState *s = XIANGSHAN_KMH_SOC(dev);
 
-    if (s->my_virtio_ui) {
-        my_virtio_ui_destroy(s->my_virtio_ui);
-        s->my_virtio_ui = NULL;
-    }
+    s->my_virtio_ui = NULL;
 }
 
 static void xiangshan_kmh_soc_class_init(ObjectClass *klass, const void *data)
@@ -1027,7 +1015,6 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_keyboard = s->my_virtio_keyboard;
     s->soc.my_virtio_mouse = s->my_virtio_mouse;
     s->soc.my_virtio_tablet = s->my_virtio_tablet;
-    s->soc.my_virtio_vnc = s->my_virtio_vnc;
     s->soc.my_virtio_blk_image = s->my_virtio_blk_image;
     s->soc.my_virtio_net_hostfwd = s->my_virtio_net_hostfwd;
     s->soc.my_virtio_net_network = s->my_virtio_net_network;
@@ -1286,21 +1273,6 @@ static void xiangshan_kmh_set_my_virtio_tablet(Object *obj, bool value,
     s->my_virtio_tablet = value;
 }
 
-static bool xiangshan_kmh_get_my_virtio_vnc(Object *obj, Error **errp)
-{
-    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
-
-    return s->my_virtio_vnc;
-}
-
-static void xiangshan_kmh_set_my_virtio_vnc(Object *obj, bool value,
-                                            Error **errp)
-{
-    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
-
-    s->my_virtio_vnc = value;
-}
-
 static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1499,7 +1471,6 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_keyboard = false;
     s->my_virtio_mouse = false;
     s->my_virtio_tablet = false;
-    s->my_virtio_vnc = false;
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
     s->my_virtio_net_network = g_strdup("");
@@ -1608,12 +1579,6 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_tablet);
     object_class_property_set_description(klass, "my-virtio-tablet",
                                           "Enable my-virtio absolute tablet input device");
-
-    object_class_property_add_bool(klass, "my-virtio-vnc",
-                                   xiangshan_kmh_get_my_virtio_vnc,
-                                   xiangshan_kmh_set_my_virtio_vnc);
-    object_class_property_set_description(klass, "my-virtio-vnc",
-                                          "Enable backend VNC server for my-virtio GPU and input");
 
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   xiangshan_kmh_get_my_virtio_blk_image,

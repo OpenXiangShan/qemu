@@ -3,8 +3,7 @@
 #include "qapi/error.h"
 #include "hw/irq.h"
 #include "hw/sysbus.h"
-#include "ui/console.h"
-#include "ui/qemu-pixman.h"
+#include "hw/qdev-properties.h"
 #include "virtio_wrapper.h"
 #include "virtio_backend.h"
 #include "hw/misc/my_virtio.h"
@@ -16,13 +15,12 @@ struct MyVirtioStateGpu {
 
     virtio_handle_t handle;
     virtio_backend_handle_t backend;
-    QemuConsole *con;
-    DisplaySurface *surface;
     hwaddr base;
     hwaddr size;
     uint32_t width;
     uint32_t height;
     virtio_backend_ui_handle_t ui;
+    char *vnc_listen;
 };
 
 #define TYPE_MY_VIRTIO_GPU "my-virtio-gpu"
@@ -115,71 +113,6 @@ static int my_virtio_gpu_guest_read(void *opaque, uint64_t gpa,
     return len;
 }
 
-static void my_virtio_gpu_scanout_disable(void *opaque, uint32_t scanout_id)
-{
-    MyVirtioStateGpu *s = opaque;
-
-    if (s->con) {
-        dpy_gfx_replace_surface(s->con, NULL);
-    }
-    s->surface = NULL;
-}
-
-static void my_virtio_gpu_scanout_update(void *opaque, uint32_t scanout_id,
-                                         const void *pixels, uint32_t width,
-                                         uint32_t height, uint32_t stride,
-                                         uint32_t x, uint32_t y,
-                                         uint32_t w, uint32_t h)
-{
-    MyVirtioStateGpu *s = opaque;
-
-    if (!s->con || !pixels || !width || !height) {
-        return;
-    }
-
-    if (!s->surface ||
-        surface_width(s->surface) != width ||
-        surface_height(s->surface) != height ||
-        surface_data(s->surface) != pixels) {
-        s->surface = qemu_create_displaysurface_from(width, height,
-                                                     PIXMAN_x8r8g8b8,
-                                                     stride,
-                                                     (uint8_t *)pixels);
-        dpy_gfx_replace_surface(s->con, s->surface);
-    }
-
-    if (x >= width || y >= height) {
-        return;
-    }
-    if (x + w > width) {
-        w = width - x;
-    }
-    if (y + h > height) {
-        h = height - y;
-    }
-    if (w && h) {
-        dpy_gfx_update(s->con, x, y, w, h);
-    }
-}
-
-static void my_virtio_gpu_invalidate_display(void *opaque)
-{
-}
-
-static void my_virtio_gpu_update_display(void *opaque)
-{
-}
-
-static void my_virtio_gpu_text_update(void *opaque, console_ch_t *chardata)
-{
-}
-
-static const GraphicHwOps my_virtio_gpu_ops = {
-    .invalidate = my_virtio_gpu_invalidate_display,
-    .gfx_update = my_virtio_gpu_update_display,
-    .text_update = my_virtio_gpu_text_update,
-};
-
 static struct libvirtio_ops ops = {
     .vprint = vprintf,
     .mm_alloc = my_alloc,
@@ -193,27 +126,20 @@ static struct libvirtio_ops ops = {
     },
 };
 
-void *my_virtio_ui_create_vnc(const char *listen, uint32_t width,
-                              uint32_t height)
-{
-    return virtio_backend_ui_create_vnc(listen, width, height);
-}
-
-void my_virtio_ui_destroy(void *ui)
-{
-    virtio_backend_ui_destroy(ui);
-}
-
-void my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq, void *ui)
+void *my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq,
+                           const char *vnc_listen)
 {
     MyVirtioStateGpu *s = MY_VIRTIO_GPU(qdev_new(TYPE_MY_VIRTIO_GPU));
 
     s->base = start;
     s->size = size;
-    s->ui = ui;
+    if (vnc_listen && *vnc_listen) {
+        qdev_prop_set_string(DEVICE(s), "vnc-listen", vnc_listen);
+    }
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, start);
     sysbus_connect_irq(SYS_BUS_DEVICE(s), 0, irq);
+    return s->ui;
 }
 
 static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
@@ -226,10 +152,7 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
             .width = 1280,
             .height = 800,
             .max_outputs = 1,
-            .ui = s->ui,
             .guest_read = my_virtio_gpu_guest_read,
-            .scanout_update = my_virtio_gpu_scanout_update,
-            .scanout_disable = my_virtio_gpu_scanout_disable,
             .opaque = s,
         },
     };
@@ -241,11 +164,19 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
 
     s->width = backend_config.u.gpu.width;
     s->height = backend_config.u.gpu.height;
-    s->con = graphic_console_init(dev, 0, &my_virtio_gpu_ops, s);
+    s->ui = virtio_backend_ui_create_vnc(s->vnc_listen, s->width, s->height);
+    if (!s->ui) {
+        error_setg(errp, "failed to create my-virtio-gpu VNC backend at %s",
+                   s->vnc_listen ? s->vnc_listen : "");
+        return;
+    }
+    backend_config.u.gpu.ui = s->ui;
 
     s->backend = virtio_backend_create(&backend_config);
     if (!s->backend) {
         error_setg(errp, "failed to create my-virtio-gpu backend");
+        virtio_backend_ui_destroy(s->ui);
+        s->ui = NULL;
         return;
     }
 
@@ -253,6 +184,10 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
                                    &ops, s);
     if (!s->handle) {
         error_setg(errp, "failed to create my-virtio-gpu protocol device");
+        virtio_backend_destroy(s->backend);
+        s->backend = NULL;
+        virtio_backend_ui_destroy(s->ui);
+        s->ui = NULL;
         return;
     }
 }
@@ -263,7 +198,13 @@ static void my_virtio_gpu_unrealize(DeviceState *dev)
 
     virtio_backend_destroy(s->backend);
     s->backend = NULL;
+    virtio_backend_ui_destroy(s->ui);
+    s->ui = NULL;
 }
+
+static const Property my_virtio_gpu_properties[] = {
+    DEFINE_PROP_STRING("vnc-listen", MyVirtioStateGpu, vnc_listen),
+};
 
 static void my_virtio_gpu_class_init(ObjectClass *klass, const void *data)
 {
@@ -271,6 +212,7 @@ static void my_virtio_gpu_class_init(ObjectClass *klass, const void *data)
 
     dc->realize = my_virtio_gpu_realize;
     dc->unrealize = my_virtio_gpu_unrealize;
+    device_class_set_props(dc, my_virtio_gpu_properties);
 }
 
 static const TypeInfo my_virtio_gpu_info = {

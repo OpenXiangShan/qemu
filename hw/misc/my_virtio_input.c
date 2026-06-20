@@ -416,7 +416,7 @@ static void my_virtio_input_realize(DeviceState *dev, Error **errp)
         backend_config.u.input.evdev_path = s->evdev_path;
     } else if (source == VIRTIO_BACKEND_INPUT_SOURCE_UI) {
         if (!s->ui) {
-            error_setg(errp, "%s backend '%s' requires my-virtio-vnc=on",
+            error_setg(errp, "%s backend '%s' requires my-virtio-gpu=on",
                        s->profile == VIRTIO_BACKEND_INPUT_KEYBOARD ?
                        "my-virtio-keyboard" :
                        s->profile == VIRTIO_BACKEND_INPUT_TABLET ?
