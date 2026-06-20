@@ -6,7 +6,6 @@
 #include <stdint.h>
 
 typedef void *virtio_backend_handle_t;
-typedef void *virtio_backend_ui_handle_t;
 
 enum virtio_backend_type {
 	VIRTIO_BACKEND_BLK = 1,
@@ -14,6 +13,7 @@ enum virtio_backend_type {
 	VIRTIO_BACKEND_CONSOLE,
 	VIRTIO_BACKEND_GPU,
 	VIRTIO_BACKEND_INPUT,
+	VIRTIO_BACKEND_UI,
 };
 
 enum virtio_backend_event {
@@ -100,7 +100,7 @@ struct virtio_backend_config {
 			uint32_t width;
 			uint32_t height;
 			uint32_t max_outputs;
-			virtio_backend_ui_handle_t ui;
+			virtio_backend_handle_t ui;
 			int (*guest_read)(void *opaque, uint64_t gpa,
 					  void *dst, uint32_t len);
 			void (*scanout_update)(void *opaque, uint32_t scanout_id,
@@ -119,8 +119,14 @@ struct virtio_backend_config {
 			enum virtio_backend_input_profile profile;
 			enum virtio_backend_input_source source;
 			const char *evdev_path;
-			virtio_backend_ui_handle_t ui;
+			virtio_backend_handle_t ui;
 		} input;
+
+		struct {
+			const char *listen;
+			uint32_t width;
+			uint32_t height;
+		} ui;
 	} u;
 };
 
@@ -168,12 +174,6 @@ struct virtio_backend_info {
 
 virtio_backend_handle_t
 virtio_backend_create(const struct virtio_backend_config *config);
-
-virtio_backend_ui_handle_t
-virtio_backend_ui_create_vnc(const char *listen, uint32_t width,
-			     uint32_t height);
-
-void virtio_backend_ui_destroy(virtio_backend_ui_handle_t handle);
 
 void virtio_backend_destroy(virtio_backend_handle_t handle);
 

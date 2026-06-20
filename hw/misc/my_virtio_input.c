@@ -29,7 +29,7 @@ typedef struct MyVirtioStateInput {
     enum virtio_backend_input_profile profile;
     char *backend_name;
     char *evdev_path;
-    virtio_backend_ui_handle_t ui;
+    virtio_backend_handle_t ui;
 } MyVirtioStateInput;
 
 #define TYPE_MY_VIRTIO_INPUT "my-virtio-input"

@@ -19,7 +19,7 @@ struct MyVirtioStateGpu {
     hwaddr size;
     uint32_t width;
     uint32_t height;
-    virtio_backend_ui_handle_t ui;
+    virtio_backend_handle_t ui;
     char *vnc_listen;
 };
 
@@ -146,6 +146,14 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateGpu *s = MY_VIRTIO_GPU(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_backend_config ui_config = {
+        .type = VIRTIO_BACKEND_UI,
+        .u.ui = {
+            .listen = s->vnc_listen,
+            .width = 1280,
+            .height = 800,
+        },
+    };
     struct virtio_backend_config backend_config = {
         .type = VIRTIO_BACKEND_GPU,
         .u.gpu = {
@@ -164,7 +172,9 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
 
     s->width = backend_config.u.gpu.width;
     s->height = backend_config.u.gpu.height;
-    s->ui = virtio_backend_ui_create_vnc(s->vnc_listen, s->width, s->height);
+    ui_config.u.ui.width = s->width;
+    ui_config.u.ui.height = s->height;
+    s->ui = virtio_backend_create(&ui_config);
     if (!s->ui) {
         error_setg(errp, "failed to create my-virtio-gpu VNC backend at %s",
                    s->vnc_listen ? s->vnc_listen : "");
@@ -175,7 +185,7 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
     s->backend = virtio_backend_create(&backend_config);
     if (!s->backend) {
         error_setg(errp, "failed to create my-virtio-gpu backend");
-        virtio_backend_ui_destroy(s->ui);
+        virtio_backend_destroy(s->ui);
         s->ui = NULL;
         return;
     }
@@ -186,7 +196,7 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
         error_setg(errp, "failed to create my-virtio-gpu protocol device");
         virtio_backend_destroy(s->backend);
         s->backend = NULL;
-        virtio_backend_ui_destroy(s->ui);
+        virtio_backend_destroy(s->ui);
         s->ui = NULL;
         return;
     }
@@ -198,7 +208,7 @@ static void my_virtio_gpu_unrealize(DeviceState *dev)
 
     virtio_backend_destroy(s->backend);
     s->backend = NULL;
-    virtio_backend_ui_destroy(s->ui);
+    virtio_backend_destroy(s->ui);
     s->ui = NULL;
 }
 
