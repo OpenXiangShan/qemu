@@ -22,7 +22,7 @@ The ``xiangshan-kunminghu`` machine supports the following devices:
 * 1 UART
 * PCIe host bridge
 * Optional system IOMMU platform device
-* Optional my-virtio MMIO blk/net/console devices
+* Optional my-virtio MMIO blk/net/console/gpu/input devices
 
 Boot options
 ------------
@@ -126,6 +126,45 @@ Machine options
    ``putc``，``getc`` 返回 ``-1``，所以登录控制台需要绑定到 Linux
    virtio-console 驱动注册出来的 ``hvc1``。
 
+``my-virtio-gpu=on|off``
+   是否创建基于 libMyVirtio 的 virtio-mmio GPU 设备，默认 ``off``。
+   如果 QEMU 当前使用生成的设备树，打开后会加入
+   ``/soc/my_virtio_gpu@310c0000``。GPU backend 默认创建一个独立的
+   VNC server，不使用 QEMU 原生 ``-vnc``。
+
+``my-virtio-vnc-listen=<host:port>``
+   my-virtio GPU backend VNC server 的监听地址，默认
+   ``127.0.0.1:5915``。打开默认 VNC input backend 时，keyboard、mouse
+   和 tablet 复用这个 VNC server 收到的输入事件，因此需要同时打开
+   ``my-virtio-gpu=on``。
+
+``my-virtio-keyboard=on|off``
+   是否创建标准 virtio-input keyboard 设备，默认 ``off``。如果 QEMU 当前
+   使用生成的设备树，打开后会加入 ``/soc/my_virtio_keyboard@310d0000``。
+   guest Linux 需要启用 ``CONFIG_VIRTIO_INPUT``。
+
+``my-virtio-mouse=on|off``
+   是否创建标准 virtio-input relative mouse 设备，默认 ``off``。如果 QEMU
+   当前使用生成的设备树，打开后会加入
+   ``/soc/my_virtio_mouse@310e0000``。这个设备上报 ``REL_X``、``REL_Y``
+   和鼠标按键，适合需要相对移动输入的场景。
+
+``my-virtio-tablet=on|off``
+   是否创建标准 virtio-input absolute tablet 设备，默认 ``off``。如果 QEMU
+   当前使用生成的设备树，打开后会加入
+   ``/soc/my_virtio_tablet@310f0000``。这个设备上报 ``ABS_X``、``ABS_Y``
+   和鼠标按键，更适合 Linux 桌面这类绝对光标场景。
+
+``my-virtio-keyboard-backend=vnc|evdev|ui``、``my-virtio-mouse-backend=vnc|evdev|ui``、``my-virtio-tablet-backend=vnc|evdev|ui``
+   my-virtio input 的宿主输入来源，默认都是 ``vnc``。``vnc`` 和 ``ui``
+   都表示从 my-virtio GPU backend VNC server 读取输入事件；``evdev``
+   表示直接读取宿主机 Linux ``/dev/input/eventX``。
+
+``my-virtio-keyboard-evdev=<path>``、``my-virtio-mouse-evdev=<path>``、``my-virtio-tablet-evdev=<path>``
+   当对应 input backend 设置为 ``evdev`` 时使用的宿主 evdev 节点路径。
+   如果不指定路径，backend 会扫描 ``/dev/input/event*``。直接访问宿主
+   evdev 通常需要 root 权限，或者当前用户属于有读权限的 ``input`` 组。
+
 ``fw-jump-fdt-addr=<addr>``
    ``-bios fw_jump.bin`` + ``-device loader`` 启动时，QEMU 生成 DTB 的入口
    传入地址，默认 ``0x80200000``。这个地址需要和 OpenSBI ``fw_jump`` 能够
@@ -176,6 +215,17 @@ Build QEMU
 
    $ ./configure --target-list=riscv64-softmmu --disable-werror --disable-docs
    $ ninja -C build qemu-system-riscv64
+
+my-virtio 设备默认不参与编译。如果需要使用 ``my-virtio-*`` machine 属性，
+configure 时需要显式加 ``--enable-my-virtio``：
+
+.. code-block:: bash
+
+   $ ./configure --target-list=riscv64-softmmu --disable-werror --disable-docs --enable-my-virtio
+   $ ninja -C build qemu-system-riscv64
+
+没有打开该选项时，运行时请求 ``my-virtio-*=on`` 会直接报错：
+``my-virtio support is not compiled in; reconfigure QEMU with --enable-my-virtio``。
 
 Boot Linux with ``-kernel``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -308,10 +358,49 @@ INTx 解析日志是预期现象；优先使用 MSI/MSI-X 设备。真实 DTS �
 Use my-virtio MMIO devices
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``my-virtio-blk``、``my-virtio-net`` 和 ``my-virtio-console`` 的 machine
-属性只控制是否创建设备。设备树仍然由 ``-kernel``、``generated-dtb=on`` 或
+``my-virtio-blk``、``my-virtio-net``、``my-virtio-console``、
+``my-virtio-gpu`` 和 ``my-virtio-*`` input 的 machine 属性只控制是否创建
+设备。设备树仍然由 ``-kernel``、``generated-dtb=on`` 或
 ``autotest-dtb=on`` 这些已有路径决定；使用外部 ``-dtb`` 时，需要外部设备树
 自己描述已打开的 my-virtio 设备。
+
+当前 my-virtio MMIO 资源固定分配如下：
+
+.. list-table::
+   :header-rows: 1
+
+   * - 设备
+     - DTB 节点
+     - MMIO
+     - IRQ
+   * - console
+     - ``/soc/my_virtio_console@31080000``
+     - ``0x31080000``
+     - ``17``
+   * - net
+     - ``/soc/my_virtio_net@31090000``
+     - ``0x31090000``
+     - ``16``
+   * - blk
+     - ``/soc/my_virtio_blk@310a0000``
+     - ``0x310a0000``
+     - ``15``
+   * - gpu
+     - ``/soc/my_virtio_gpu@310c0000``
+     - ``0x310c0000``
+     - ``18``
+   * - keyboard
+     - ``/soc/my_virtio_keyboard@310d0000``
+     - ``0x310d0000``
+     - ``19``
+   * - mouse
+     - ``/soc/my_virtio_mouse@310e0000``
+     - ``0x310e0000``
+     - ``20``
+   * - tablet
+     - ``/soc/my_virtio_tablet@310f0000``
+     - ``0x310f0000``
+     - ``21``
 
 blk 设备需要通过 ``my-virtio-blk-image`` 指定 raw image 文件：
 
@@ -376,6 +465,72 @@ blk 和 console 可以一起打开：
 .. code-block:: bash
 
    -M xiangshan-kunminghu,generated-dtb=on,my-virtio-net=on,my-virtio-net-hostfwd=tcp::2222::22,my-virtio-net-network=10.10.0.0,my-virtio-net-netmask=255.255.255.0,my-virtio-net-host-ip=10.10.0.2,my-virtio-net-dhcp-start=10.10.0.15,my-virtio-net-dns-ip=10.10.0.3
+
+``my-virtio-gpu=on`` 会创建 GPU 设备并在生成 DTB 中加入
+``/soc/my_virtio_gpu@310c0000``。GPU backend 会启动独立 VNC server，
+默认监听 ``127.0.0.1:5915``：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-vnc-listen=127.0.0.1:5915 \
+       -smp 4 -m 16G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image-virtio-gpu,addr=0x80400000
+
+宿主机连接这个 backend VNC server：
+
+.. code-block:: bash
+
+   $ vncviewer 127.0.0.1:5915
+
+默认 VNC input backend 复用 my-virtio GPU 创建的 VNC server，所以使用
+``my-virtio-keyboard``、``my-virtio-mouse`` 或 ``my-virtio-tablet`` 的默认
+输入后端时，需要同时打开 ``my-virtio-gpu=on``。guest 内核需要启用
+``CONFIG_VIRTIO_GPU`` 和 ``CONFIG_VIRTIO_INPUT``。启动后可以检查：
+
+.. code-block:: bash
+
+   # ls -l /dev/fb0 /dev/input/event*
+   # cat /proc/bus/input/devices
+   # dmesg | grep -i 'virtio.*input\|virtio.*gpu'
+
+Linux 桌面通常使用 keyboard + absolute tablet，这样 VNC 光标位置可以和
+guest 桌面光标对齐：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-keyboard=on,my-virtio-tablet=on,my-virtio-vnc-listen=127.0.0.1:5915 \
+       -smp 4 -m 16G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image-virtio-gpu,addr=0x80400000
+
+如果 guest 需要相对鼠标输入，可以使用 keyboard + relative mouse，不要同时
+打开 tablet：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-keyboard=on,my-virtio-mouse=on,my-virtio-vnc-listen=127.0.0.1:5915 \
+       -smp 4 -m 16G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image-virtio-gpu,addr=0x80400000
+
+如果不想通过 VNC 输入，也可以让 input backend 直接读取宿主机 evdev。下面
+示例只演示 keyboard，mouse 和 tablet 使用同样的 ``*-backend=evdev`` 和
+``*-evdev=`` 形式：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-keyboard=on,my-virtio-keyboard-backend=evdev,my-virtio-keyboard-evdev=/dev/input/eventX \
+       -smp 4 -m 16G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/Image-virtio,addr=0x80400000
+
+宿主机 evdev 后端读取真实 ``/dev/input/eventX``，通常需要 root 权限或
+``input`` 组读权限。VNC backend 不需要宿主机 evdev 权限。
 
 Run autotest with pmem/nvdimm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
