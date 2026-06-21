@@ -46,7 +46,9 @@
 #include "hw/riscv/riscv_hart.h"
 #include "system/system.h"
 #include "hw/misc/unimp.h"
+#ifdef CONFIG_MY_VIRTIO
 #include "hw/misc/my_virtio.h"
+#endif
 #include "hw/riscv/iommu.h"
 #include "hw/riscv/riscv-iommu.h"
 #include "hw/riscv/riscv-iommu-bits.h"
@@ -93,6 +95,15 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_PCIE0_BAR] =       { 0x60000000,     0x7ff0000 },
     [XIANGSHAN_KMH_DRAM]     =        { 0x80000000,           0x0 },
 };
+
+#ifndef CONFIG_MY_VIRTIO
+static bool xiangshan_kmh_my_virtio_requested(const XiangshanKmhState *s)
+{
+    return s->my_virtio_blk || s->my_virtio_net || s->my_virtio_console ||
+           s->my_virtio_gpu || s->my_virtio_keyboard || s->my_virtio_mouse ||
+           s->my_virtio_tablet;
+}
+#endif
 
 static void xiangshan_kmh_dw_pcie_init(XiangshanKmhSoCState *s)
 {
@@ -230,6 +241,7 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
         xiangshan_kmh_dw_pcie_init(s);
     }
 
+#ifdef CONFIG_MY_VIRTIO
     if (s->my_virtio_blk) {
         my_virtio_blk_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].base,
                              memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].size,
@@ -304,6 +316,7 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             s->my_virtio_tablet_evdev_path,
             s->my_virtio_ui);
     }
+#endif
 }
 
 static void xiangshan_kmh_soc_unrealize(DeviceState *dev)
@@ -1003,6 +1016,14 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     bool generate_dtb;
     int fdt_size;
     const char *firmware_name;
+
+#ifndef CONFIG_MY_VIRTIO
+    if (xiangshan_kmh_my_virtio_requested(s)) {
+        error_report("my-virtio support is not compiled in; "
+                     "reconfigure QEMU with --enable-my-virtio");
+        exit(1);
+    }
+#endif
 
     /* Initialize SoC */
     object_initialize_child(OBJECT(machine), "soc", &s->soc,

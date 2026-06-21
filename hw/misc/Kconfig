@@ -237,17 +237,22 @@ config XLNX_VERSAL_TRNG
 
 config MY_VIRTIO_BLK
     bool
+    depends on MY_VIRTIO
 
 config MY_VIRTIO_NET
     bool
+    depends on MY_VIRTIO
 
 config MY_VIRTIO_CONSOLE
     bool
+    depends on MY_VIRTIO
 
 config MY_VIRTIO_GPU
     bool
+    depends on MY_VIRTIO
 
 config MY_VIRTIO_INPUT
     bool
+    depends on MY_VIRTIO
 
 source macio/Kconfig

@@ -162,41 +162,43 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
-my_virtio_lib_dir = join_paths(meson.project_source_root(), 'my-virtio-lib')
-my_virtio_lib_build_dir = join_paths(meson.project_build_root(), 'my-virtio-lib-build')
-my_virtio_lib_output_dir = join_paths(meson.project_build_root(), 'hw/misc')
-my_virtio_make = find_program('make', required: true)
-my_virtio_libs = custom_target('my-virtio-libs',
-  output: [
-    'libMyVirtio.a',
-    'libMyVirtio_backend.a',
-  ],
-  command: [
-    my_virtio_make,
-    '-C', my_virtio_lib_dir,
-    'BUILD_DIR=' + join_paths(my_virtio_lib_build_dir, 'build'),
-    'OUTPUT_DIR=' + my_virtio_lib_output_dir,
-    'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
-    'all',
-  ],
-  build_by_default: true,
-  build_always_stale: true,
-)
+if get_option('my_virtio').enabled()
+  my_virtio_lib_dir = join_paths(meson.project_source_root(), 'my-virtio-lib')
+  my_virtio_lib_build_dir = join_paths(meson.project_build_root(), 'my-virtio-lib-build')
+  my_virtio_lib_output_dir = join_paths(meson.project_build_root(), 'hw/misc')
+  my_virtio_make = find_program('make', required: true)
+  my_virtio_libs = custom_target('my-virtio-libs',
+    output: [
+      'libMyVirtio.a',
+      'libMyVirtio_backend.a',
+    ],
+    command: [
+      my_virtio_make,
+      '-C', my_virtio_lib_dir,
+      'BUILD_DIR=' + join_paths(my_virtio_lib_build_dir, 'build'),
+      'OUTPUT_DIR=' + my_virtio_lib_output_dir,
+      'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
+      'all',
+    ],
+    build_by_default: true,
+    build_always_stale: true,
+  )
 
-my_virtio_backend = declare_dependency(
-  include_directories: include_directories(
-    '../../my-virtio-lib/virtio',
-    '../../my-virtio-lib/backend'),
-  dependencies: [glib, threads, libm] + socket,
-  sources: my_virtio_libs)
-system_ss.add(my_virtio_backend)
-system_ss.add(when: 'CONFIG_MY_VIRTIO_BLK',
-              if_true: files('my_virtio_blk.c'))
-system_ss.add(when: 'CONFIG_MY_VIRTIO_NET',
-              if_true: files('my_virtio_net.c'))
-system_ss.add(when: 'CONFIG_MY_VIRTIO_CONSOLE',
-              if_true: files('my_virtio_console.c'))
-system_ss.add(when: 'CONFIG_MY_VIRTIO_GPU',
-              if_true: files('my_virtio_gpu.c'))
-system_ss.add(when: 'CONFIG_MY_VIRTIO_INPUT',
-              if_true: files('my_virtio_input.c'))
+  my_virtio_backend = declare_dependency(
+    include_directories: include_directories(
+      '../../my-virtio-lib/virtio',
+      '../../my-virtio-lib/backend'),
+    dependencies: [glib, threads, libm] + socket,
+    sources: my_virtio_libs)
+  system_ss.add(my_virtio_backend)
+  system_ss.add(when: 'CONFIG_MY_VIRTIO_BLK',
+                if_true: files('my_virtio_blk.c'))
+  system_ss.add(when: 'CONFIG_MY_VIRTIO_NET',
+                if_true: files('my_virtio_net.c'))
+  system_ss.add(when: 'CONFIG_MY_VIRTIO_CONSOLE',
+                if_true: files('my_virtio_console.c'))
+  system_ss.add(when: 'CONFIG_MY_VIRTIO_GPU',
+                if_true: files('my_virtio_gpu.c'))
+  system_ss.add(when: 'CONFIG_MY_VIRTIO_INPUT',
+                if_true: files('my_virtio_input.c'))
+endif

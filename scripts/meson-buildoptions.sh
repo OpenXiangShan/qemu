@@ -155,6 +155,7 @@ meson_options_help() {
   printf "%s\n" '  modules         modules support (non Windows)'
   printf "%s\n" '  mpath           Multipath persistent reservation passthrough'
   printf "%s\n" '  multiprocess    Out of process device emulation support'
+  printf "%s\n" '  my-virtio       my-virtio devices and backend library'
   printf "%s\n" '  netmap          netmap network backend support'
   printf "%s\n" '  nettle          nettle cryptography support'
   printf "%s\n" '  numa            libnuma support'
@@ -410,6 +411,8 @@ _meson_option_parse() {
     --disable-mpath) printf "%s" -Dmpath=disabled ;;
     --enable-multiprocess) printf "%s" -Dmultiprocess=enabled ;;
     --disable-multiprocess) printf "%s" -Dmultiprocess=disabled ;;
+    --enable-my-virtio) printf "%s" -Dmy_virtio=enabled ;;
+    --disable-my-virtio) printf "%s" -Dmy_virtio=disabled ;;
     --enable-netmap) printf "%s" -Dnetmap=enabled ;;
     --disable-netmap) printf "%s" -Dnetmap=disabled ;;
     --enable-nettle) printf "%s" -Dnettle=enabled ;;
