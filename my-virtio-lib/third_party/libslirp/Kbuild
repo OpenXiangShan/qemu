@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 Beijing Institute of Open Source Chip
+
+quiet_cmd_gen_libslirp = LIB     $@
+      cmd_gen_libslirp = $(MAKE) -C $(srctree)/$(src) \
+				 CC="$(HOSTCC)" \
+				 PKG_CONFIG="$(HOSTPKG_CONFIG)" \
+				 CFLAGS="-fPIC" \
+				 BUILD_DIR=$(realpath $(dir $@)) \
+			 > $@.log
+$(obj)/libslirp.a: FORCE
+	$(call if_changed,gen_libslirp)
+always-y += libslirp.a
+clean-files += src/*.o src/*.d src/libslirp-version.h libslirp.a *.log
