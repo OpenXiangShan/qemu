@@ -722,6 +722,9 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
             fdt, "/chosen", "bootargs",
             "console=hvc1 earlycon=sbi vt.nr_consoles=6 "
             "task=0x0000000000 guest_task=0x0000000000");
+    } else {
+        qemu_fdt_setprop_string(fdt, "/chosen", "bootargs",
+                                "console=ttyS0,115200 earlycon=sbi loglevel=8");
     }
 
     qemu_fdt_add_subnode(fdt, "/cpus");

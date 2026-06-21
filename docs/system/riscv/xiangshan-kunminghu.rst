@@ -121,6 +121,8 @@ Machine options
    ``/soc/my_virtio_console@31080000``，并把 ``stdout-path`` 指到该节点。
    如果没有外部 command line，QEMU 会给生成 DTB 设置
    ``console=hvc1 earlycon=sbi vt.nr_consoles=6`` 这一类默认 bootargs。
+   没有打开 ``my-virtio-console`` 时，默认 bootargs 使用 UART0：
+   ``console=ttyS0,115200 earlycon=sbi loglevel=8``。
    该设备使用 QEMU 第三路 ``-serial`` 后端，也就是 ``serial_hd(2)``。
    ``hvc0`` 保留给 SBI HVC/earlycon；当前 OpenSBI virtio-console 只实现
    ``putc``，``getc`` 返回 ``-1``，所以登录控制台需要绑定到 Linux
@@ -260,7 +262,10 @@ Boot Linux with ``fw_jump.bin``
        -device loader,file=/path/to/Image,addr=0x80400000
 
 这种模式不能使用 ``-append``，因为 QEMU 只允许 ``-append`` 和 ``-kernel``
-一起使用。bootargs 来自 QEMU 生成的设备树或固件对设备树的修改。
+一起使用。bootargs 来自 QEMU 生成的设备树或固件对设备树的修改。使用
+QEMU 生成设备树且没有外部 command line 时，默认串口 bootargs 为
+``console=ttyS0,115200 earlycon=sbi loglevel=8``；如果同时打开
+``my-virtio-console=on``，默认改为 ``console=hvc1 earlycon=sbi``。
 
 QEMU 默认会把生成的 DTB 加载到 ``0x80200000``，作为传给 KMH OpenSBI
 ``fw_jump`` 的入口 FDT 地址。这个默认值匹配常见的编译配置：
