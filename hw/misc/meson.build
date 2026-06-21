@@ -162,15 +162,33 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
-my_virtio_backend_link_args = [
-  join_paths(meson.current_source_dir(), 'libMyVirtio.a'),
-  join_paths(meson.current_source_dir(), 'libMyVirtio_backend.a'),
-]
-my_virtio_slirp = dependency('slirp', required: true, static: false)
+my_virtio_lib_dir = join_paths(meson.project_source_root(), 'my-virtio-lib')
+my_virtio_lib_build_dir = join_paths(meson.project_build_root(), 'my-virtio-lib-build')
+my_virtio_lib_output_dir = join_paths(meson.project_build_root(), 'hw/misc')
+my_virtio_make = find_program('make', required: true)
+my_virtio_libs = custom_target('my-virtio-libs',
+  output: [
+    'libMyVirtio.a',
+    'libMyVirtio_backend.a',
+  ],
+  command: [
+    my_virtio_make,
+    '-C', my_virtio_lib_dir,
+    'BUILD_DIR=' + join_paths(my_virtio_lib_build_dir, 'build'),
+    'OUTPUT_DIR=' + my_virtio_lib_output_dir,
+    'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
+    'all',
+  ],
+  build_by_default: true,
+  build_always_stale: true,
+)
 
 my_virtio_backend = declare_dependency(
-  dependencies: [my_virtio_slirp, threads, libm] + socket,
-  link_args: my_virtio_backend_link_args)
+  include_directories: include_directories(
+    '../../my-virtio-lib/virtio',
+    '../../my-virtio-lib/backend'),
+  dependencies: [glib, threads, libm] + socket,
+  sources: my_virtio_libs)
 system_ss.add(my_virtio_backend)
 system_ss.add(when: 'CONFIG_MY_VIRTIO_BLK',
               if_true: files('my_virtio_blk.c'))
