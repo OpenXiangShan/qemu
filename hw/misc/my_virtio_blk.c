@@ -86,8 +86,10 @@ static void my_free(uint64_t addr, int size)
     g_free((void *)addr);
 }
 
-static int my_guest_memory_read(uint64_t gpa, void *dst, uint32_t len)
+static int my_guest_memory_read(uint64_t gpa, void *dst, uint32_t len,
+                                void *priv)
 {
+    (void)priv;
     cpu_physical_memory_read(gpa, dst, len);
 
     //printf("%s gpa:0x%lx dst:0x%p len:0x%x\n", __FUNCTION__, gpa, dst, len);
@@ -95,8 +97,10 @@ static int my_guest_memory_read(uint64_t gpa, void *dst, uint32_t len)
     return len;
 }
 
-static int my_guest_memory_write(uint64_t gpa, void *src, uint32_t len)
+static int my_guest_memory_write(uint64_t gpa, void *src, uint32_t len,
+                                 void *priv)
 {
+    (void)priv;
     //printf("%s gpa:0x%lx dst:0x%px len:0x%x -- write 0x%lx to 0x%lx\n", __FUNCTION__, gpa, src, len, *(uint64_t *)src, gpa);
 
     cpu_physical_memory_write(gpa, src, len);

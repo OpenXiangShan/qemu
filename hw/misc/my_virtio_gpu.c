@@ -62,14 +62,18 @@ static void my_free(uint64_t addr, int size)
     g_free((void *)(uintptr_t)addr);
 }
 
-static int my_guest_memory_read(uint64_t gpa, void *dst, uint32_t len)
+static int my_guest_memory_read(uint64_t gpa, void *dst, uint32_t len,
+                                void *priv)
 {
+    (void)priv;
     cpu_physical_memory_read(gpa, dst, len);
     return len;
 }
 
-static int my_guest_memory_write(uint64_t gpa, void *src, uint32_t len)
+static int my_guest_memory_write(uint64_t gpa, void *src, uint32_t len,
+                                 void *priv)
 {
+    (void)priv;
     cpu_physical_memory_write(gpa, src, len);
     return len;
 }
