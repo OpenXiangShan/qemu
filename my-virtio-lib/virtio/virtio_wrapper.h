@@ -53,9 +53,9 @@ struct libvirtio_ops {
 	uint64_t (*mm_alloc)(int size);
 	void     (*mm_free)(uint64_t addr, int size);
 	int      (*map)(uint64_t gphys_addr, uint64_t gphys_size,
-			uint64_t *hphys_addr, uint64_t *hphys_size);
-	int      (*guest_mem_read)(uint64_t gpa, void *dst, uint32_t len);
-	int      (*guest_mem_write)(uint64_t gpa, void *src, uint32_t len);
+			uint64_t *hphys_addr, uint64_t *hphys_size, void *priv);
+	int      (*guest_mem_read)(uint64_t gpa, void *dst, uint32_t len, void *priv);
+	int      (*guest_mem_write)(uint64_t gpa, void *src, uint32_t len, void *priv);
 
 	int      (*set_irq)(void *pirv);
 
