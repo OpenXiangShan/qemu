@@ -146,7 +146,7 @@ int libvirtio_gphys_read(struct virtio_device *dev, uint64_t gpa, void *dst, uin
 	if (!mdev || !mdev->ops || !mdev->ops->guest_mem_read)
 		return -1;
 
-	return mdev->ops->guest_mem_read(gpa, dst, len);
+	return mdev->ops->guest_mem_read(gpa, dst, len, mdev->priv);
 }
 
 int libvirtio_gphys_write(struct virtio_device *dev, uint64_t gpa, void *src, uint32_t len)
@@ -156,7 +156,7 @@ int libvirtio_gphys_write(struct virtio_device *dev, uint64_t gpa, void *src, ui
 	if (!mdev || !mdev->ops || !mdev->ops->guest_mem_write)
 		return -1;
 
-	return mdev->ops->guest_mem_write(gpa, src, len);
+	return mdev->ops->guest_mem_write(gpa, src, len, mdev->priv);
 }
 
 int libvirtio_gphys_map(struct virtio_device *dev,
@@ -168,7 +168,7 @@ int libvirtio_gphys_map(struct virtio_device *dev,
 	if (!mdev || !mdev->ops || !mdev->ops->map)
 		return -1;
 
-	return mdev->ops->map(gphys_addr, gphys_size, hphys_addr, hphys_size);
+	return mdev->ops->map(gphys_addr, gphys_size, hphys_addr, hphys_size, mdev->priv);
 }
 
 uint64_t libvirtio_alloc(struct virtio_device *dev, int size)

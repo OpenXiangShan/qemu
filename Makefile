@@ -1,7 +1,7 @@
 CC := gcc
 AR := ar
 CMAKE := cmake
-CFLAGS := -Wall -g -O0
+CFLAGS := -Wall -g -O0 -std=gnu99
 GLIB_CFLAGS := $(shell pkg-config --cflags glib-2.0 2>/dev/null)
 LIBVNCSERVER_DIR := third_party/libvncserver
 LIBSLIRP_DIR := third_party/libslirp
@@ -11,7 +11,6 @@ LIBVNCSERVER_BUILD_DIR := $(BUILD_DIR)/libvncserver
 LIBVNCSERVER_ARCHIVE := $(LIBVNCSERVER_BUILD_DIR)/libvncserver.a
 LIBSLIRP_BUILD_DIR := $(BUILD_DIR)/libslirp
 LIBSLIRP_ARCHIVE := $(LIBSLIRP_BUILD_DIR)/libslirp.a
-ZLIB_ARCHIVE := $(shell $(CC) -print-file-name=libz.a)
 BACKEND_MRI := $(BUILD_DIR)/libMyVirtio_backend.mri
 LIBVNCSERVER_CFLAGS := -I$(LIBVNCSERVER_DIR)/include -I$(LIBVNCSERVER_BUILD_DIR)/include
 LIBSLIRP_CFLAGS := -I$(LIBSLIRP_DIR)/src -I$(LIBSLIRP_BUILD_DIR)/src
@@ -26,7 +25,7 @@ LIBVNCSERVER_CMAKE_FLAGS := \
 	-DWITH_THREADS=ON \
 	-DWITH_24BPP=ON \
 	-DWITH_IPv6=ON \
-	-DWITH_ZLIB=ON \
+	-DWITH_ZLIB=OFF \
 	-DWITH_LZO=OFF \
 	-DWITH_JPEG=OFF \
 	-DWITH_PNG=OFF \
@@ -88,7 +87,6 @@ $(BACKEND_TARGET): $(BACKEND_OBJS) $(LIBVNCSERVER_ARCHIVE) $(LIBSLIRP_ARCHIVE)
 		for obj in $(BACKEND_OBJS); do echo "ADDMOD $$obj"; done; \
 		echo "ADDLIB $(abspath $(LIBVNCSERVER_ARCHIVE))"; \
 		echo "ADDLIB $(abspath $(LIBSLIRP_ARCHIVE))"; \
-		echo "ADDLIB $(ZLIB_ARCHIVE)"; \
 		echo "SAVE"; \
 		echo "END"; \
 	} > $(BACKEND_MRI)
