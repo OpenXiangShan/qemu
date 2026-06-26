@@ -22,6 +22,7 @@
 #define HW_RISCV_HART_H
 
 #include "hw/sysbus.h"
+#include "system/memory.h"
 #include "target/riscv/cpu.h"
 #include "qom/object.h"
 
@@ -37,6 +38,8 @@ struct RISCVHartArrayState {
     uint32_t num_harts;
     uint32_t hartid_base;
     char *cpu_type;
+    MemoryRegion *memory;
+    bool start_powered_off;
     uint64_t resetvec;
     uint32_t num_rnmi_irqvec;
     uint64_t *rnmi_irqvec;
