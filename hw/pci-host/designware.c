@@ -529,7 +529,7 @@ designware_pcie_host_root_bus_path(PCIHostState *host_bridge, PCIBus *rootbus)
     return "0000:00";
 }
 
-static const VMStateDescription vmstate_designware_pcie_msi_bank = {
+static const VMStateDescription vmstate_designware_pcie_msi_bank G_GNUC_UNUSED = {
     .name = "designware-pcie-msi-bank",
     .version_id = 1,
     .minimum_version_id = 1,
@@ -541,7 +541,7 @@ static const VMStateDescription vmstate_designware_pcie_msi_bank = {
     }
 };
 
-static const VMStateDescription vmstate_designware_pcie_msi = {
+static const VMStateDescription vmstate_designware_pcie_msi G_GNUC_UNUSED = {
     .name = "designware-pcie-msi",
     .version_id = 1,
     .minimum_version_id = 1,
@@ -557,7 +557,7 @@ static const VMStateDescription vmstate_designware_pcie_msi = {
     }
 };
 
-static const VMStateDescription vmstate_designware_pcie_viewport = {
+static const VMStateDescription vmstate_designware_pcie_viewport G_GNUC_UNUSED = {
     .name = "designware-pcie-viewport",
     .version_id = 1,
     .minimum_version_id = 1,
@@ -570,7 +570,7 @@ static const VMStateDescription vmstate_designware_pcie_viewport = {
     }
 };
 
-static const VMStateDescription vmstate_designware_pcie_root = {
+static const VMStateDescription vmstate_designware_pcie_root G_GNUC_UNUSED = {
     .name = "designware-pcie-root",
     .version_id = 1,
     .minimum_version_id = 1,
@@ -616,7 +616,6 @@ static void designware_pcie_root_class_init(ObjectClass *klass,
      * host-facing part, which can't be device_add'ed, yet.
      */
     dc->user_creatable = false;
-    dc->vmsd = &vmstate_designware_pcie_root;
 }
 
 static uint64_t designware_pcie_host_mmio_read(void *opaque, hwaddr addr,
@@ -677,6 +676,7 @@ static void designware_pcie_host_realize(DeviceState *dev, Error **errp)
     PCIHostState *pci = PCI_HOST_BRIDGE(dev);
     DesignwarePCIEHost *s = DESIGNWARE_PCIE_HOST(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+    const char *root_bus_name = s->root_bus_name ? s->root_bus_name : "pcie";
     size_t i;
 
     for (i = 0; i < ARRAY_SIZE(s->pci.irqs); i++) {
@@ -696,7 +696,7 @@ static void designware_pcie_host_realize(DeviceState *dev, Error **errp)
                        "pcie-bus-memory",
                        UINT64_MAX);
 
-    pci->bus = pci_register_root_bus(dev, "pcie",
+    pci->bus = pci_register_root_bus(dev, root_bus_name,
                                      designware_pcie_set_irq,
                                      pci_swizzle_map_irq_fn,
                                      s,
@@ -720,7 +720,7 @@ static void designware_pcie_host_realize(DeviceState *dev, Error **errp)
     qdev_realize(DEVICE(&s->root), BUS(pci->bus), &error_fatal);
 }
 
-static const VMStateDescription vmstate_designware_pcie_host = {
+static const VMStateDescription vmstate_designware_pcie_host G_GNUC_UNUSED = {
     .name = "designware-pcie-host",
     .version_id = 1,
     .minimum_version_id = 1,
@@ -734,6 +734,10 @@ static const VMStateDescription vmstate_designware_pcie_host = {
     }
 };
 
+static const Property designware_pcie_host_properties[] = {
+    DEFINE_PROP_STRING("root-bus-name", DesignwarePCIEHost, root_bus_name),
+};
+
 static void designware_pcie_host_class_init(ObjectClass *klass,
                                             const void *data)
 {
@@ -742,9 +746,10 @@ static void designware_pcie_host_class_init(ObjectClass *klass,
 
     hc->root_bus_path = designware_pcie_host_root_bus_path;
     dc->realize = designware_pcie_host_realize;
+    device_class_set_props_n(dc, designware_pcie_host_properties,
+                             ARRAY_SIZE(designware_pcie_host_properties));
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
     dc->fw_name = "pci";
-    dc->vmsd = &vmstate_designware_pcie_host;
 }
 
 static void designware_pcie_host_init(Object *obj)

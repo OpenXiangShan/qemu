@@ -84,6 +84,7 @@ struct DesignwarePCIEHost {
     PCIHostState parent_obj;
 
     DesignwarePCIERoot root;
+    char *root_bus_name;
 
     struct {
         AddressSpace address_space;
