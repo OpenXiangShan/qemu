@@ -139,6 +139,21 @@ config XIANGSHAN_KUNMINGHU
     select MY_VIRTIO_GPU if MY_VIRTIO
     select MY_VIRTIO_INPUT if MY_VIRTIO
 
+config KMH_BOSC_SOC
+    bool
+    default y
+    depends on RISCV64
+    select DEVICE_TREE
+    select PCI
+    select RISCV_ACLINT
+    select RISCV_APLIC
+    select RISCV_IMSIC
+    select RISCV_IOMMU
+    select DW_AXI_DMAC
+    select SERIAL_MM
+    select UNIMP
+    select PCI_EXPRESS_DESIGNWARE
+
 config XIANGSHAN_NANHUV5
     bool
     default y
