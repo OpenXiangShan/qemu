@@ -79,6 +79,7 @@ static void my_virtio_console_rx_bh(void *opaque)
 {
     MyVirtioStateConsole *s = opaque;
 
+    virtio_process_req(s->handle);
     my_virtio_console_drain_rx(s);
     qemu_chr_fe_accept_input(&s->chr);
 }
@@ -117,8 +118,7 @@ static void my_virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
     //printf("%s offset:0x%lx size:%d value:0x%lx\n", __FUNCTION__, offset, size, value);
     virtio_mmio_write(s->handle, base + offset, (uint32_t)value, size, &is_doorbell);
     if (is_doorbell) {
-        my_virtio_console_drain_rx(s);
-        qemu_chr_fe_accept_input(&s->chr);
+        qemu_bh_schedule(s->rx_bh);
     }
 }
 

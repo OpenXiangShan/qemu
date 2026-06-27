@@ -140,6 +140,7 @@ static void my_virtio_net_rx_bh(void *opaque)
 {
     MyVirtioStateNet *s = opaque;
 
+    virtio_process_req(s->handle);
     my_virtio_net_drain_rx(s);
 }
 

@@ -4,6 +4,7 @@
 #include "hw/irq.h"
 #include "hw/sysbus.h"
 #include "hw/qdev-properties.h"
+#include "qemu/main-loop.h"
 #include "virtio_wrapper.h"
 #include "virtio_backend.h"
 #include "hw/misc/my_virtio.h"
@@ -15,6 +16,7 @@ struct MyVirtioStateGpu {
 
     virtio_handle_t handle;
     virtio_backend_handle_t backend;
+    QEMUBH *req_bh;
     hwaddr base;
     hwaddr size;
     uint32_t width;
@@ -44,6 +46,9 @@ static void my_virtio_gpu_mmio_write(void *opaque, hwaddr offset,
 
     virtio_mmio_write(s->handle, s->base + offset, (uint32_t)value,
                       size, &is_doorbell);
+    if (is_doorbell) {
+        qemu_bh_schedule(s->req_bh);
+    }
 }
 
 static const MemoryRegionOps my_virtio_gpu_mmio_ops = {
@@ -84,6 +89,13 @@ static int my_set_irq(void *priv)
 
     qemu_irq_pulse(s->irq);
     return 0;
+}
+
+static void my_virtio_gpu_req_bh(void *opaque)
+{
+    MyVirtioStateGpu *s = opaque;
+
+    virtio_process_req(s->handle);
 }
 
 static int my_virtio_gpu_submit(void *cmd, int cmd_len, void *resp,
@@ -174,6 +186,7 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->irq);
 
+    s->req_bh = qemu_bh_new(my_virtio_gpu_req_bh, s);
     s->width = backend_config.u.gpu.width;
     s->height = backend_config.u.gpu.height;
     ui_config.u.ui.width = s->width;
@@ -182,6 +195,8 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
     if (!s->ui) {
         error_setg(errp, "failed to create my-virtio-gpu VNC backend at %s",
                    s->vnc_listen ? s->vnc_listen : "");
+        qemu_bh_delete(s->req_bh);
+        s->req_bh = NULL;
         return;
     }
     backend_config.u.gpu.ui = s->ui;
@@ -191,6 +206,8 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
         error_setg(errp, "failed to create my-virtio-gpu backend");
         virtio_backend_destroy(s->ui);
         s->ui = NULL;
+        qemu_bh_delete(s->req_bh);
+        s->req_bh = NULL;
         return;
     }
 
@@ -202,6 +219,8 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
         s->backend = NULL;
         virtio_backend_destroy(s->ui);
         s->ui = NULL;
+        qemu_bh_delete(s->req_bh);
+        s->req_bh = NULL;
         return;
     }
 }
@@ -210,6 +229,10 @@ static void my_virtio_gpu_unrealize(DeviceState *dev)
 {
     MyVirtioStateGpu *s = MY_VIRTIO_GPU(dev);
 
+    if (s->req_bh) {
+        qemu_bh_delete(s->req_bh);
+        s->req_bh = NULL;
+    }
     virtio_backend_destroy(s->backend);
     s->backend = NULL;
     virtio_backend_destroy(s->ui);

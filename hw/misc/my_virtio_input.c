@@ -90,7 +90,7 @@ static void my_virtio_input_mmio_write(void *opaque, hwaddr offset,
     virtio_mmio_write(s->handle, s->base + offset, (uint32_t)value,
                       size, &is_doorbell);
     if (is_doorbell) {
-        my_virtio_input_drain(s);
+        qemu_bh_schedule(s->rx_bh);
     }
 }
 
@@ -98,6 +98,7 @@ static void my_virtio_input_rx_bh(void *opaque)
 {
     MyVirtioStateInput *s = opaque;
 
+    virtio_process_req(s->handle);
     my_virtio_input_drain(s);
 }
 
