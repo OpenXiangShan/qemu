@@ -81,6 +81,7 @@ struct virtio_input_dev {
 	uint64_t features;
 	uint8_t cfg_select;
 	uint8_t cfg_subsel;
+	uint32_t pending_queues;
 };
 
 static uint64_t virtio_input_get_host_features(struct virtio_device *dev)
@@ -439,13 +440,27 @@ static int virtio_input_notify_vq(struct virtio_device *dev, uint32_t vq)
 
 	switch (vq) {
 	case VIRTIO_INPUT_EVENTS_QUEUE:
-		return 0;
 	case VIRTIO_INPUT_STATUS_QUEUE:
-		virtio_input_process_status(idev);
+		idev->pending_queues |= 1U << vq;
 		return 0;
 	default:
 		return -1;
 	}
+}
+
+static void virtio_input_req_process(void *data)
+{
+	struct virtio_input_dev *idev = data;
+	uint32_t pending;
+
+	if (!idev)
+		return;
+
+	pending = idev->pending_queues;
+	idev->pending_queues = 0;
+
+	if (pending & (1U << VIRTIO_INPUT_STATUS_QUEUE))
+		virtio_input_process_status(idev);
 }
 
 static void virtio_input_status_changed(struct virtio_device *dev,
@@ -515,6 +530,7 @@ static int virtio_input_connect_profile(struct virtio_device *dev,
 	dev->emu_data = idev;
 
 	mdev->cb.receive = virtio_input_receive;
+	mdev->cb.process_req = virtio_input_req_process;
 	mdev->cb.data = idev;
 	return 0;
 }

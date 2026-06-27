@@ -59,6 +59,7 @@ struct virtio_console_dev {
 	struct virtio_iovec tx_iov[VIRTIO_CONSOLE_QUEUE_SIZE];
 	struct virtio_console_config config;
 	uint64_t features;
+	uint32_t pending_queues;
 
 	char name[64];
 };
@@ -226,9 +227,8 @@ static int virtio_console_notify_vq(struct virtio_device *dev, uint32_t vq)
 
 	switch (vq) {
 	case VIRTIO_CONSOLE_TX_QUEUE:
-		rc = virtio_console_do_tx(dev, cdev);
-		break;
 	case VIRTIO_CONSOLE_RX_QUEUE:
+		cdev->pending_queues |= 1U << vq;
 		break;
 	default:
 		rc = -1;
@@ -236,6 +236,21 @@ static int virtio_console_notify_vq(struct virtio_device *dev, uint32_t vq)
 	}
 
 	return rc;
+}
+
+static void virtio_console_req_process(void *data)
+{
+	struct virtio_console_dev *cdev = data;
+	uint32_t pending;
+
+	if (!cdev)
+		return;
+
+	pending = cdev->pending_queues;
+	cdev->pending_queues = 0;
+
+	if (pending & (1U << VIRTIO_CONSOLE_TX_QUEUE))
+		virtio_console_do_tx(cdev->vdev, cdev);
 }
 
 static void virtio_console_status_changed(struct virtio_device *dev,
@@ -315,6 +330,7 @@ static int virtio_console_connect(struct virtio_device *dev,
 	dev->emu_data = cdev;
 
 	mdev->cb.receive = virtio_console_receive;
+	mdev->cb.process_req = virtio_console_req_process;
 	mdev->cb.data = cdev;
 
 	return 0;

@@ -33,11 +33,9 @@ as `TODO`.
    - `virtio_mmio_read()`
    - `virtio_mmio_write()`
 
-5. If `virtio_mmio_write()` reports `is_doorbell`, drive the device:
-   - blk: `virtio_process_req()`
-   - net/console/input: drain readable backend packets/events with
-     `virtio_receive()`
-   - gpu: queue processing is done by the virtio GPU notify path
+5. If `virtio_mmio_write()` reports `is_doorbell`, call
+   `virtio_process_req()` for every device. Then drain net/console/input
+   readable backend packets/events with `virtio_receive()`.
 
 6. For backend-readable events, handle `VIRTIO_BACKEND_EVENT_READABLE` and call
    `virtio_receive()` until the guest has no available RX buffer.
