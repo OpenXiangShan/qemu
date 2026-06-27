@@ -30,7 +30,112 @@ struct virtio_backend_ui_vnc {
 	int last_y;
 	int pointer_initialized;
 	int buttons;
+	int left_shift_down;
+	int right_shift_down;
+	int synthetic_shift_count;
 };
+
+static int shifted_keycode_from_keysym(rfbKeySym key)
+{
+	switch (key) {
+	case XK_A:
+		return KEY_A;
+	case XK_B:
+		return KEY_B;
+	case XK_C:
+		return KEY_C;
+	case XK_D:
+		return KEY_D;
+	case XK_E:
+		return KEY_E;
+	case XK_F:
+		return KEY_F;
+	case XK_G:
+		return KEY_G;
+	case XK_H:
+		return KEY_H;
+	case XK_I:
+		return KEY_I;
+	case XK_J:
+		return KEY_J;
+	case XK_K:
+		return KEY_K;
+	case XK_L:
+		return KEY_L;
+	case XK_M:
+		return KEY_M;
+	case XK_N:
+		return KEY_N;
+	case XK_O:
+		return KEY_O;
+	case XK_P:
+		return KEY_P;
+	case XK_Q:
+		return KEY_Q;
+	case XK_R:
+		return KEY_R;
+	case XK_S:
+		return KEY_S;
+	case XK_T:
+		return KEY_T;
+	case XK_U:
+		return KEY_U;
+	case XK_V:
+		return KEY_V;
+	case XK_W:
+		return KEY_W;
+	case XK_X:
+		return KEY_X;
+	case XK_Y:
+		return KEY_Y;
+	case XK_Z:
+		return KEY_Z;
+	case XK_exclam:
+		return KEY_1;
+	case XK_at:
+		return KEY_2;
+	case XK_numbersign:
+		return KEY_3;
+	case XK_dollar:
+		return KEY_4;
+	case XK_percent:
+		return KEY_5;
+	case XK_asciicircum:
+		return KEY_6;
+	case XK_ampersand:
+		return KEY_7;
+	case XK_asterisk:
+		return KEY_8;
+	case XK_parenleft:
+		return KEY_9;
+	case XK_parenright:
+		return KEY_0;
+	case XK_underscore:
+		return KEY_MINUS;
+	case XK_plus:
+		return KEY_EQUAL;
+	case XK_braceleft:
+		return KEY_LEFTBRACE;
+	case XK_braceright:
+		return KEY_RIGHTBRACE;
+	case XK_bar:
+		return KEY_BACKSLASH;
+	case XK_colon:
+		return KEY_SEMICOLON;
+	case XK_quotedbl:
+		return KEY_APOSTROPHE;
+	case XK_asciitilde:
+		return KEY_GRAVE;
+	case XK_less:
+		return KEY_COMMA;
+	case XK_greater:
+		return KEY_DOT;
+	case XK_question:
+		return KEY_SLASH;
+	default:
+		return -1;
+	}
+}
 
 static void vnc_hide_cursor(struct virtio_backend_ui_vnc *vnc)
 {
@@ -301,16 +406,50 @@ static void queue_syn(struct virtio_backend_ui_vnc *vnc,
 	(void)queue_input_event(vnc, profile, EV_SYN, SYN_REPORT, 0);
 }
 
+static int queue_key_event(struct virtio_backend_ui_vnc *vnc, uint16_t code,
+			   int down)
+{
+	return queue_input_event(vnc, VIRTIO_BACKEND_INPUT_KEYBOARD, EV_KEY,
+				 code, down ? 1 : 0);
+}
+
 static void vnc_kbd_event(rfbBool down, rfbKeySym key, rfbClientPtr client)
 {
 	struct virtio_backend_ui_vnc *vnc = client->screen->screenData;
-	int code = keycode_from_keysym(key);
+	int code;
+	int shifted = 0;
+	int shift_down;
+
+	if (key == XK_Shift_L)
+		vnc->left_shift_down = down ? 1 : 0;
+	else if (key == XK_Shift_R)
+		vnc->right_shift_down = down ? 1 : 0;
+
+	code = shifted_keycode_from_keysym(key);
+	if (code >= 0) {
+		shifted = 1;
+	} else {
+		code = keycode_from_keysym(key);
+	}
 
 	if (code < 0)
 		return;
 
-	(void)queue_input_event(vnc, VIRTIO_BACKEND_INPUT_KEYBOARD, EV_KEY,
-				(uint16_t)code, down ? 1 : 0);
+	shift_down = vnc->left_shift_down || vnc->right_shift_down;
+	if (shifted && down && !shift_down && vnc->synthetic_shift_count == 0)
+		(void)queue_key_event(vnc, KEY_LEFTSHIFT, 1);
+
+	if (shifted && down && !shift_down)
+		vnc->synthetic_shift_count++;
+
+	(void)queue_key_event(vnc, (uint16_t)code, down ? 1 : 0);
+
+	if (shifted && !down && vnc->synthetic_shift_count > 0) {
+		vnc->synthetic_shift_count--;
+		if (vnc->synthetic_shift_count == 0 && !vnc->left_shift_down)
+			(void)queue_key_event(vnc, KEY_LEFTSHIFT, 0);
+	}
+
 	queue_syn(vnc, VIRTIO_BACKEND_INPUT_KEYBOARD);
 }
 
