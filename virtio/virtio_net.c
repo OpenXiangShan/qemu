@@ -34,6 +34,7 @@ struct virtio_net_dev {
 	struct virtio_net_queue *vqs;
 	uint32_t cq;		/* Configuration queue number */
 	uint32_t max_queues;
+	uint32_t pending_queues;
 	uint32_t can_receive;
 	struct virtio_net_config config;
 	uint64_t features;
@@ -313,14 +314,14 @@ static int virtio_net_notify_vq(struct virtio_device *dev, uint32_t vq)
 	int rc = 0;
 	struct virtio_net_dev *ndev = dev->emu_data;
 
+	if (vq >= ndev->max_queues)
+		return -1;
+
 	switch (ndev->vqs[vq].type) {
 	case VIRTIO_NET_TX_QUEUE:
-		virtio_net_tx_poke(ndev, vq);
-		break;
 	case VIRTIO_NET_RX_QUEUE:
-		break;
 	case VIRTIO_NET_CTRL_QUEUE:
-		virtio_net_handle_ctrl(ndev, vq);
+		ndev->pending_queues |= 1U << vq;
 		break;
 	default:
 		rc = -1;
@@ -328,6 +329,35 @@ static int virtio_net_notify_vq(struct virtio_device *dev, uint32_t vq)
 	}
 
 	return rc;
+}
+
+static void virtio_net_req_process(void *data)
+{
+	struct virtio_net_dev *ndev = data;
+	uint32_t pending;
+	uint32_t qnum;
+
+	if (!ndev)
+		return;
+
+	pending = ndev->pending_queues;
+	ndev->pending_queues = 0;
+
+	for (qnum = 0; qnum < ndev->max_queues; qnum++) {
+		if (!(pending & (1U << qnum)))
+			continue;
+
+		switch (ndev->vqs[qnum].type) {
+		case VIRTIO_NET_TX_QUEUE:
+			virtio_net_tx_poke(ndev, qnum);
+			break;
+		case VIRTIO_NET_CTRL_QUEUE:
+			virtio_net_handle_ctrl(ndev, qnum);
+			break;
+		default:
+			break;
+		}
+	}
 }
 
 static void virtio_net_status_changed(struct virtio_device *dev,
@@ -433,6 +463,7 @@ static int virtio_net_connect(struct virtio_device *dev,
 	}
 
 	mdev->cb.receive = virtio_net_receive;
+	mdev->cb.process_req = virtio_net_req_process;
 	mdev->cb.data = ndev;
 
 	return 0;

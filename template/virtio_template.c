@@ -723,9 +723,8 @@ int template_mmio_write(uint64_t addr, uint32_t val, int len)
 		return ret;
 
 	if (is_doorbell) {
-		if (dev->kind == TEMPLATE_DEV_BLK)
-			virtio_process_req(dev->virtio);
-		else if (dev->kind == TEMPLATE_DEV_NET)
+		virtio_process_req(dev->virtio);
+		if (dev->kind == TEMPLATE_DEV_NET)
 			template_net_drain_rx(dev);
 		else if (dev->kind == TEMPLATE_DEV_CONSOLE)
 			template_console_drain_rx(dev);

@@ -22,6 +22,7 @@ struct virtio_gpu_dev {
 	struct virtio_gpu_queue vqs[VIRTIO_GPU_NUM_QUEUES];
 	struct virtio_gpu_config config;
 	uint64_t features;
+	uint32_t pending_queues;
 	uint32_t width;
 	uint32_t height;
 	uint32_t max_outputs;
@@ -263,8 +264,26 @@ static int virtio_gpu_notify_vq(struct virtio_device *dev, uint32_t vq)
 	if (!virtio_gpu_queue_size(vq))
 		return -1;
 
-	virtio_gpu_process_queue(gdev, vq);
+	gdev->pending_queues |= 1U << vq;
 	return 0;
+}
+
+static void virtio_gpu_req_process(void *data)
+{
+	struct virtio_gpu_dev *gdev = data;
+	uint32_t pending;
+	uint32_t qnum;
+
+	if (!gdev)
+		return;
+
+	pending = gdev->pending_queues;
+	gdev->pending_queues = 0;
+
+	for (qnum = 0; qnum < VIRTIO_GPU_NUM_QUEUES; qnum++) {
+		if (pending & (1U << qnum))
+			virtio_gpu_process_queue(gdev, qnum);
+	}
 }
 
 static void virtio_gpu_status_changed(struct virtio_device *dev,
@@ -307,6 +326,7 @@ static int virtio_gpu_connect(struct virtio_device *dev,
 			      struct virtio_emulator *emu)
 {
 	struct virtio_gpu_dev *gdev;
+	struct virtio_mmio_dev *mdev = container_of(dev, struct virtio_mmio_dev, dev);
 
 	gdev = (struct virtio_gpu_dev *)my_zalloc(dev, sizeof(*gdev));
 	if (!gdev)
@@ -318,6 +338,8 @@ static int virtio_gpu_connect(struct virtio_device *dev,
 	gdev->max_outputs = 1;
 	gdev->config.num_scanouts = gdev->max_outputs;
 	dev->emu_data = gdev;
+	mdev->cb.process_req = virtio_gpu_req_process;
+	mdev->cb.data = gdev;
 
 	return 0;
 }
