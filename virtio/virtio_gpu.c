@@ -85,6 +85,16 @@ static int virtio_gpu_init_vq_addr(struct virtio_device *dev, uint32_t vq,
 					avail_addr, used_addr, size);
 }
 
+static void virtio_gpu_reset_vq(struct virtio_device *dev, uint32_t vq)
+{
+	struct virtio_gpu_dev *gdev = dev->emu_data;
+
+	if (!gdev || !virtio_gpu_queue_size(vq))
+		return;
+
+	my_virtio_queue_reset(&gdev->vqs[vq].vq);
+}
+
 static int virtio_gpu_get_pfn_vq(struct virtio_device *dev, uint32_t vq)
 {
 	struct virtio_gpu_dev *gdev = dev->emu_data;
@@ -319,6 +329,20 @@ static int virtio_gpu_write_config(struct virtio_device *dev,
 
 static int virtio_gpu_reset(struct virtio_device *dev)
 {
+	uint32_t i;
+	struct virtio_gpu_dev *gdev = dev->emu_data;
+
+	if (!gdev)
+		return 0;
+
+	for (i = 0; i < VIRTIO_GPU_NUM_QUEUES; i++)
+		virtio_gpu_reset_vq(dev, i);
+
+	gdev->features = 0;
+	gdev->pending_queues = 0;
+	gdev->config.events_read = 0;
+	gdev->config.events_clear = 0;
+
 	return 0;
 }
 
@@ -367,6 +391,7 @@ static struct virtio_emulator virtio_gpu = {
 	.set_guest_features     = virtio_gpu_set_guest_features,
 	.init_vq                = virtio_gpu_init_vq,
 	.init_vq_addr           = virtio_gpu_init_vq_addr,
+	.reset_vq               = virtio_gpu_reset_vq,
 	.get_pfn_vq             = virtio_gpu_get_pfn_vq,
 	.get_size_vq            = virtio_gpu_get_size_vq,
 	.set_size_vq            = virtio_gpu_set_size_vq,

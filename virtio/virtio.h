@@ -96,6 +96,7 @@ struct virtio_device {
 	struct list_head addr_trans_tables;
 	struct virtio_emulator *emu;
 	void *emu_data;
+	uint64_t guest_features;
 
 	struct virtio_notify *vn;
 	void *vn_data;
@@ -114,6 +115,7 @@ struct virtio_emulator {
 	int (*init_vq_addr) (struct virtio_device *dev, uint32_t vq,
 			     uint64_t desc_addr, uint64_t avail_addr,
 			     uint64_t used_addr, uint32_t size);
+	void (*reset_vq) (struct virtio_device *dev, uint32_t vq);
 	int (*get_pfn_vq) (struct virtio_device *dev, uint32_t vq);
 	int (*get_size_vq) (struct virtio_device *dev, uint32_t vq);
 	int (*set_size_vq) (struct virtio_device *dev, uint32_t vq, int size);
@@ -134,6 +136,10 @@ struct virtio_emulator {
 
 uint64_t virtio_get_gphys_from_hphys(struct virtio_device *dev, uint64_t hphys);
 uint64_t virtio_get_hphys_from_gphys(struct virtio_device *dev, uint64_t gphys);
+void virtio_clear_addr_trans_tables(struct virtio_device *dev);
+bool virtio_device_has_feature(struct virtio_device *dev, uint32_t feature);
+void virtio_device_set_guest_features(struct virtio_device *dev,
+				      uint32_t select, uint32_t features);
 
 unsigned int virtio_queue_desc_count(struct virtio_queue *vq);
 unsigned int virtio_queue_align(struct virtio_queue *vq);
@@ -146,6 +152,7 @@ unsigned int virtio_queue_max_desc(struct virtio_queue *vq);
 void virtio_queue_set_avail_event(struct virtio_queue *vq);
 void virtio_queue_set_used_elem(struct virtio_queue *vq,
 				uint32_t head, uint32_t len);
+void my_virtio_queue_reset(struct virtio_queue *vq);
 int virtio_queue_get_desc(struct virtio_queue *vq, unsigned short indx,
 			  struct vring_desc *desc);
 unsigned short virtio_queue_pop(struct virtio_queue *vq);

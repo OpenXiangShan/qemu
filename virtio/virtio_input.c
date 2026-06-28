@@ -139,6 +139,16 @@ static int virtio_input_init_vq_addr(struct virtio_device *dev, uint32_t vq,
 					avail_addr, used_addr, size);
 }
 
+static void virtio_input_reset_vq(struct virtio_device *dev, uint32_t vq)
+{
+	struct virtio_input_dev *idev = dev->emu_data;
+
+	if (!idev || !virtio_input_queue_size(vq))
+		return;
+
+	my_virtio_queue_reset(&idev->vqs[vq].vq);
+}
+
 static int virtio_input_get_pfn_vq(struct virtio_device *dev, uint32_t vq)
 {
 	struct virtio_input_dev *idev = dev->emu_data;
@@ -511,6 +521,20 @@ static int virtio_input_write_config(struct virtio_device *dev,
 
 static int virtio_input_reset(struct virtio_device *dev)
 {
+	uint32_t i;
+	struct virtio_input_dev *idev = dev->emu_data;
+
+	if (!idev)
+		return 0;
+
+	for (i = 0; i < VIRTIO_INPUT_NUM_QUEUES; i++)
+		virtio_input_reset_vq(dev, i);
+
+	idev->features = 0;
+	idev->cfg_select = 0;
+	idev->cfg_subsel = 0;
+	idev->pending_queues = 0;
+
 	return 0;
 }
 
@@ -577,6 +601,7 @@ static struct virtio_emulator virtio_keyboard = {
 	.set_guest_features = virtio_input_set_guest_features,
 	.init_vq = virtio_input_init_vq,
 	.init_vq_addr = virtio_input_init_vq_addr,
+	.reset_vq = virtio_input_reset_vq,
 	.get_pfn_vq = virtio_input_get_pfn_vq,
 	.get_size_vq = virtio_input_get_size_vq,
 	.set_size_vq = virtio_input_set_size_vq,
@@ -598,6 +623,7 @@ static struct virtio_emulator virtio_mouse = {
 	.set_guest_features = virtio_input_set_guest_features,
 	.init_vq = virtio_input_init_vq,
 	.init_vq_addr = virtio_input_init_vq_addr,
+	.reset_vq = virtio_input_reset_vq,
 	.get_pfn_vq = virtio_input_get_pfn_vq,
 	.get_size_vq = virtio_input_get_size_vq,
 	.set_size_vq = virtio_input_set_size_vq,
@@ -619,6 +645,7 @@ static struct virtio_emulator virtio_tablet = {
 	.set_guest_features = virtio_input_set_guest_features,
 	.init_vq = virtio_input_init_vq,
 	.init_vq_addr = virtio_input_init_vq_addr,
+	.reset_vq = virtio_input_reset_vq,
 	.get_pfn_vq = virtio_input_get_pfn_vq,
 	.get_size_vq = virtio_input_get_size_vq,
 	.set_size_vq = virtio_input_set_size_vq,

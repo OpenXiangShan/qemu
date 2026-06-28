@@ -55,6 +55,35 @@ static int virtio_mmio_dev_notify(struct virtio_device *dev, uint32_t vq)
 	return my_set_irq(dev);
 }
 
+static void virtio_mmio_reset_queue(struct virtio_mmio_dev *mdev, uint32_t vq)
+{
+	if (mdev->dev.emu && mdev->dev.emu->reset_vq) {
+		mdev->dev.emu->reset_vq(&mdev->dev, vq);
+	}
+}
+
+static void virtio_mmio_reset_transport(struct virtio_mmio_dev *mdev)
+{
+	if (mdev->dev.emu && mdev->dev.emu->reset) {
+		mdev->dev.emu->reset(&mdev->dev);
+	}
+
+	virtio_clear_addr_trans_tables(&mdev->dev);
+
+	mdev->config.host_features = 0;
+	mdev->config.host_features_sel = 0;
+	mdev->config.guest_features = 0;
+	mdev->config.guest_features_sel = 0;
+	mdev->config.queue_sel = 0;
+	mdev->config.queue_num = 0;
+	mdev->config.queue_align = 0;
+	mdev->config.queue_pfn = 0;
+	mdev->config.queue_notify = 0;
+	mdev->config.interrupt_state = 0;
+	mdev->config.interrupt_ack = 0;
+	mdev->config.status = 0;
+}
+
 static int virtio_mmio_config_read(struct virtio_mmio_dev *mdev,
 				   uint32_t offset, void *dst, uint32_t dst_len)
 {
@@ -136,6 +165,8 @@ static int virtio_mmio_config_write(struct virtio_mmio_dev *mdev,
 		mdev->config.guest_features_sel = val;
 		break;
 	case VMM_VIRTIO_MMIO_GUEST_FEATURES:
+		virtio_device_set_guest_features(&mdev->dev,
+					mdev->config.guest_features_sel, val);
 		mdev->dev.emu->set_guest_features(&mdev->dev,
 					mdev->config.guest_features_sel, val);
 		break;
@@ -155,6 +186,12 @@ static int virtio_mmio_config_write(struct virtio_mmio_dev *mdev,
 		mdev->config.queue_align = val;
 		break;
 	case VMM_VIRTIO_MMIO_QUEUE_PFN:
+		if (!val) {
+			virtio_mmio_reset_queue(mdev, mdev->config.queue_sel);
+			mdev->config.queue_pfn = 0;
+			break;
+		}
+		mdev->config.queue_pfn = val;
 		ret = mdev->dev.emu->init_vq(&mdev->dev,
 				    mdev->config.queue_sel,
 				    mdev->config.guest_page_size,
@@ -172,6 +209,10 @@ static int virtio_mmio_config_write(struct virtio_mmio_dev *mdev,
 		//vmm_devemu_emulate_irq(mdev->guest, mdev->irq, 0);
 		break;
 	case VMM_VIRTIO_MMIO_STATUS:
+		if (!val) {
+			virtio_mmio_reset_transport(mdev);
+			break;
+		}
 		if (val != mdev->config.status) {
 			mdev->dev.emu->status_changed(&mdev->dev, val);
 		}
@@ -243,6 +284,7 @@ void virtio_mmio_dev_connect(const char *name, struct virtio_mmio_dev *mdev,
 {
 	strcpy(mdev->dev.name, name);
 	mdev->dev.emu = emu;
+	mdev->dev.guest_features = 0;
 	mdev->config.device_id = emu->id_table[0].type;
 	if (emu && emu->connect)
 		emu->connect(&mdev->dev, emu);

@@ -97,6 +97,16 @@ static int virtio_console_init_vq(struct virtio_device *dev,
 	return rc;
 }
 
+static void virtio_console_reset_vq(struct virtio_device *dev, uint32_t vq)
+{
+	struct virtio_console_dev *cdev = dev->emu_data;
+
+	if (!cdev || vq >= VIRTIO_CONSOLE_NUM_QUEUES)
+		return;
+
+	my_virtio_queue_reset(&cdev->vqs[vq]);
+}
+
 static int virtio_console_get_pfn_vq(struct virtio_device *dev, uint32_t vq)
 {
 	int rc;
@@ -307,6 +317,18 @@ static int virtio_console_write_config(struct virtio_device *dev,
 
 static int virtio_console_reset(struct virtio_device *dev)
 {
+	uint32_t i;
+	struct virtio_console_dev *cdev = dev->emu_data;
+
+	if (!cdev)
+		return 0;
+
+	for (i = 0; i < VIRTIO_CONSOLE_NUM_QUEUES; i++)
+		virtio_console_reset_vq(dev, i);
+
+	cdev->features = 0;
+	cdev->pending_queues = 0;
+
 	return 0;
 }
 
@@ -354,6 +376,7 @@ static struct virtio_emulator virtio_console = {
 	.get_host_features      = virtio_console_get_host_features,
 	.set_guest_features     = virtio_console_set_guest_features,
 	.init_vq                = virtio_console_init_vq,
+	.reset_vq               = virtio_console_reset_vq,
 	.get_pfn_vq             = virtio_console_get_pfn_vq,
 	.get_size_vq            = virtio_console_get_size_vq,
 	.set_size_vq            = virtio_console_set_size_vq,

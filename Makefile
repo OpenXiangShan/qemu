@@ -52,12 +52,14 @@ VIRTIO_SRCS := virtio/fifo.c virtio/utils.c virtio/virtio.c \
 	virtio/virtio_net.c virtio/virtio_gpu.c virtio/virtio_input.c \
 	virtio/virtio_pci.c \
 	virtio/virtio_wrapper.c
+VIRTIO_HEADERS := $(wildcard virtio/*.h)
 VIRTIO_OBJS := $(patsubst virtio/%.c,$(BUILD_DIR)/virtio/%.o,$(VIRTIO_SRCS))
 BACKEND_SRCS := backend/virtio_backend.c backend/virtio_backend_queue.c \
 	backend/virtio_backend_blk.c backend/virtio_backend_console.c \
 	backend/virtio_backend_net.c backend/virtio_backend_gpu.c \
 	backend/virtio_backend_input.c backend/virtio_backend_ui.c \
 	backend/virtio_backend_ui_vnc.c
+BACKEND_HEADERS := $(wildcard backend/*.h)
 BACKEND_OBJS := $(patsubst backend/%.c,$(BUILD_DIR)/backend/%.backend.o,$(BACKEND_SRCS))
 TARGET := $(OUTPUT_DIR)/libMyVirtio.a
 BACKEND_TARGET := $(OUTPUT_DIR)/libMyVirtio_backend.a
@@ -94,11 +96,11 @@ $(BACKEND_TARGET): $(BACKEND_OBJS) $(LIBVNCSERVER_ARCHIVE) $(LIBSLIRP_ARCHIVE)
 	$(AR) s $@
 	@cp backend/virtio_backend.h $(OUTPUT_DIR)/
 
-$(BUILD_DIR)/virtio/%.o: virtio/%.c
+$(BUILD_DIR)/virtio/%.o: virtio/%.c $(VIRTIO_HEADERS)
 	@mkdir -p $(BUILD_DIR)/virtio
 	$(CC) $(CFLAGS) $(VIRTIO_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/backend/%.backend.o: backend/%.c
+$(BUILD_DIR)/backend/%.backend.o: backend/%.c $(BACKEND_HEADERS)
 	@mkdir -p $(BUILD_DIR)/backend
 	$(CC) $(CFLAGS) $(BACKEND_CFLAGS) $(GLIB_CFLAGS) $(LIBSLIRP_CFLAGS) $(LIBVNCSERVER_CFLAGS) -c $< -o $@
 
