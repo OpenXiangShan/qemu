@@ -274,6 +274,9 @@ static int virtio_net_init_vq(struct virtio_device *dev, uint32_t vq,
 	int rc;
 	struct virtio_net_dev *ndev = dev->emu_data;
 
+	if (!ndev || vq >= ndev->max_queues)
+		return -1;
+
 	rc = virtio_queue_setup(dev, &ndev->vqs[vq].vq, pfn, page_size,
 				VIRTIO_NET_QUEUE_SIZE, align);
 	if (!rc) {
@@ -283,18 +286,25 @@ static int virtio_net_init_vq(struct virtio_device *dev, uint32_t vq,
 	return rc;
 }
 
-static int virtio_net_get_pfn_vq(struct virtio_device *dev, uint32_t vq)
+static void virtio_net_reset_vq(struct virtio_device *dev, uint32_t vq)
 {
-	int rc;
 	struct virtio_net_dev *ndev = dev->emu_data;
 
-	rc = virtio_queue_guest_pfn(&ndev->vqs[vq].vq);
-	if (rc) {
-		ndev->vqs[vq].num = vq;
-		ndev->vqs[vq].valid = 1;
-	}
+	if (!ndev || vq >= ndev->max_queues)
+		return;
 
-	return rc;
+	my_virtio_queue_reset(&ndev->vqs[vq].vq);
+	ndev->vqs[vq].valid = 0;
+}
+
+static int virtio_net_get_pfn_vq(struct virtio_device *dev, uint32_t vq)
+{
+	struct virtio_net_dev *ndev = dev->emu_data;
+
+	if (!ndev || vq >= ndev->max_queues)
+		return -1;
+
+	return virtio_queue_guest_pfn(&ndev->vqs[vq].vq);
 }
 
 static int virtio_net_get_size_vq(struct virtio_device *dev, uint32_t vq)
@@ -383,7 +393,19 @@ static void virtio_net_status_changed(struct virtio_device *dev,
 
 static int virtio_net_reset(struct virtio_device *dev)
 {
-	//my_print(dev, "%s\n", __FUNCTION__);
+	uint32_t i;
+	struct virtio_net_dev *ndev = dev->emu_data;
+
+	if (!ndev)
+		return 0;
+
+	for (i = 0; i < ndev->max_queues; i++)
+		virtio_net_reset_vq(dev, i);
+
+	ndev->features = 0;
+	ndev->pending_queues = 0;
+	ndev->can_receive = 0;
+
 	return 0;
 }
 
@@ -486,6 +508,7 @@ static struct virtio_emulator virtio_net = {
 	.get_host_features      = virtio_net_get_host_features,
 	.set_guest_features     = virtio_net_set_guest_features,
 	.init_vq                = virtio_net_init_vq,
+	.reset_vq               = virtio_net_reset_vq,
 	.get_pfn_vq             = virtio_net_get_pfn_vq,
 	.get_size_vq            = virtio_net_get_size_vq,
 	.set_size_vq            = virtio_net_set_size_vq,

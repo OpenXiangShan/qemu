@@ -291,6 +291,7 @@ static void virtio_pci_reset_transport(struct virtio_pci_dev *pdev)
 	pdev->device_feature_select = 0;
 	pdev->guest_feature_select = 0;
 	pdev->guest_features = 0;
+	pdev->mdev.dev.guest_features = 0;
 	pdev->msix_config = 0xffff;
 	pdev->device_status = 0;
 	pdev->config_generation = 0;
@@ -544,6 +545,9 @@ static int virtio_pci_dev_common_cfg_write(struct virtio_pci_dev *pdev,
 			~((uint64_t)UINT_MAX << (pdev->guest_feature_select * 32));
 		pdev->guest_features |=
 			((uint64_t)val32 << (pdev->guest_feature_select * 32));
+		virtio_device_set_guest_features(&pdev->mdev.dev,
+						 pdev->guest_feature_select,
+						 val32);
 		if (pdev->mdev.dev.emu && pdev->mdev.dev.emu->set_guest_features)
 			pdev->mdev.dev.emu->set_guest_features(&pdev->mdev.dev,
 						       pdev->guest_feature_select,

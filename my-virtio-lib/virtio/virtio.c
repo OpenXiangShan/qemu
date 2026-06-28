@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <string.h>
 #include "utils.h"
 #include "virtio.h"
 #include "list.h"
@@ -95,6 +96,40 @@ uint64_t virtio_get_hphys_from_gphys(struct virtio_device *dev, uint64_t gphys)
 	}
 
 	return -1;
+}
+
+void virtio_clear_addr_trans_tables(struct virtio_device *dev)
+{
+	struct addr_trans_pair *pair, *tmp;
+
+	if (!dev) {
+		return;
+	}
+
+	list_for_each_entry_safe(pair, tmp, &dev->addr_trans_tables, list) {
+		list_del(&pair->list);
+		my_free(dev, (uint64_t)(uintptr_t)pair, sizeof(*pair));
+	}
+}
+
+bool virtio_device_has_feature(struct virtio_device *dev, uint32_t feature)
+{
+	if (!dev || feature >= 64) {
+		return false;
+	}
+
+	return dev->guest_features & (1ULL << feature);
+}
+
+void virtio_device_set_guest_features(struct virtio_device *dev,
+				      uint32_t select, uint32_t features)
+{
+	if (!dev || select > 1) {
+		return;
+	}
+
+	dev->guest_features &= ~((uint64_t)UINT_MAX << (select * 32));
+	dev->guest_features |= ((uint64_t)features << (select * 32));
 }
 
 unsigned int virtio_queue_desc_count(struct virtio_queue *vq)
@@ -200,6 +235,15 @@ void virtio_queue_set_used_elem(struct virtio_queue *vq,
 	}
 }
 
+void my_virtio_queue_reset(struct virtio_queue *vq)
+{
+	if (!vq) {
+		return;
+	}
+
+	memset(vq, 0, sizeof(*vq));
+}
+
 int virtio_queue_get_desc(struct virtio_queue *vq, unsigned short indx,
 			  struct vring_desc *desc)
 {
@@ -272,7 +316,7 @@ bool virtio_queue_available(struct virtio_queue *vq)
 bool virtio_queue_should_signal(struct virtio_queue *vq)
 {
 	uint32_t ret;
-	uint16_t old_idx, new_idx, event_idx;
+	uint16_t old_idx, new_idx, event_idx, avail_flags;
 	uint64_t used_pa, avail_pa;
 
 	if (!vq) {
@@ -290,16 +334,37 @@ bool virtio_queue_should_signal(struct virtio_queue *vq)
 		return false;
 	}
 
-	avail_pa = vq->vring.avail_pa +
-		   offsetof(struct vring_avail, ring[vq->vring.num]);
-	ret = my_guest_physical_read(vq->vdev, avail_pa, &event_idx, sizeof(event_idx));
-	if (ret != sizeof(event_idx)) {
-		my_print(vq->vdev, "%s: read failed at avail_pa=0x%lx\n",
-			 __FUNCTION__, avail_pa);
-		return false;
+	if (virtio_device_has_feature(vq->vdev, VMM_VIRTIO_RING_F_EVENT_IDX)) {
+		avail_pa = vq->vring.avail_pa +
+			   offsetof(struct vring_avail, ring[vq->vring.num]);
+		ret = my_guest_physical_read(vq->vdev, avail_pa, &event_idx,
+					     sizeof(event_idx));
+		if (ret != sizeof(event_idx)) {
+			my_print(vq->vdev, "%s: read failed at avail_pa=0x%lx\n",
+				 __FUNCTION__, avail_pa);
+			return false;
+		}
+
+		if (!vring_need_event(event_idx, new_idx, old_idx)) {
+			return false;
+		}
+	} else {
+		avail_pa = vq->vring.avail_pa +
+			   offsetof(struct vring_avail, flags);
+		ret = my_guest_physical_read(vq->vdev, avail_pa, &avail_flags,
+					     sizeof(avail_flags));
+		if (ret != sizeof(avail_flags)) {
+			my_print(vq->vdev, "%s: read failed at avail_pa=0x%lx\n",
+				 __FUNCTION__, avail_pa);
+			return false;
+		}
+
+		if (avail_flags & VMM_VRING_AVAIL_F_NO_INTERRUPT) {
+			return false;
+		}
 	}
 
-	if (vring_need_event(event_idx, new_idx, old_idx)) {
+	if (new_idx != old_idx) {
 		vq->last_used_signalled = new_idx;
 		return true;
 	}

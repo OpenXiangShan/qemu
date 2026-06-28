@@ -210,14 +210,27 @@ static void virtio_blk_req_process(void *data)
 			virtio_blk_req_complete(dev, vbdev, req, MY_BLK_REQ_FLUSH, VMM_VIRTIO_BLK_S_OK);
 			break;
 		case VMM_VIRTIO_BLK_T_GET_ID:
-			//my_print(dev, "######## %s VMM_VIRTIO_BLK_T_GET_ID\n", __FUNCTION__);
+		{
+			const char id[VMM_VIRTIO_BLK_ID_BYTES] = "my-virtio-blk";
+
+			if (iov_cnt > 2) {
+				virtio_buf_to_iovec_write(dev, &vbdev->iov[1],
+							  iov_cnt - 2,
+							  (void *)id, sizeof(id));
+			}
+			virtio_blk_req_complete(dev, vbdev, req, 0,
+						VMM_VIRTIO_BLK_S_OK);
 			break;
+		}
 		default:
 			my_print(dev, "%s: unhandled hdr.type=%d\n",
 				 __FUNCTION__, hdr.type);
+			virtio_blk_req_complete(dev, vbdev, req, 0,
+						VMM_VIRTIO_BLK_S_UNSUPP);
 			break;
 		}
 	}
+
 }
 
 static uint64_t virtio_blk_get_host_features(struct virtio_device *dev)
@@ -285,6 +298,16 @@ static int virtio_blk_init_vq_addr(struct virtio_device *dev, uint32_t vq,
 	};
 
 	return ret;
+}
+
+static void virtio_blk_reset_vq(struct virtio_device *dev, uint32_t vq)
+{
+	struct virtio_blk_dev *vbdev = dev->emu_data;
+
+	if (!vbdev || vq >= VIRTIO_BLK_NUM_QUEUES)
+		return;
+
+	my_virtio_queue_reset(&vbdev->vqs[vq]);
 }
 
 static int virtio_blk_get_pfn_vq(struct virtio_device *dev, uint32_t vq)
@@ -356,7 +379,31 @@ static void virtio_blk_status_changed(struct virtio_device *dev,
 
 static int virtio_blk_reset(struct virtio_device *dev)
 {
-	//my_print(dev, "%s\n", __FUNCTION__);
+	uint32_t i;
+	struct virtio_blk_dev *vbdev = dev->emu_data;
+
+	if (!vbdev)
+		return 0;
+
+	for (i = 0; i < VIRTIO_BLK_NUM_QUEUES; i++)
+		virtio_blk_reset_vq(dev, i);
+
+	for (i = 0; i < VIRTIO_BLK_QUEUE_SIZE; i++) {
+		struct virtio_blk_dev_req *req = &vbdev->reqs[i];
+
+		if (req->read_iov) {
+			my_free(dev, (uint64_t)(uintptr_t)req->read_iov,
+				req->read_iov_cnt * sizeof(struct virtio_iovec));
+		}
+		if (req->data) {
+			my_free(dev, (uint64_t)(uintptr_t)req->data, req->len);
+		}
+		memset(req, 0, sizeof(*req));
+	}
+
+	vbdev->features = 0;
+	fifo_clear(vbdev->req_process);
+
 	return 0;
 }
 
@@ -446,6 +493,7 @@ static struct virtio_emulator virtio_blk = {
 	.set_guest_features     = virtio_blk_set_guest_features,
 	.init_vq                = virtio_blk_init_vq,
 	.init_vq_addr           = virtio_blk_init_vq_addr,
+	.reset_vq               = virtio_blk_reset_vq,
 	.get_pfn_vq             = virtio_blk_get_pfn_vq,
 	.get_size_vq            = virtio_blk_get_size_vq,
 	.set_size_vq            = virtio_blk_set_size_vq,
