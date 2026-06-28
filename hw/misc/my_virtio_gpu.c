@@ -43,10 +43,11 @@ static void my_virtio_gpu_mmio_write(void *opaque, hwaddr offset,
 {
     MyVirtioStateGpu *s = opaque;
     int is_doorbell = 0;
+    int ret;
 
-    virtio_mmio_write(s->handle, s->base + offset, (uint32_t)value,
-                      size, &is_doorbell);
-    if (is_doorbell) {
+    ret = virtio_mmio_write(s->handle, s->base + offset, (uint32_t)value,
+                            size, &is_doorbell);
+    if (!ret && is_doorbell) {
         qemu_bh_schedule(s->req_bh);
     }
 }

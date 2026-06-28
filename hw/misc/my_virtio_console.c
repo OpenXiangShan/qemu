@@ -114,10 +114,12 @@ static void my_virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
 {
     MyVirtioStateConsole *s = opaque;
     int is_doorbell = 0;
+    int ret;
 
     //printf("%s offset:0x%lx size:%d value:0x%lx\n", __FUNCTION__, offset, size, value);
-    virtio_mmio_write(s->handle, base + offset, (uint32_t)value, size, &is_doorbell);
-    if (is_doorbell) {
+    ret = virtio_mmio_write(s->handle, base + offset, (uint32_t)value, size,
+                            &is_doorbell);
+    if (!ret && is_doorbell) {
         qemu_bh_schedule(s->rx_bh);
     }
 }

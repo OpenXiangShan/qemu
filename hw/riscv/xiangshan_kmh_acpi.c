@@ -178,6 +178,85 @@ static void xiangshan_kmh_acpi_dsdt_add_uart(Aml *scope)
     aml_append(scope, dev);
 }
 
+static void xiangshan_kmh_acpi_dsdt_add_one_my_virtio(Aml *scope,
+                                                      uint32_t uid,
+                                                      int memmap_idx,
+                                                      uint32_t irq)
+{
+    const MemMapEntry *memmap = xiangshan_kmh_acpi_memmap;
+    Aml *dev = aml_device("VR%02u", uid);
+    Aml *crs;
+
+    aml_append(dev, aml_name_decl("_HID", aml_string("LNRO0005")));
+    aml_append(dev, aml_name_decl("_UID", aml_int(uid)));
+    aml_append(dev, aml_name_decl("_CCA", aml_int(1)));
+
+    crs = aml_resource_template();
+    aml_append(crs, aml_memory32_fixed(memmap[memmap_idx].base,
+                                       memmap[memmap_idx].size,
+                                       AML_READ_WRITE));
+    aml_append(crs,
+               aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
+                             AML_EXCLUSIVE, &irq, 1));
+    aml_append(dev, aml_name_decl("_CRS", crs));
+
+    aml_append(scope, dev);
+}
+
+static void xiangshan_kmh_acpi_dsdt_add_my_virtio(Aml *scope,
+                                                  XiangshanKmhState *s)
+{
+    const struct {
+        bool enabled;
+        int memmap_idx;
+        uint32_t irq;
+    } devices[] = {
+        {
+            s->my_virtio_console,
+            XIANGSHAN_KMH_MY_VIRTIO_CONSOLE,
+            XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ,
+        },
+        {
+            s->my_virtio_net,
+            XIANGSHAN_KMH_MY_VIRTIO_NET,
+            XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ,
+        },
+        {
+            s->my_virtio_blk,
+            XIANGSHAN_KMH_MY_VIRTIO_BLK,
+            XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ,
+        },
+        {
+            s->my_virtio_gpu,
+            XIANGSHAN_KMH_MY_VIRTIO_GPU,
+            XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ,
+        },
+        {
+            s->my_virtio_keyboard,
+            XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD,
+            XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD_IRQ,
+        },
+        {
+            s->my_virtio_mouse,
+            XIANGSHAN_KMH_MY_VIRTIO_MOUSE,
+            XIANGSHAN_KMH_MY_VIRTIO_MOUSE_IRQ,
+        },
+        {
+            s->my_virtio_tablet,
+            XIANGSHAN_KMH_MY_VIRTIO_TABLET,
+            XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ,
+        },
+    };
+
+    for (uint32_t i = 0; i < ARRAY_SIZE(devices); i++) {
+        if (devices[i].enabled) {
+            xiangshan_kmh_acpi_dsdt_add_one_my_virtio(scope, i,
+                                                      devices[i].memmap_idx,
+                                                      devices[i].irq);
+        }
+    }
+}
+
 static void xiangshan_kmh_acpi_build_dsdt(GArray *table_data,
                                           BIOSLinker *linker,
                                           XiangshanKmhState *s)
@@ -199,6 +278,7 @@ static void xiangshan_kmh_acpi_build_dsdt(GArray *table_data,
     xiangshan_kmh_acpi_dsdt_add_cpus(scope, ms);
     xiangshan_kmh_acpi_dsdt_add_aplic(scope);
     xiangshan_kmh_acpi_dsdt_add_uart(scope);
+    xiangshan_kmh_acpi_dsdt_add_my_virtio(scope, s);
     aml_append(dsdt, scope);
 
     g_array_append_vals(table_data, dsdt->buf->data, dsdt->buf->len);
