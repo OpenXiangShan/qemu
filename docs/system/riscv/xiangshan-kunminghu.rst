@@ -57,6 +57,22 @@ Machine options
    ``-kernel`` 时默认不生成。需要用 ``fw_jump.bin`` 加 loader 启动内核时，
    建议显式设置 ``generated-dtb=on``。
 
+``generated-acpi=on|off``
+   是否生成 ACPI 表并把它们写入 DDR handoff 区域，默认 ``off``。打开后
+   QEMU 会生成 RSDP、XSDT、FADT、DSDT、MADT、RHCT 和 SPCR 等基础表。
+   如果同时使用 QEMU 生成设备树，设备树会加入 compatible 为
+   ``bosc,kmh-acpi-handoff`` 的 reserved-memory 节点，固件可通过该节点
+   找到 ACPI handoff 区域。当前路径不使用 ``fw_cfg``，需要 UEFI 从 DDR
+   handoff 区域安装 ACPI 表。
+
+``acpi-handoff-addr=<addr>``
+   generated ACPI handoff 区域的 DDR 基地址，默认 ``0x90200000``。该地址
+   必须 16-byte 对齐，并且落在 guest DDR 范围内。
+
+``acpi-handoff-size=<size>``
+   generated ACPI handoff 区域大小，默认 ``0x20000``。该大小必须 16-byte
+   对齐，并且能够容纳 QEMU 生成的 ACPI blob。
+
 ``autotest-dtb=on|off``
    是否在 QEMU 生成的设备树里加入自动测试节点。打开后会隐含需要
    QEMU 生成设备树，并且不能同时使用 ``-dtb``。
@@ -317,6 +333,29 @@ OpenSBI 入口看到的 FDT 源地址；OpenSBI 打印的 ``Next Arg1`` 是传�
 
 如果这里有输出，需要确认该 ``fw_jump.bin`` 的平台代码是否真的使用入口
 ``a1`` 或 OpenSBI scratch 中的 ``next_arg1`` 作为 FDT 来源。
+
+Boot with generated ACPI tables
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``generated-acpi=on`` 会让 QEMU 在 DDR 中生成 ACPI handoff blob。UEFI 需要
+从设备树中的 ``bosc,kmh-acpi-handoff`` 节点读取 handoff 地址和大小，扫描
+RSDP，并通过 ``EFI_ACPI_TABLE_PROTOCOL`` 安装这些 ACPI 表。该机制仍需要
+OpenSBI 正常把 FDT 传给 UEFI，因为 handoff 地址本身通过 FDT 描述。
+
+使用 ``fw_jump.bin`` 启动 UEFI 并打开 generated ACPI 的示例：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,generated-acpi=on \
+       -smp 4 -m 16G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/uefi.fd,addr=0x80200000
+
+如果固件没有使用 QEMU 生成的 DTB，仍可以通过外部 DTB 描述同一个 handoff
+区域；该 DTB 需要包含 compatible 为 ``bosc,kmh-acpi-handoff`` 的节点，且
+``reg`` 与 ``acpi-handoff-addr``、``acpi-handoff-size`` 一致。handoff 地址
+或大小配置错误时，QEMU 会在启动早期报错。
 
 Use DWC PCIe
 ~~~~~~~~~~~~

@@ -30,6 +30,7 @@
  */
 
 #include "qemu/osdep.h"
+#include CONFIG_DEVICES
 #include "qemu/error-report.h"
 #include "qapi/error.h"
 #include "system/address-spaces.h"
@@ -52,6 +53,7 @@
 #include "hw/riscv/iommu.h"
 #include "hw/riscv/riscv-iommu.h"
 #include "hw/riscv/riscv-iommu-bits.h"
+#include "hw/loader.h"
 #include "qapi/qapi-visit-common.h"
 #include "target/riscv/cpu_bits.h"
 
@@ -61,9 +63,11 @@
 #define XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR 0x3c0000000ULL
 #define XIANGSHAN_KMH_AUTOTEST_WORKLOAD_ADDR 0x3e0000000ULL
 #define XIANGSHAN_KMH_AUTOTEST_TRIGGER_ADDR 0x90000000ULL
+#define XIANGSHAN_KMH_ACPI_HANDOFF_ADDR 0x90200000ULL
 #define XIANGSHAN_KMH_AUTOTEST_ROOTFS_SIZE 0x20000000ULL
 #define XIANGSHAN_KMH_AUTOTEST_WORKLOAD_SIZE 0x80000000ULL
 #define XIANGSHAN_KMH_AUTOTEST_TRIGGER_SIZE 0x200000ULL
+#define XIANGSHAN_KMH_ACPI_HANDOFF_SIZE 0x20000ULL
 #define XIANGSHAN_KMH_UART0_CLOCK 50000000
 #define FDT_IRQ_TYPE_EDGE_RISING 4
 #define DESIGNWARE_PCIE_IRQ_MSI 4
@@ -407,6 +411,31 @@ static void xiangshan_kmh_fdt_add_pmem(void *fdt, hwaddr addr, uint64_t size)
     qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
+static void xiangshan_kmh_fdt_ensure_reserved_memory(void *fdt)
+{
+    qemu_fdt_add_path(fdt, "/reserved-memory");
+    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#address-cells", 2);
+    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#size-cells", 2);
+    qemu_fdt_setprop(fdt, "/reserved-memory", "ranges", NULL, 0);
+}
+
+static void xiangshan_kmh_fdt_add_acpi_handoff(XiangshanKmhState *s)
+{
+    MachineState *ms = MACHINE(s);
+    void *fdt = ms->fdt;
+    hwaddr addr = s->acpi_handoff_addr;
+    uint64_t size = s->acpi_handoff_size;
+    g_autofree char *name = g_strdup_printf(
+        "/reserved-memory/acpi-handoff@%"HWADDR_PRIx, addr);
+
+    xiangshan_kmh_fdt_ensure_reserved_memory(fdt);
+    xiangshan_kmh_fdt_add_reg_node(fdt,
+                                   "/reserved-memory/acpi-handoff@%"HWADDR_PRIx,
+                                   addr, size,
+                                   "bosc,kmh-acpi-handoff", "okay");
+    qemu_fdt_setprop(fdt, name, "no-map", NULL, 0);
+}
+
 typedef struct XiangshanKmhMemRange {
     hwaddr start;
     hwaddr end;
@@ -417,6 +446,18 @@ static hwaddr xiangshan_kmh_range_end(hwaddr start, uint64_t size)
     hwaddr end = start + size;
 
     return end < start ? HWADDR_MAX : end;
+}
+
+static bool xiangshan_kmh_range_in_dram(XiangshanKmhState *s, hwaddr start,
+                                        uint64_t size)
+{
+    MachineState *ms = MACHINE(s);
+    const MemMapEntry *memmap = xiangshan_kmh_memmap;
+    hwaddr dram_base = memmap[XIANGSHAN_KMH_DRAM].base;
+    hwaddr dram_end = xiangshan_kmh_range_end(dram_base, ms->ram_size);
+    hwaddr end = xiangshan_kmh_range_end(start, size);
+
+    return size && start >= dram_base && end <= dram_end && end > start;
 }
 
 static void xiangshan_kmh_fdt_add_memory(XiangshanKmhState *s)
@@ -511,10 +552,7 @@ static void xiangshan_kmh_fdt_add_autotest(XiangshanKmhState *s)
     uint64_t workload_size = s->autotest_workload_size;
     uint64_t trigger_size = s->autotest_trigger_size;
 
-    qemu_fdt_add_subnode(fdt, "/reserved-memory");
-    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#address-cells", 2);
-    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#size-cells", 2);
-    qemu_fdt_setprop(fdt, "/reserved-memory", "ranges", NULL, 0);
+    xiangshan_kmh_fdt_ensure_reserved_memory(fdt);
 
     {
         g_autofree char *name = g_strdup_printf(
@@ -965,6 +1003,10 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     if (s->autotest_dtb) {
         xiangshan_kmh_fdt_add_autotest(s);
     }
+
+    if (s->generated_acpi) {
+        xiangshan_kmh_fdt_add_acpi_handoff(s);
+    }
 }
 
 static void xiangshan_kmh_create_iommu_sys(XiangshanKmhState *s)
@@ -1019,6 +1061,13 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     bool generate_dtb;
     int fdt_size;
     const char *firmware_name;
+
+#ifndef CONFIG_ACPI
+    if (s->generated_acpi) {
+        error_report("generated-acpi=on requires CONFIG_ACPI");
+        exit(1);
+    }
+#endif
 
 #ifndef CONFIG_MY_VIRTIO
     if (xiangshan_kmh_my_virtio_requested(s)) {
@@ -1075,6 +1124,16 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
         exit(1);
     }
 
+    if (s->generated_acpi &&
+        (!QEMU_IS_ALIGNED(s->acpi_handoff_addr, 16) ||
+         !QEMU_IS_ALIGNED(s->acpi_handoff_size, 16) ||
+         !xiangshan_kmh_range_in_dram(s, s->acpi_handoff_addr,
+                                      s->acpi_handoff_size))) {
+        error_report("acpi-handoff-addr/size must describe a non-empty "
+                     "16-byte aligned range inside DDR");
+        exit(1);
+    }
+
     if (generate_dtb) {
         xiangshan_kmh_create_fdt(s);
     } else if (machine->dtb) {
@@ -1085,6 +1144,12 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
         }
         s->fdt_size = fdt_size;
     }
+
+#ifdef CONFIG_ACPI
+    if (s->generated_acpi) {
+        xiangshan_kmh_acpi_setup(s);
+    }
+#endif
 
     firmware_name = XIANGSHAN_KMH_BIOS_BIN;
     firmware_end_addr = riscv_find_and_load_firmware(machine, firmware_name,
@@ -1162,6 +1227,21 @@ static void xiangshan_kmh_set_generated_dtb(Object *obj, Visitor *v,
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
 
     visit_type_OnOffAuto(v, name, &s->generated_dtb, errp);
+}
+
+static bool xiangshan_kmh_get_generated_acpi(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->generated_acpi;
+}
+
+static void xiangshan_kmh_set_generated_acpi(Object *obj, bool value,
+                                             Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->generated_acpi = value;
 }
 
 static bool xiangshan_kmh_get_autotest_dtb(Object *obj, Error **errp)
@@ -1486,6 +1566,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
 
     s->iommu_sys = ON_OFF_AUTO_AUTO;
     s->generated_dtb = ON_OFF_AUTO_AUTO;
+    s->generated_acpi = false;
     s->autotest_dtb = false;
     s->dw_pcie = false;
     s->my_virtio_blk = false;
@@ -1512,6 +1593,8 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_tablet_backend = g_strdup("vnc");
     s->my_virtio_tablet_evdev_path = g_strdup("");
     s->my_virtio_vnc_listen = g_strdup("127.0.0.1:5915");
+    s->acpi_handoff_addr = XIANGSHAN_KMH_ACPI_HANDOFF_ADDR;
+    s->acpi_handoff_size = XIANGSHAN_KMH_ACPI_HANDOFF_SIZE;
     s->fw_jump_fdt_addr = XIANGSHAN_KMH_FW_JUMP_FDT_ADDR;
     s->autotest_image_addr = XIANGSHAN_KMH_AUTOTEST_IMAGE_ADDR;
     s->autotest_rootfs_addr = XIANGSHAN_KMH_AUTOTEST_ROOTFS_ADDR;
@@ -1549,6 +1632,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                               xiangshan_kmh_set_generated_dtb, NULL, NULL);
     object_class_property_set_description(klass, "generated-dtb",
                                           "Use QEMU-generated device tree");
+
+    object_class_property_add_bool(klass, "generated-acpi",
+                                   xiangshan_kmh_get_generated_acpi,
+                                   xiangshan_kmh_set_generated_acpi);
+    object_class_property_set_description(klass, "generated-acpi",
+                                          "Use QEMU-generated ACPI tables");
 
     object_class_property_add_bool(klass, "autotest-dtb",
                                    xiangshan_kmh_get_autotest_dtb,
@@ -1706,6 +1795,10 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
     object_class_property_set_description(klass, "my-virtio-vnc-listen",
                                           "Listen address for backend VNC server, host:port");
 
+    XIANGSHAN_KMH_UINT64_PROP("acpi-handoff-addr", acpi_handoff_addr,
+                              "DDR base address for generated ACPI handoff");
+    XIANGSHAN_KMH_UINT64_PROP("acpi-handoff-size", acpi_handoff_size,
+                              "DDR size for generated ACPI handoff");
     XIANGSHAN_KMH_UINT64_PROP("fw-jump-fdt-addr", fw_jump_fdt_addr,
                               "Generated DTB load address for fw_jump boot");
     XIANGSHAN_KMH_UINT64_PROP("autotest-image-addr", autotest_image_addr,

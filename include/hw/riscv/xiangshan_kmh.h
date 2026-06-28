@@ -69,6 +69,7 @@ typedef struct XiangshanKmhState {
     XiangshanKmhSoCState soc;
     OnOffAuto iommu_sys;
     OnOffAuto generated_dtb;
+    bool generated_acpi;
     bool autotest_dtb;
     bool dw_pcie;
     bool my_virtio_blk;
@@ -96,6 +97,8 @@ typedef struct XiangshanKmhState {
     char *my_virtio_tablet_backend;
     char *my_virtio_tablet_evdev_path;
     char *my_virtio_vnc_listen;
+    uint64_t acpi_handoff_addr;
+    uint64_t acpi_handoff_size;
     uint64_t fw_jump_fdt_addr;
     uint64_t autotest_image_addr;
     uint64_t autotest_rootfs_addr;
@@ -158,5 +161,7 @@ enum {
 #define XIANGSHAN_KMH_IMSIC_GUEST_BITS 3
 
 #define XIANGSHAN_KMH_APLIC_NUM_SOURCES 96
+
+void xiangshan_kmh_acpi_setup(XiangshanKmhState *s);
 
 #endif
