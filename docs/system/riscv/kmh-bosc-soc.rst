@@ -117,6 +117,14 @@ Machine options
    会实例化每个被选中 die 上的 PCIe host controller，并在生成的设备树中
    加入对应 PCIe 节点。
 
+   PCIe endpoint 挂到 ``pcie-d<die>-p<port>`` bus。例如在 die0 的 port0
+   上挂一个 NVMe 盘：
+
+   .. code-block:: bash
+
+      -drive file=./kmh-nvme.raw,format=raw,if=none,id=nvme0 \
+      -device nvme,drive=nvme0,serial=kmh-nvme0,bus=pcie-d0-p0
+
 ``iommu-sys=auto|on|off``
    是否启用 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
    ``off``。需要建模 IOMMU MMIO 设备并在生成的设备树中加入

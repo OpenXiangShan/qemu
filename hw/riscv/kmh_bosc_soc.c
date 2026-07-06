@@ -1913,7 +1913,12 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             const hwaddr iopmp_base = kmh_bosc_die_addr(die, pcie_map->iopmp.base);
             DesignwarePCIEHost *host = &s->pcie[die][port];
             g_autofree char *child_name = g_strdup_printf("pcie-d%d-p%d", die, port);
-            g_autofree char *bus_name = g_strdup_printf("pcie-d%d-p%d", die, port);
+            g_autofree char *root_bus_name =
+                g_strdup_printf("pcie-d%d-p%d-root", die, port);
+            g_autofree char *sec_bus_name =
+                g_strdup_printf("pcie-d%d-p%d", die, port);
+            g_autofree char *root_bus_path =
+                g_strdup_printf("%04x:00", kmh_bosc_pcie_domain(die, port));
             g_autofree char *dbi_rest_name =
                 g_strdup_printf("kmh-bosc-pcie-d%d-p%d-dbi-rest", die, port);
             g_autofree char *cfg_name =
@@ -1928,7 +1933,9 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
 
             object_initialize_child(OBJECT(MACHINE(s)), child_name, host,
                                     TYPE_DESIGNWARE_PCIE_HOST);
-            qdev_prop_set_string(DEVICE(host), "root-bus-name", bus_name);
+            qdev_prop_set_string(DEVICE(host), "root-bus-name", root_bus_name);
+            qdev_prop_set_string(DEVICE(host), "sec-bus-name", sec_bus_name);
+            qdev_prop_set_string(DEVICE(host), "root-bus-path", root_bus_path);
 
             pcie = SYS_BUS_DEVICE(host);
             sysbus_realize(pcie, &error_fatal);

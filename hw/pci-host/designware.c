@@ -408,7 +408,7 @@ static void designware_pcie_root_realize(PCIDevice *dev, Error **errp)
     const uint64_t dummy_size = 4;
     size_t i;
 
-    br->bus_name  = "dw-pcie";
+    br->bus_name = host->sec_bus_name ? host->sec_bus_name : "dw-pcie";
 
     pci_set_word(dev->config + PCI_COMMAND,
                  PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
@@ -526,7 +526,9 @@ static void designware_pcie_set_irq(void *opaque, int irq_num, int level)
 static const char *
 designware_pcie_host_root_bus_path(PCIHostState *host_bridge, PCIBus *rootbus)
 {
-    return "0000:00";
+    DesignwarePCIEHost *host = DESIGNWARE_PCIE_HOST(host_bridge);
+
+    return host->root_bus_path ? host->root_bus_path : "0000:00";
 }
 
 static const VMStateDescription vmstate_designware_pcie_msi_bank G_GNUC_UNUSED = {
@@ -736,6 +738,8 @@ static const VMStateDescription vmstate_designware_pcie_host G_GNUC_UNUSED = {
 
 static const Property designware_pcie_host_properties[] = {
     DEFINE_PROP_STRING("root-bus-name", DesignwarePCIEHost, root_bus_name),
+    DEFINE_PROP_STRING("sec-bus-name", DesignwarePCIEHost, sec_bus_name),
+    DEFINE_PROP_STRING("root-bus-path", DesignwarePCIEHost, root_bus_path),
 };
 
 static void designware_pcie_host_class_init(ObjectClass *klass,
