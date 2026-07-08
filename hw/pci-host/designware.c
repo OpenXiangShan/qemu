@@ -280,10 +280,31 @@ static void designware_pcie_update_viewport(DesignwarePCIERoot *root,
 {
     const uint64_t target = viewport->target;
     const uint64_t base   = viewport->base;
-    const uint64_t size   = (uint64_t)viewport->limit - base + 1;
-    const bool enabled    = viewport->cr[1] & DESIGNWARE_PCIE_ATU_ENABLE;
+    uint64_t limit = viewport->limit;
+    uint64_t size = 0;
+    bool enabled = viewport->cr[1] & DESIGNWARE_PCIE_ATU_ENABLE;
 
     MemoryRegion *current, *other;
+
+    /*
+     * The unroll iATU LIMIT register modeled here is 32-bit.  Outbound
+     * windows above 4 GiB take their upper address bits from BASE.
+     */
+    if (!viewport->inbound) {
+        limit = (base & ~(uint64_t)UINT32_MAX) | (uint32_t)limit;
+    }
+
+    if (enabled) {
+        if (limit < base) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "%s: invalid iATU window base=0x%" PRIx64
+                          " limit=0x%" PRIx64 "\n",
+                          __func__, base, limit);
+            enabled = false;
+        } else {
+            size = limit - base + 1;
+        }
+    }
 
     if (viewport->cr[0] == DESIGNWARE_PCIE_ATU_TYPE_MEM) {
         current = &viewport->mem;
