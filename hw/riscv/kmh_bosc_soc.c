@@ -765,35 +765,6 @@ static void kmh_bosc_release_die_harts(KmhBoscState *s, int die)
         return;
     }
 
-    if (kmh_bosc_boot_from_mcu(s)) {
-        for (hart = 0; hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
-            int hartid;
-            hwaddr resetvec;
-
-            if (!kmh_bosc_app_hart_selected(s, die, hart)) {
-                continue;
-            }
-
-            hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
-            resetvec = kmh_bosc_sysctrl_get_reset_vec(s, die, hart);
-
-            error_report("kmh-bosc: release die%d hart%d resetvec=%#" PRIx64,
-                         die, hartid, (uint64_t)resetvec);
-            kmh_bosc_prepare_release_app_hart(s, hartid, resetvec);
-        }
-
-        for (hart = 0; hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
-            if (!kmh_bosc_app_hart_selected(s, die, hart)) {
-                continue;
-            }
-
-            kmh_bosc_resume_app_hart(s,
-                                     die * KMH_BOSC_APP_HARTS_PER_DIE +
-                                     hart);
-        }
-        return;
-    }
-
     for (hart = 0; hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
         int hartid;
         hwaddr resetvec;
@@ -805,8 +776,6 @@ static void kmh_bosc_release_die_harts(KmhBoscState *s, int die)
         hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
         resetvec = kmh_bosc_sysctrl_get_reset_vec(s, die, hart);
 
-        error_report("kmh-bosc: release die%d hart%d resetvec=%#" PRIx64,
-                     die, hartid, (uint64_t)resetvec);
         kmh_bosc_prepare_release_app_hart(s, hartid, resetvec);
     }
 
