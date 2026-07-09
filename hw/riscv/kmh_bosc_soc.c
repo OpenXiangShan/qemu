@@ -6,6 +6,7 @@
  */
 
 #include "qemu/osdep.h"
+#include CONFIG_DEVICES
 #include "qemu/cutils.h"
 #include "qemu/datadir.h"
 #include "qemu/error-report.h"
@@ -28,6 +29,9 @@
 #include "hw/pci-host/designware.h"
 #include "hw/pci/pci.h"
 #include "hw/riscv/boot.h"
+#ifdef CONFIG_ACPI
+#include "hw/riscv/kmh_bosc_acpi.h"
+#endif
 #include "hw/riscv/iommu.h"
 #include "hw/riscv/riscv_hart.h"
 #include "system/address-spaces.h"
@@ -95,6 +99,8 @@
 #define KMH_BOSC_AUTO_TEST_WORKLOAD_ADDR_DEFAULT \
                                              0x00000003e0000000ULL
 #define KMH_BOSC_AUTO_TEST_WORKLOAD_SIZE   0x0000000080000000ULL
+#define KMH_BOSC_ACPI_HANDOFF_ADDR_DEFAULT 0x0000000090200000ULL
+#define KMH_BOSC_ACPI_HANDOFF_SIZE_DEFAULT 0x0000000000020000ULL
 #define KMH_BOSC_AUTO_TEST_BOOTARGS        \
     "console=ttyS0,115200 earlycon loglevel=8 " \
     "drm.debug=0x2 amdgpu.cik=1 amdgpu.si=1 amdgpu.dpm=0 " \
@@ -256,9 +262,12 @@ struct KmhBoscState {
     uint32_t die_mask;
     uint32_t core_mask[KMH_BOSC_DIES];
     bool dw_pcie;
+    bool generated_acpi;
     OnOffAuto iommu_sys;
     OnOffAuto generated_dtb;
     bool autotest_dtb;
+    uint64_t acpi_handoff_addr;
+    uint64_t acpi_handoff_size;
     uint64_t autotest_trigger_addr;
     uint64_t autotest_rootfs_addr;
     uint64_t autotest_workload_addr;
@@ -477,6 +486,7 @@ static void kmh_bosc_power_off_unselected_app_harts(KmhBoscState *s)
 #define KMH_BOSC_SYSCTRL_RST_VEC_STRIDE       0x8
 #define KMH_BOSC_SYSCTRL_REG_MASK_16          0x0000ffffU
 #define KMH_BOSC_SYSCTRL_RST_VEC_MASK         0x00ffffffU
+#define KMH_BOSC_SYSCTRL_DEFAULT_RST_VEC_HIGH 0x2
 #define KMH_BOSC_SYSCTRL_HIGH_ADDR_CFG_MASK   0x0001ffffU
 
 static void kmh_bosc_sysctrl_reset(void *opaque)
@@ -491,7 +501,8 @@ static void kmh_bosc_sysctrl_reset(void *opaque)
     memset(sysctrl->mcu_rsvd, 0, sizeof(sysctrl->mcu_rsvd));
 
     for (hart = 0; hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
-        sysctrl->rst_vec_high[hart] = 0x2;
+        sysctrl->rst_vec_high[hart] =
+            KMH_BOSC_SYSCTRL_DEFAULT_RST_VEC_HIGH;
     }
 
     sysctrl->cpu_iso_en = 0;
@@ -964,6 +975,32 @@ static void kmh_bosc_add_pcie_irq_map(void *fdt, const char *node_path,
                            0x1800, 0, 0, 0x7);
 }
 
+static void kmh_bosc_fdt_ensure_reserved_memory(void *fdt)
+{
+    qemu_fdt_add_path(fdt, "/reserved-memory");
+    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#address-cells", 2);
+    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#size-cells", 2);
+    qemu_fdt_setprop(fdt, "/reserved-memory", "ranges", NULL, 0);
+}
+
+static void kmh_bosc_fdt_add_acpi_handoff(KmhBoscState *s)
+{
+    void *fdt = MACHINE(s)->fdt;
+    g_autofree char *node_path = g_strdup_printf(
+        "/reserved-memory/acpi-handoff@%" HWADDR_PRIx,
+        s->acpi_handoff_addr);
+
+    kmh_bosc_fdt_ensure_reserved_memory(fdt);
+    qemu_fdt_add_subnode(fdt, node_path);
+    qemu_fdt_setprop_string(fdt, node_path, "compatible",
+                            "bosc,kmh-acpi-handoff");
+    qemu_fdt_setprop_sized_cells(fdt, node_path, "reg",
+                                 2, s->acpi_handoff_addr,
+                                 2, s->acpi_handoff_size);
+    qemu_fdt_setprop_string(fdt, node_path, "status", "okay");
+    qemu_fdt_setprop(fdt, node_path, "no-map", NULL, 0);
+}
+
 static void kmh_bosc_add_auto_test_fdt_nodes(KmhBoscState *s)
 {
     void *fdt = MACHINE(s)->fdt;
@@ -981,6 +1018,8 @@ static void kmh_bosc_add_auto_test_fdt_nodes(KmhBoscState *s)
         return;
     }
 
+    kmh_bosc_fdt_ensure_reserved_memory(fdt);
+
     trigger_path = g_strdup_printf(
         "/reserved-memory/my_reserved_buffer@%" PRIx64,
         s->autotest_trigger_addr);
@@ -992,11 +1031,6 @@ static void kmh_bosc_add_auto_test_fdt_nodes(KmhBoscState *s)
                                        s->autotest_rootfs_addr);
     workload_pmem_path = g_strdup_printf("/pmem@%" PRIx64,
                                          s->autotest_workload_addr);
-
-    qemu_fdt_add_subnode(fdt, "/reserved-memory");
-    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#address-cells", 2);
-    qemu_fdt_setprop_cell(fdt, "/reserved-memory", "#size-cells", 2);
-    qemu_fdt_setprop(fdt, "/reserved-memory", "ranges", NULL, 0);
 
     qemu_fdt_add_subnode(fdt, trigger_path);
     qemu_fdt_setprop_string(fdt, trigger_path,
@@ -1050,6 +1084,39 @@ static hwaddr kmh_bosc_range_end(hwaddr start, uint64_t size)
     hwaddr end = start + size;
 
     return end < start ? HWADDR_MAX : end;
+}
+
+static bool kmh_bosc_range_in_selected_ddr(KmhBoscState *s, hwaddr start,
+                                           uint64_t size)
+{
+    MachineState *machine = MACHINE(s);
+    hwaddr end;
+
+    if (!size) {
+        return false;
+    }
+
+    end = start + size;
+    if (end <= start) {
+        return false;
+    }
+
+    for (int die = 0; die < KMH_BOSC_DIES; die++) {
+        hwaddr ddr_start;
+        hwaddr ddr_end;
+
+        if (!kmh_bosc_die_selected(s, die)) {
+            continue;
+        }
+
+        ddr_start = kmh_bosc_ddr_base(die);
+        ddr_end = ddr_start + kmh_bosc_die_ram_size(machine);
+        if (start >= ddr_start && end <= ddr_end) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void kmh_bosc_fdt_add_memory(KmhBoscState *s, int die, uint64_t node_size)
@@ -1146,7 +1213,9 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         "simple-bus",
     };
     uint32_t aplic_s_phandles[KMH_BOSC_DIES] = { 0 };
+    uint32_t intc_phandles[KMH_BOSC_TOTAL_APP_HARTS] = { 0 };
     g_autofree uint32_t *imsic_cells = NULL;
+    g_autofree uint32_t *imsic_hart_indexes = NULL;
     g_autofree uint32_t *imsic_m_regs = NULL;
     g_autofree uint32_t *imsic_s_regs = NULL;
     g_autofree uint32_t *aclint_mswi_cells = NULL;
@@ -1155,16 +1224,18 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     const uint64_t node_size = kmh_bosc_die_ram_size(machine);
     const int boot_hartid = kmh_bosc_first_selected_hartid(s);
     const int selected_dies = kmh_bosc_selected_die_count(s);
-    const int selected_harts = kmh_bosc_selected_hart_count(s);
+    const int imsic_targets = selected_dies * KMH_BOSC_APP_HARTS_PER_DIE;
+    const int aclint_targets = selected_dies * KMH_BOSC_APP_HARTS_PER_DIE;
     uint32_t boot_cpu_phandle = 0;
-    int die, hart, idx, sel_idx = 0;
+    int die, hart, idx;
     int reg_idx = 0;
 
-    imsic_cells = g_new0(uint32_t, selected_harts * 2);
+    imsic_cells = g_new0(uint32_t, imsic_targets * 2);
+    imsic_hart_indexes = g_new0(uint32_t, imsic_targets);
     imsic_m_regs = g_new0(uint32_t, selected_dies * 4);
     imsic_s_regs = g_new0(uint32_t, selected_dies * 4);
-    aclint_mswi_cells = g_new0(uint32_t, selected_harts * 2);
-    aclint_mtimer_cells = g_new0(uint32_t, selected_harts * 2);
+    aclint_mswi_cells = g_new0(uint32_t, aclint_targets * 2);
+    aclint_mtimer_cells = g_new0(uint32_t, aclint_targets * 2);
 
     qemu_fdt_setprop_string(fdt, "/", "model", "BOSC KMH multi-die SoC");
     qemu_fdt_setprop_string(fdt, "/", "compatible", "bosc,kmh-bosc-soc");
@@ -1172,6 +1243,9 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     qemu_fdt_setprop_cell(fdt, "/", "#size-cells", 2);
 
     qemu_fdt_add_subnode(fdt, "/chosen");
+    if (boot_hartid >= 0) {
+        qemu_fdt_setprop_cell(fdt, "/chosen", "boot-hartid", boot_hartid);
+    }
     qemu_fdt_add_subnode(fdt, "/aliases");
     qemu_fdt_add_subnode(fdt, "/cpus");
     qemu_fdt_add_subnode(fdt, "/soc");
@@ -1237,20 +1311,29 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                     "riscv,cpu-intc");
             qemu_fdt_setprop(fdt, intc_name, "interrupt-controller", NULL, 0);
             qemu_fdt_setprop_cell(fdt, intc_name, "#interrupt-cells", 1);
+            intc_phandles[idx] = intc_phandle;
 
-            if (kmh_bosc_app_hart_selected(s, die, hart)) {
-                int pos = selected_harts - 1 - sel_idx;
-
-                aclint_mswi_cells[pos * 2] = cpu_to_be32(intc_phandle);
-                aclint_mswi_cells[pos * 2 + 1] = cpu_to_be32(IRQ_M_SOFT);
-                aclint_mtimer_cells[pos * 2] = cpu_to_be32(intc_phandle);
-                aclint_mtimer_cells[pos * 2 + 1] = cpu_to_be32(IRQ_M_TIMER);
-                imsic_cells[pos * 2] = cpu_to_be32(intc_phandle);
-                sel_idx++;
-            }
             if (idx == boot_hartid) {
                 boot_cpu_phandle = cpu_phandle;
             }
+        }
+    }
+
+    idx = 0;
+    for (die = 0; die < KMH_BOSC_DIES; die++) {
+        if (!kmh_bosc_die_selected(s, die)) {
+            continue;
+        }
+
+        for (hart = 0; hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
+            int hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
+            uint32_t intc_phandle = intc_phandles[hartid];
+
+            aclint_mswi_cells[idx * 2] = cpu_to_be32(intc_phandle);
+            aclint_mswi_cells[idx * 2 + 1] = cpu_to_be32(IRQ_M_SOFT);
+            aclint_mtimer_cells[idx * 2] = cpu_to_be32(intc_phandle);
+            aclint_mtimer_cells[idx * 2 + 1] = cpu_to_be32(IRQ_M_TIMER);
+            idx++;
         }
     }
 
@@ -1276,8 +1359,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
             continue;
         }
 
-        aplic_m_phandle = qemu_fdt_alloc_phandle(fdt);
         aplic_s_phandle = qemu_fdt_alloc_phandle(fdt);
+        aplic_m_phandle = qemu_fdt_alloc_phandle(fdt);
         aplic_s_phandles[die] = aplic_s_phandle;
 
         aplic_s_name = g_strdup_printf("/soc/aplic-s@%" HWADDR_PRIx,
@@ -1316,9 +1399,11 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         qemu_fdt_setprop_cell(fdt, aplic_m_name, "riscv,children",
                               aplic_s_phandle);
         qemu_fdt_setprop_cells(fdt, aplic_m_name, "riscv,delegation",
-                               aplic_s_phandle, 0x1, KMH_BOSC_APLIC_NUM_SOURCES);
+                               aplic_s_phandle, 1,
+                               KMH_BOSC_APLIC_NUM_SOURCES);
         qemu_fdt_setprop_cells(fdt, aplic_m_name, "riscv,delegate",
-                               aplic_s_phandle, 0x1, KMH_BOSC_APLIC_NUM_SOURCES);
+                               aplic_s_phandle, 1,
+                               KMH_BOSC_APLIC_NUM_SOURCES);
     }
 
     {
@@ -1335,7 +1420,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                      2, memmap[KMH_BOSC_CLINT].base,
                                      2, RISCV_ACLINT_SWI_SIZE);
         qemu_fdt_setprop(fdt, mswi_name, "interrupts-extended",
-                         aclint_mswi_cells, selected_harts * 2 *
+                         aclint_mswi_cells, aclint_targets * 2 *
                          sizeof(*aclint_mswi_cells));
         qemu_fdt_setprop(fdt, mswi_name, "interrupt-controller", NULL, 0);
         qemu_fdt_setprop_cell(fdt, mswi_name, "#interrupt-cells", 0);
@@ -1352,11 +1437,27 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                RISCV_ACLINT_DEFAULT_MTIMECMP,
             2, RISCV_ACLINT_DEFAULT_MTIME);
         qemu_fdt_setprop(fdt, mtimer_name, "interrupts-extended",
-                         aclint_mtimer_cells, selected_harts * 2 *
+                         aclint_mtimer_cells, aclint_targets * 2 *
                          sizeof(*aclint_mtimer_cells));
     }
 
-    for (idx = 0; idx < selected_harts; idx++) {
+    idx = 0;
+    for (die = 0; die < KMH_BOSC_DIES; die++) {
+        if (!kmh_bosc_die_selected(s, die)) {
+            continue;
+        }
+
+        for (hart = 0; hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
+            int hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
+
+            imsic_cells[idx * 2] = cpu_to_be32(intc_phandles[hartid]);
+            imsic_hart_indexes[idx] = cpu_to_be32(hartid);
+            idx++;
+        }
+    }
+    g_assert(idx == imsic_targets);
+
+    for (idx = 0; idx < imsic_targets; idx++) {
         imsic_cells[idx * 2 + 1] = cpu_to_be32(IRQ_M_EXT);
     }
     for (die = 0; die < KMH_BOSC_DIES; die++) {
@@ -1382,7 +1483,10 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     qemu_fdt_setprop(fdt, "/soc/imsics-m", "interrupt-controller", NULL, 0);
     qemu_fdt_setprop(fdt, "/soc/imsics-m", "msi-controller", NULL, 0);
     qemu_fdt_setprop(fdt, "/soc/imsics-m", "interrupts-extended",
-                     imsic_cells, selected_harts * 2 * sizeof(*imsic_cells));
+                     imsic_cells, imsic_targets * 2 * sizeof(*imsic_cells));
+    qemu_fdt_setprop(fdt, "/soc/imsics-m", "riscv,hart-indexes",
+                     imsic_hart_indexes,
+                     imsic_targets * sizeof(*imsic_hart_indexes));
     qemu_fdt_setprop(fdt, "/soc/imsics-m", "reg",
                      imsic_m_regs, selected_dies * 4 * sizeof(*imsic_m_regs));
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "riscv,hart-index-bits", 4);
@@ -1390,7 +1494,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "riscv,group-index-shift",
                           KMH_BOSC_DIE_SHIFT);
 
-    for (idx = 0; idx < selected_harts; idx++) {
+    for (idx = 0; idx < imsic_targets; idx++) {
         imsic_cells[idx * 2 + 1] = cpu_to_be32(IRQ_S_EXT);
     }
     reg_idx = 0;
@@ -1419,7 +1523,10 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     qemu_fdt_setprop(fdt, "/soc/imsics-s", "interrupt-controller", NULL, 0);
     qemu_fdt_setprop(fdt, "/soc/imsics-s", "msi-controller", NULL, 0);
     qemu_fdt_setprop(fdt, "/soc/imsics-s", "interrupts-extended",
-                     imsic_cells, selected_harts * 2 * sizeof(*imsic_cells));
+                     imsic_cells, imsic_targets * 2 * sizeof(*imsic_cells));
+    qemu_fdt_setprop(fdt, "/soc/imsics-s", "riscv,hart-indexes",
+                     imsic_hart_indexes,
+                     imsic_targets * sizeof(*imsic_hart_indexes));
     qemu_fdt_setprop(fdt, "/soc/imsics-s", "reg",
                      imsic_s_regs, selected_dies * 4 * sizeof(*imsic_s_regs));
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "riscv,hart-index-bits", 4);
@@ -1566,6 +1673,9 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     }
 
     kmh_bosc_add_distance_map(fdt, s);
+    if (s->generated_acpi) {
+        kmh_bosc_fdt_add_acpi_handoff(s);
+    }
     kmh_bosc_add_auto_test_fdt_nodes(s);
 }
 
@@ -2146,6 +2256,23 @@ static void kmh_bosc_validate(MachineState *machine)
         exit(1);
     }
 
+#ifndef CONFIG_ACPI
+    if (s->generated_acpi) {
+        error_report("generated-acpi=on requires CONFIG_ACPI");
+        exit(1);
+    }
+#endif
+
+    if (s->generated_acpi &&
+        (!QEMU_IS_ALIGNED(s->acpi_handoff_addr, 16) ||
+         !QEMU_IS_ALIGNED(s->acpi_handoff_size, 16) ||
+         !kmh_bosc_range_in_selected_ddr(s, s->acpi_handoff_addr,
+                                         s->acpi_handoff_size))) {
+        error_report("acpi-handoff-addr/size must describe a non-empty "
+                     "16-byte aligned range inside selected DDR");
+        exit(1);
+    }
+
     if (kmh_bosc_boot_from_mcu(s)) {
         if (!s->mcu_bios || !*s->mcu_bios) {
             error_report("boot-source=mcu requires -M kmh-bosc-soc,mcu-bios=<raw-bin>");
@@ -2405,6 +2532,20 @@ static void kmh_bosc_set_iommu_sys(Object *obj, Visitor *v,
     visit_type_OnOffAuto(v, name, &s->iommu_sys, errp);
 }
 
+static bool kmh_bosc_get_generated_acpi(Object *obj, Error **errp)
+{
+    KmhBoscState *s = KMH_BOSC_MACHINE(obj);
+
+    return s->generated_acpi;
+}
+
+static void kmh_bosc_set_generated_acpi(Object *obj, bool value, Error **errp)
+{
+    KmhBoscState *s = KMH_BOSC_MACHINE(obj);
+
+    s->generated_acpi = value;
+}
+
 static bool kmh_bosc_get_dw_pcie(Object *obj, Error **errp)
 {
     KmhBoscState *s = KMH_BOSC_MACHINE(obj);
@@ -2457,6 +2598,13 @@ static void kmh_bosc_machine_init(MachineState *machine)
         }
     }
 
+#ifdef CONFIG_ACPI
+    if (s->generated_acpi) {
+        kmh_bosc_acpi_setup(machine, &s->app_cpus, s->die_mask, s->core_mask,
+                            s->acpi_handoff_addr, s->acpi_handoff_size);
+    }
+#endif
+
     if (kmh_bosc_boot_from_mcu(s)) {
         if (machine->fdt) {
             kmh_bosc_load_mcu_fdt(s);
@@ -2480,9 +2628,12 @@ static void kmh_bosc_machine_instance_init(Object *obj)
         s->core_mask[die] = KMH_BOSC_APP_HART_MASK;
     }
     s->dw_pcie = false;
+    s->generated_acpi = false;
     s->iommu_sys = ON_OFF_AUTO_AUTO;
     s->generated_dtb = ON_OFF_AUTO_AUTO;
     s->autotest_dtb = false;
+    s->acpi_handoff_addr = KMH_BOSC_ACPI_HANDOFF_ADDR_DEFAULT;
+    s->acpi_handoff_size = KMH_BOSC_ACPI_HANDOFF_SIZE_DEFAULT;
     s->autotest_trigger_addr = KMH_BOSC_AUTO_TEST_TRIGGER_ADDR_DEFAULT;
     s->autotest_rootfs_addr = KMH_BOSC_AUTO_TEST_ROOTFS_ADDR_DEFAULT;
     s->autotest_workload_addr = KMH_BOSC_AUTO_TEST_WORKLOAD_ADDR_DEFAULT;
@@ -2524,6 +2675,12 @@ static void kmh_bosc_machine_instance_init(Object *obj)
     object_property_set_description(obj, "iommu-sys",
                                     "Enable IOMMU platform device");
 
+    object_property_add_bool(obj, "generated-acpi",
+                             kmh_bosc_get_generated_acpi,
+                             kmh_bosc_set_generated_acpi);
+    object_property_set_description(obj, "generated-acpi",
+                                    "Use QEMU-generated ACPI tables");
+
     object_property_add_bool(obj, "dw-pcie",
                              kmh_bosc_get_dw_pcie,
                              kmh_bosc_set_dw_pcie);
@@ -2535,6 +2692,18 @@ static void kmh_bosc_machine_instance_init(Object *obj)
                              kmh_bosc_set_autotest_dtb);
     object_property_set_description(obj, "autotest-dtb",
                                     "Add automated-test reserved-memory, pmem, and bootargs nodes to the generated FDT");
+
+    object_property_add_uint64_ptr(obj, "acpi-handoff-addr",
+                                   &s->acpi_handoff_addr,
+                                   OBJ_PROP_FLAG_READWRITE);
+    object_property_set_description(obj, "acpi-handoff-addr",
+                                    "DDR base address for generated ACPI handoff");
+
+    object_property_add_uint64_ptr(obj, "acpi-handoff-size",
+                                   &s->acpi_handoff_size,
+                                   OBJ_PROP_FLAG_READWRITE);
+    object_property_set_description(obj, "acpi-handoff-size",
+                                    "DDR size for generated ACPI handoff");
 
     object_property_add_uint64_ptr(obj, "autotest-trigger-addr",
                                    &s->autotest_trigger_addr,

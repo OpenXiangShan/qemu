@@ -112,6 +112,21 @@ Machine options
 
    ``generated-dtb=on`` 不能和外部 ``-dtb`` 同时使用。
 
+``generated-acpi=on|off``
+   是否生成 ACPI 表并把它们写入 DDR handoff 区域，默认 ``off``。打开后
+   QEMU 会生成 RSDP、XSDT、FADT、DSDT、MADT、RHCT 和 SPCR 等基础表。
+   如果同时使用 QEMU 生成设备树，设备树会加入 compatible 为
+   ``bosc,kmh-acpi-handoff`` 的 reserved-memory 节点，UEFI 可通过该节点
+   找到 ACPI handoff 区域。当前路径不使用 ``fw_cfg``。
+
+``acpi-handoff-addr=<addr>``
+   generated ACPI handoff 区域的 DDR 基地址，默认 ``0x90200000``。该地址
+   必须 16-byte 对齐，并且落在被选中 die 的 guest DDR 范围内。
+
+``acpi-handoff-size=<size>``
+   generated ACPI handoff 区域大小，默认 ``0x20000``。该大小必须 16-byte
+   对齐，并且能够容纳 QEMU 生成的 ACPI 数据。
+
 ``dw-pcie=on|off``
    是否启用 DesignWare PCIe host controllers。默认 ``off``。打开后，QEMU
    会实例化每个被选中 die 上的 PCIe host controller，并在生成的设备树中
@@ -199,6 +214,82 @@ QEMU 会把 ``a0`` 设置为 hartid，把 ``a1`` 设置为生成的 FDT 地址�
 上面的普通 firmware 启动默认使用 OpenSBI 里的 DTB。若要改用 QEMU 生成的
 DTB，需要额外设置 ``generated-dtb=on``。
 
+UEFI minimal Linux boot
+-----------------------
+
+``KUNMINGHU-BOSC-SOC`` UEFI 可以通过 PCIe NVMe 上的 FAT 分区加载 Linux
+``Image``。当前最小启动路径只依赖 UART、AIA 中断和内存；``dw-pcie=on``
+用于 UEFI 读取 FAT 盘，UEFI 在进入 Linux 前会隐藏生成 DTB 中的 PCIe 节点，
+QEMU 生成的最小 ACPI 表也不描述 PCIe。
+
+FAT 分区根目录放置 ``Image`` 和 ``startup.nsh``。设备树启动可以使用下面的
+``startup.nsh``：
+
+.. code-block:: text
+
+   fs0:\Image console=ttyS0,115200 earlycon=uart8250,mmio32,0x4000000,115200n8 loglevel=8 ignore_loglevel acpi=off rdinit=/bin/sh
+
+ACPI 启动把 ``acpi=off`` 改成 ``acpi=on``：
+
+.. code-block:: text
+
+   fs0:\Image console=ttyS0,115200 earlycon=uart8250,mmio32,0x4000000,115200n8 loglevel=8 ignore_loglevel acpi=on rdinit=/bin/sh
+
+单 die 设备树启动示例：
+
+.. code-block:: bash
+
+   $ qemu-system-riscv64 \
+       -M kmh-bosc-soc,boot-source=ddr,die-mask=0x1,core-mask=0x1:0x0:0x0:0x0,generated-dtb=on,dw-pcie=on \
+       -smp 64,maxcpus=68 -m 4G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/KUNMINGHUBOSCSOC.fd,addr=0x80200000 \
+       -drive file=/path/to/kmh-bosc-dt-fat.img,format=raw,if=none,id=nvme0 \
+       -device nvme,drive=nvme0,serial=kmh-bosc-nvme0,bus=pcie-d0-p0
+
+多 die 设备树启动只需要调整 die 和 hart 掩码，例如启用 die0/hart0 与
+die1/hart0：
+
+.. code-block:: bash
+
+   $ qemu-system-riscv64 \
+       -M kmh-bosc-soc,boot-source=ddr,die-mask=0x3,core-mask=0x1:0x1:0x0:0x0,generated-dtb=on,dw-pcie=on \
+       -smp 64,maxcpus=68 -m 4G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/KUNMINGHUBOSCSOC.fd,addr=0x80200000 \
+       -drive file=/path/to/kmh-bosc-dt-fat.img,format=raw,if=none,id=nvme0 \
+       -device nvme,drive=nvme0,serial=kmh-bosc-nvme0,bus=pcie-d0-p0
+
+打开 generated ACPI 时，QEMU 把 ACPI 数据写入 DDR handoff 区域；UEFI 通过
+设备树中的 ``bosc,kmh-acpi-handoff`` 节点扫描 RSDP 并安装 ACPI 表。单 die
+ACPI 示例：
+
+.. code-block:: bash
+
+   $ qemu-system-riscv64 \
+       -M kmh-bosc-soc,boot-source=ddr,die-mask=0x1,core-mask=0x1:0x0:0x0:0x0,generated-dtb=on,generated-acpi=on,dw-pcie=on \
+       -smp 64,maxcpus=68 -m 4G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/KUNMINGHUBOSCSOC.fd,addr=0x80200000 \
+       -drive file=/path/to/kmh-bosc-acpi-fat.img,format=raw,if=none,id=nvme0 \
+       -device nvme,drive=nvme0,serial=kmh-bosc-nvme0,bus=pcie-d0-p0
+
+多 die ACPI 示例：
+
+.. code-block:: bash
+
+   $ qemu-system-riscv64 \
+       -M kmh-bosc-soc,boot-source=ddr,die-mask=0x3,core-mask=0x1:0x1:0x0:0x0,generated-dtb=on,generated-acpi=on,dw-pcie=on \
+       -smp 64,maxcpus=68 -m 4G -nographic \
+       -bios /path/to/fw_jump.bin \
+       -device loader,file=/path/to/KUNMINGHUBOSCSOC.fd,addr=0x80200000 \
+       -drive file=/path/to/kmh-bosc-acpi-fat.img,format=raw,if=none,id=nvme0 \
+       -device nvme,drive=nvme0,serial=kmh-bosc-nvme0,bus=pcie-d0-p0
+
+如果不使用 QEMU 生成的设备树，固件传入的 DTB 也必须包含同一个
+``bosc,kmh-acpi-handoff`` 节点，并且 ``reg`` 与 ``acpi-handoff-addr``、
+``acpi-handoff-size`` 一致。
+
 MCU boot
 --------
 
@@ -246,4 +337,5 @@ Limitations
 * 即使只启用一个 application hart，也仍需 ``-smp 64,maxcpus=68``。
 * ``initrd`` 暂不支持。
 * ``generated-dtb=on`` 和 ``autotest-dtb=on`` 不能与外部 ``-dtb`` 组合。
+* ``generated-acpi=on`` 当前覆盖最小系统启动，不包含 PCIe ACPI 描述。
 * ``kmh-bosc-soc`` 当前没有 RISC-V trace encoder 支持。
