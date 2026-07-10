@@ -213,6 +213,7 @@ struct CPUArchState {
 
     /* matrix state */
     uint64_t mreg[8 * RV_TRLEN_MAX * RV_TROWNUM_MAX / 64] QEMU_ALIGNED(16);
+    target_ulong mcfg[8];
     target_ulong mtilem;
     target_ulong mtilen;
     target_ulong mtilek;

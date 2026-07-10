@@ -60,7 +60,7 @@ static void _qemu_mtrace_acc32(const char *tag, void *md,
 }
 #endif /* MMAT_TRACE */
 
-
+/* Matrix Config helpers */
 void helper_msettilek(CPURISCVState *env, target_ulong s1)
 {
     env->mtilek = s1;
@@ -298,17 +298,17 @@ static void mmext_mstore_tile(void *ms3, target_ulong rs1, target_ulong stride,
     }
 }
 
-#define GEN_MMEXT_LD_HELPER(insn, ld_elem, set_elem, ESZ, kind, T)       \
-void HELPER(insn)(void *md, target_ulong rs1, target_ulong rs2,          \
-                  CPURISCVState *env)                                    \
-{                                                                        \
-    mmext_mload_tile(md, rs1, rs2, ld_elem, set_elem, env, ESZ, GETPC(), \
-                     kind, T);                                           \
+#define GEN_MMEXT_LD_HELPER(insn, ld_elem, set_elem, ESZ, kind, T)        \
+static void mmext_##insn(void *md, target_ulong rs1, target_ulong rs2,    \
+                         CPURISCVState *env)                              \
+{                                                                         \
+    mmext_mload_tile(md, rs1, rs2, ld_elem, set_elem, env, ESZ, GETPC(),  \
+                     kind, T);                                            \
 }
 
 #define GEN_MMEXT_ST_HELPER(insn, st_elem, get_elem, ESZ, kind, T)        \
-void HELPER(insn)(void *ms3, target_ulong rs1, target_ulong rs2,          \
-                  CPURISCVState *env)                                     \
+static void mmext_##insn(void *ms3, target_ulong rs1, target_ulong rs2,   \
+                         CPURISCVState *env)                              \
 {                                                                         \
     mmext_mstore_tile(ms3, rs1, rs2, st_elem, get_elem, env, ESZ, GETPC(),\
                       kind, T);                                           \
@@ -375,6 +375,105 @@ GEN_MMEXT_ST_HELPER(mscte16, st_h, get_elem_h, 1, MAT_C, true)
 GEN_MMEXT_ST_HELPER(mscte32, st_w, get_elem_s, 2, MAT_C, true)
 GEN_MMEXT_ST_HELPER(mscte64, st_d, get_elem_d, 3, MAT_C, true)
 
+/* ----------- Unified matrix load/store for XSAI proposal-12 ----------- */
+typedef enum McfgTypeCode {
+    MCFG_TC_INT4      = 0x0,
+    MCFG_TC_UINT4     = 0x1,
+    MCFG_TC_INT8      = 0x2,
+    MCFG_TC_UINT8     = 0x3,
+    MCFG_TC_INT32     = 0x4,
+    MCFG_TC_NVFP4     = 0x5,
+    MCFG_TC_MXFP4     = 0x6,
+    MCFG_TC_FP8E5M2   = 0x7,
+    MCFG_TC_FP8E4M3   = 0x8,
+    MCFG_TC_FP16      = 0x9,
+    MCFG_TC_BF16      = 0xa,
+    MCFG_TC_TF32      = 0xb,
+    MCFG_TC_FP32      = 0xc,
+    MCFG_TC_FP2PACK4  = 0xd,
+    MCFG_TC_FP2PACK5  = 0xe,
+    MCFG_TC_RESERVED  = 0xf,
+} McfgTypeCode;
+
+static bool mmext_decode_mcfg(CPURISCVState *env, uint32_t mreg_idx, uint32_t *type_code)
+{
+    target_ulong cfg;
+    cfg = env->mcfg[mreg_idx];
+    if (cfg > 0xf) {
+        printf("Invalid data type! mcfg value 0x%lx for mreg %u\n", cfg, mreg_idx);
+        return false;
+    }
+    *type_code = cfg & 0xf;
+    return *type_code != MCFG_TC_RESERVED;
+}
+
+static bool mmext_type_to_esz(uint32_t type_code, uint32_t *esz)
+{
+    switch (type_code) {
+    case MCFG_TC_INT8:
+        *esz = 0;
+        return true;
+    case MCFG_TC_FP16:
+    case MCFG_TC_BF16:
+        *esz = 1;
+        return true;
+    case MCFG_TC_INT32:
+    case MCFG_TC_FP32:
+        *esz = 2;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool mmext_mreg_get_esz(CPURISCVState *env, uint32_t mreg_idx, uint32_t *esz)
+{
+    uint32_t type_code;
+    if (!mmext_decode_mcfg(env, mreg_idx, &type_code)) {
+        return false;
+    }
+    return mmext_type_to_esz(type_code, esz);
+}
+
+#define GEN_UNIFIED_LDST_HELPER(NAME, H8, H16, H32, H64)                        \
+void helper_##NAME(void *mreg_ptr, target_ulong rs1, target_ulong rs2,          \
+                   target_ulong mreg_idx, CPURISCVState *env)                   \
+{                                                                               \
+    uint32_t esz;                                                               \
+    if (!mmext_mreg_get_esz(env, (uint32_t)mreg_idx, &esz)) {                   \
+        return;                                                                 \
+    }                                                                           \
+    switch (esz) {                                                              \
+    case 0:                                                                     \
+        mmext_##H8(mreg_ptr, rs1, rs2, env);                                    \
+        return;                                                                 \
+    case 1:                                                                     \
+        mmext_##H16(mreg_ptr, rs1, rs2, env);                                   \
+        return;                                                                 \
+    case 2:                                                                     \
+        mmext_##H32(mreg_ptr, rs1, rs2, env);                                   \
+        return;                                                                 \
+    default:                                                                    \
+        mmext_##H64(mreg_ptr, rs1, rs2, env);                                   \
+        return;                                                                 \
+    }                                                                           \
+}
+
+GEN_UNIFIED_LDST_HELPER(mla,  mlae8,  mlae16,  mlae32, mlae64)
+GEN_UNIFIED_LDST_HELPER(mlb,  mlbe8,  mlbe16,  mlbe32, mlbe64)
+GEN_UNIFIED_LDST_HELPER(mlc,  mlce8,  mlce16,  mlce32, mlce64)
+GEN_UNIFIED_LDST_HELPER(msa,  msae8,  msae16,  msae32, msae64)
+GEN_UNIFIED_LDST_HELPER(msb,  msbe8,  msbe16,  msbe32, msbe64)
+GEN_UNIFIED_LDST_HELPER(msc,  msce8,  msce16,  msce32, msce64)
+
+GEN_UNIFIED_LDST_HELPER(mlat, mlate8, mlate16, mlate32, mlate64)
+GEN_UNIFIED_LDST_HELPER(mlbt, mlbte8, mlbte16, mlbte32, mlbte64)
+GEN_UNIFIED_LDST_HELPER(mlct, mlcte8, mlcte16, mlcte32, mlcte64)
+GEN_UNIFIED_LDST_HELPER(msat, msate8, msate16, msate32, msate64)
+GEN_UNIFIED_LDST_HELPER(msbt, msbte8, msbte16, msbte32, msbte64)
+GEN_UNIFIED_LDST_HELPER(msct, mscte8, mscte16, mscte32, mscte64)
+
+/* Whole Matrix load/store */
 static void mmext_mload_whole(void *md, target_ulong rs1,
                              mmext_ld_fn *ld_elem, mmext_set_elem *set_elem,
                              CPURISCVState *env, uint8_t esz, uintptr_t ra)
@@ -440,6 +539,7 @@ GEN_MMEXT_ST_WHOLE(msme8,  st_b, get_elem_b, 0)
 GEN_MMEXT_ST_WHOLE(msme16, st_h, get_elem_h, 1)
 GEN_MMEXT_ST_WHOLE(msme32, st_w, get_elem_s, 2)
 GEN_MMEXT_ST_WHOLE(msme64, st_d, get_elem_d, 3)
+
 
 /* Matrix Multiplication helpers */
 /* ============================================================
@@ -550,7 +650,8 @@ static void mmext_mmaqa_p(void *md, void *ms1, void *ms2, CPURISCVState *env,
 }
 
 /* half word oprands accumulate to double words */
-static inline int64_t macc_h_ss_d(int16_t a, int16_t b, int64_t sum)
+// XSAI proposal-12 do not support widening macc for 64b now.
+/* static inline int64_t macc_h_ss_d(int16_t a, int16_t b, int64_t sum)
 {
     return sum + a * b;
 }
@@ -610,7 +711,47 @@ static void mmext_mmaqa_h(void *md, void *ms1, void *ms2, CPURISCVState *env,
             }
         }
     }
+} */
+
+/* Integer: mmacc*.w.b map to mmaqa*.b */
+#define GEN_MMACC_B_HELPER(insn, macc_fn_b)                   \
+static void mmext_##insn(void *md, void *ms1, void *ms2,      \
+                         CPURISCVState *env){                  \
+    mmext_mmaqa_b(md, ms1, ms2, env, macc_fn_b);              \
 }
+
+GEN_MMACC_B_HELPER(mmacc_w_b,   macc_b_ss_s)
+GEN_MMACC_B_HELPER(mmaccu_w_b,  macc_b_uu_s)
+GEN_MMACC_B_HELPER(mmaccus_w_b, macc_b_us_s)
+GEN_MMACC_B_HELPER(mmaccsu_w_b, macc_b_su_s)
+
+/* Packed int4: pmmacc*.w.b map to pmmaqa*.b */
+#define GEN_MMACC_P_HELPER(insn, macc_fn_p)                   \
+static void mmext_##insn(void *md, void *ms1, void *ms2,      \
+                         CPURISCVState *env){                  \
+    mmext_mmaqa_p(md, ms1, ms2, env, (macc_fn_p));            \
+}
+
+GEN_MMACC_P_HELPER(pmmacc_w_b,   macc_p_ss_s)
+GEN_MMACC_P_HELPER(pmmaccu_w_b,  macc_p_uu_s)
+GEN_MMACC_P_HELPER(pmmaccus_w_b, macc_p_us_s)
+GEN_MMACC_P_HELPER(pmmaccsu_w_b, macc_p_su_s)
+
+/* Optional 16b->64b integer macc: map to mmaqa*.h */
+/* #define GEN_MMACC_H_HELPER(insn, macc_fn_h)                   \
+static void mmext_##insn(void *md, void *ms1, void *ms2,      \
+                         CPURISCVState *env){                  \
+    mmext_mmaqa_h(md, ms1, ms2, env, (macc_fn_h));            \
+}
+
+GEN_MMACC_H_HELPER(mmacc_d_h,   macc_h_ss_d)
+GEN_MMACC_H_HELPER(mmaccu_d_h,  macc_h_uu_d)
+GEN_MMACC_H_HELPER(mmaccus_d_h, macc_h_us_d)
+GEN_MMACC_H_HELPER(mmaccsu_d_h, macc_h_su_d) */
+
+/* Optional packed formats (bp). For now, reuse the packed int4 path. */
+// GEN_MMACC_P_HELPER(mmacc_w_bp,  macc_p_ss_s)
+// GEN_MMACC_P_HELPER(mmaccu_w_bp, macc_p_uu_s)
 
 /* fmmacc instructions */
 static uint16_t fmacc16(uint16_t a, uint16_t b, uint16_t d, float_status * s)
@@ -628,10 +769,10 @@ static uint32_t fmacc32(uint32_t a, uint32_t b, uint32_t d, float_status *s)
     return float32_muladd(a, b, d, 0, s);
 }
 
-static uint64_t fmacc64(uint64_t a, uint64_t b, uint64_t d, float_status *s)
+/* static uint64_t fmacc64(uint64_t a, uint64_t b, uint64_t d, float_status *s)
 {
     return float64_muladd(a, b, d, 0, s);
-}
+} */
 
 
 static void fmmacc_h_impl(void *md, void *ms1, void *ms2,
@@ -697,7 +838,7 @@ static void fmmacc_s_impl(void *md, void *ms1, void *ms2,
     }
 }
 
-static void fmmacc_d_impl(void *md, void *ms1, void *ms2,
+/* static void fmmacc_d_impl(void *md, void *ms1, void *ms2,
                      CPURISCVState *env){
     uint32_t i, j, k;
     uint64_t temp, psum;
@@ -733,7 +874,7 @@ static void fmmacc_d_impl(void *md, void *ms1, void *ms2,
             }
         }
     }
-}
+} */
 
 /* fwmacc instructions */
 static uint32_t fwmacc16(uint16_t a, uint16_t b, uint32_t d, float_status *s)
@@ -742,11 +883,11 @@ static uint32_t fwmacc16(uint16_t a, uint16_t b, uint32_t d, float_status *s)
                           float16_to_float32(b, true, s), d, 0, s);
 }
 
-static uint64_t fwmacc32(uint32_t a, uint32_t b, uint64_t d, float_status *s)
+/* static uint64_t fwmacc32(uint32_t a, uint32_t b, uint64_t d, float_status *s)
 {
     return float64_muladd(float32_to_float64(a, s),
                           float32_to_float64(b, s), d, 0, s);
-}
+} */
 
 static void fwmmacc_h_impl(void *md, void *ms1, void *ms2,
                       CPURISCVState *env){
@@ -772,7 +913,7 @@ static void fwmmacc_h_impl(void *md, void *ms1, void *ms2,
     }
 }
 
-static void fwmmacc_s_impl(void *md, void *ms1, void *ms2,
+/* static void fwmmacc_s_impl(void *md, void *ms1, void *ms2,
                       CPURISCVState *env){
     uint32_t i, j, k;
     uint64_t temp, psum;
@@ -808,81 +949,42 @@ static void fwmmacc_s_impl(void *md, void *ms1, void *ms2,
             }
         }
     }
-}
-
-/* Integer: mmacc*.w.b map to mmaqa*.b */
-#define GEN_MMACC_B_HELPER(insn, macc_fn_b)                   \
-void HELPER(insn)(void *md, void *ms1, void *ms2,             \
-                  CPURISCVState *env){                        \
-    mmext_mmaqa_b(md, ms1, ms2, env, macc_fn_b);              \
-}
-
-GEN_MMACC_B_HELPER(mmacc_w_b,   macc_b_ss_s)
-GEN_MMACC_B_HELPER(mmaccu_w_b,  macc_b_uu_s)
-GEN_MMACC_B_HELPER(mmaccus_w_b, macc_b_us_s)
-GEN_MMACC_B_HELPER(mmaccsu_w_b, macc_b_su_s)
-
-/* Packed int4: pmmacc*.w.b map to pmmaqa*.b */
-#define GEN_MMACC_P_HELPER(insn, macc_fn_p)                   \
-void HELPER(insn)(void *md, void *ms1, void *ms2,             \
-                  CPURISCVState *env){                        \
-    mmext_mmaqa_p(md, ms1, ms2, env, (macc_fn_p));            \
-}
-
-GEN_MMACC_P_HELPER(pmmacc_w_b,   macc_p_ss_s)
-GEN_MMACC_P_HELPER(pmmaccu_w_b,  macc_p_uu_s)
-GEN_MMACC_P_HELPER(pmmaccus_w_b, macc_p_us_s)
-GEN_MMACC_P_HELPER(pmmaccsu_w_b, macc_p_su_s)
-
-/* Optional 16b->64b integer macc: map to mmaqa*.h */
-#define GEN_MMACC_H_HELPER(insn, macc_fn_h)                   \
-void HELPER(insn)(void *md, void *ms1, void *ms2,             \
-                  CPURISCVState *env){                        \
-    mmext_mmaqa_h(md, ms1, ms2, env, (macc_fn_h));            \
-}
-
-GEN_MMACC_H_HELPER(mmacc_d_h,   macc_h_ss_d)
-GEN_MMACC_H_HELPER(mmaccu_d_h,  macc_h_uu_d)
-GEN_MMACC_H_HELPER(mmaccus_d_h, macc_h_us_d)
-GEN_MMACC_H_HELPER(mmaccsu_d_h, macc_h_su_d)
-
-/* Optional packed formats (bp). For now, reuse the packed int4 path. */
-GEN_MMACC_P_HELPER(mmacc_w_bp,  macc_p_ss_s)
-GEN_MMACC_P_HELPER(mmaccu_w_bp, macc_p_uu_s)
+} */
 
 /* Floating-point: mfmacc.* wrappers.
  *
  * Notes:
  *  - Existing fmmacc helpers implement fp16/fp32/fp64 (non-widen) and use env->fp_status.
  *  - Existing fwmmacc helpers implement widening fp16->fp32 and fp32->fp64.
+ *  - XSAI proposal-12 do not support widening macc for 64b now.
  */
-void helper_mfmacc_h(void *md, void *ms1, void *ms2, CPURISCVState *env)
+static void mmext_mfmacc_h(void *md, void *ms1, void *ms2, CPURISCVState *env)
 {
     fmmacc_h_impl(md, ms1, ms2, env, 0);
 }
 
-void helper_mfmacc_s(void *md, void *ms1, void *ms2, CPURISCVState *env)
+static void mmext_mfmacc_s(void *md, void *ms1, void *ms2, CPURISCVState *env)
 {
     fmmacc_s_impl(md, ms1, ms2, env);
 }
 
-void helper_mfmacc_d(void *md, void *ms1, void *ms2, CPURISCVState *env)
-{
-    fmmacc_d_impl(md, ms1, ms2, env);
-}
+// static void mmext_mfmacc_d(void *md, void *ms1, void *ms2, CPURISCVState *env)
+// {
+//     fmmacc_d_impl(md, ms1, ms2, env);
+// }
 
-void helper_mfmacc_s_h(void *md, void *ms1, void *ms2, CPURISCVState *env)
+static void mmext_mfmacc_s_h(void *md, void *ms1, void *ms2, CPURISCVState *env)
 {
     fwmmacc_h_impl(md, ms1, ms2, env);
 }
 
-void helper_mfmacc_d_s(void *md, void *ms1, void *ms2, CPURISCVState *env)
-{
-    fwmmacc_s_impl(md, ms1, ms2, env);
-}
+// static void mmext_mfmacc_d_s(void *md, void *ms1, void *ms2, CPURISCVState *env)
+// {
+//     fwmmacc_s_impl(md, ms1, ms2, env);
+// }
 
 /* BF16 inputs, FP32 accumulator: md = md + bf16(ms1) * bf16(ms2) */
-void helper_mfmacc_s_bf16(void *md, void *ms1, void *ms2, CPURISCVState *env)
+static void mmext_mfmacc_s_bf16(void *md, void *ms1, void *ms2, CPURISCVState *env)
 {
     uint32_t i, j, k;
     uint32_t temp, psum;
@@ -916,7 +1018,7 @@ static inline uint32_t tf32_trunc(uint32_t f32bits)
     return f32bits & 0xFFFFE000u;
 }
 
-void helper_mfmacc_s_tf32(void *md, void *ms1, void *ms2, CPURISCVState *env)
+static void mmext_mfmacc_s_tf32(void *md, void *ms1, void *ms2, CPURISCVState *env)
 {
     uint32_t i, j, k;
     uint32_t temp, psum;
@@ -942,39 +1044,82 @@ void helper_mfmacc_s_tf32(void *md, void *ms1, void *ms2, CPURISCVState *env)
     }
 }
 
-/* FP8 source variants (e4/e5):
- * Provide conservative fallback implementations so the build succeeds even if
- * the target does not yet model float8 precisely. You can refine these later
- * once float8 formats and conversion helpers are integrated.
- */
-void helper_mfmacc_h_e4(void *md, void *ms1, void *ms2, CPURISCVState *env)
-{
-    helper_mfmacc_h(md, ms1, ms2, env);
-}
+/* ------------ Unified mmacc for XSAI proposal-12 ------------ */
 
-void helper_mfmacc_h_e5(void *md, void *ms1, void *ms2, CPURISCVState *env)
+void helper_mmacc(void *md, void *ms1, void *ms2,
+                  target_ulong md_idx, target_ulong ms1_idx,
+                  target_ulong ms2_idx, CPURISCVState *env)
 {
-    helper_mfmacc_h(md, ms1, ms2, env);
-}
+    uint32_t type_a, type_b, type_c;
 
-void helper_mfmacc_bf16_e4(void *md, void *ms1, void *ms2, CPURISCVState *env)
-{
-    helper_mfmacc_h(md, ms1, ms2, env);
-}
+    if (!mmext_decode_mcfg(env, (uint32_t)ms1_idx, &type_a) ||
+        !mmext_decode_mcfg(env, (uint32_t)ms2_idx, &type_b) ||
+        !mmext_decode_mcfg(env, (uint32_t)md_idx, &type_c) ) {
+        return;
+    }
 
-void helper_mfmacc_bf16_e5(void *md, void *ms1, void *ms2, CPURISCVState *env)
-{
-    helper_mfmacc_h(md, ms1, ms2, env);
-}
+    if (type_c == MCFG_TC_INT32) {
+        /* int8/uint8 -> int32 */
+        if (type_a == MCFG_TC_INT8 && type_b == MCFG_TC_INT8) {
+            mmext_mmacc_w_b(md, ms1, ms2, env);
+            return;
+        }
+        if (type_a == MCFG_TC_UINT8 && type_b == MCFG_TC_UINT8) {
+            mmext_mmaccu_w_b(md, ms1, ms2, env);
+            return;
+        }
+        if (type_a == MCFG_TC_UINT8 && type_b == MCFG_TC_INT8) {
+            mmext_mmaccus_w_b(md, ms1, ms2, env);
+            return;
+        }
+        if (type_a == MCFG_TC_INT8 && type_b == MCFG_TC_UINT8) {
+            mmext_mmaccsu_w_b(md, ms1, ms2, env);
+            return;
+        }
 
-void helper_mfmacc_s_e4(void *md, void *ms1, void *ms2, CPURISCVState *env)
-{
-    helper_mfmacc_s(md, ms1, ms2, env);
-}
+        /* packed int4/uint4 -> int32 */
+        if (type_a == MCFG_TC_INT4 && type_b == MCFG_TC_INT4) {
+            mmext_pmmacc_w_b(md, ms1, ms2, env);
+            return;
+        }
+        if (type_a == MCFG_TC_UINT4 && type_b == MCFG_TC_UINT4) {
+            mmext_pmmaccu_w_b(md, ms1, ms2, env);
+            return;
+        }
+        if (type_a == MCFG_TC_UINT4 && type_b == MCFG_TC_INT4) {
+            mmext_pmmaccus_w_b(md, ms1, ms2, env);
+            return;
+        }
+        if (type_a == MCFG_TC_INT4 && type_b == MCFG_TC_UINT4) {
+            mmext_pmmaccsu_w_b(md, ms1, ms2, env);
+            return;
+        }
+    }
 
-void helper_mfmacc_s_e5(void *md, void *ms1, void *ms2, CPURISCVState *env)
-{
-    helper_mfmacc_s(md, ms1, ms2, env);
+    if (type_a == MCFG_TC_FP16 && type_b == MCFG_TC_FP16 && type_c == MCFG_TC_FP16) {
+        mmext_mfmacc_h(md, ms1, ms2, env);
+        return;
+    }
+    if (type_a == MCFG_TC_FP16 && type_b == MCFG_TC_FP16 && type_c == MCFG_TC_FP32) {
+        mmext_mfmacc_s_h(md, ms1, ms2, env);
+        return;
+    }
+    if (type_a == MCFG_TC_BF16 && type_b == MCFG_TC_BF16 && type_c == MCFG_TC_FP32) {
+        mmext_mfmacc_s_bf16(md, ms1, ms2, env);
+        return;
+    }
+    if (type_a == MCFG_TC_TF32 && type_b == MCFG_TC_TF32 && type_c == MCFG_TC_FP32) {
+        mmext_mfmacc_s_tf32(md, ms1, ms2, env);
+        return;
+    }
+    if (type_a == MCFG_TC_FP32 && type_b == MCFG_TC_FP32 && type_c == MCFG_TC_FP32) {
+        mmext_mfmacc_s(md, ms1, ms2, env);
+        return;
+    }
+
+    /* Add more type macc here ... */
+    printf("Unsupported mmacc type combination: A=%u, B=%u, C=%u\n", type_a, type_b, type_c);
+    return;
 }
 
 void HELPER(sync_skip)(CPURISCVState *env) {
