@@ -21,6 +21,7 @@
 #ifndef DESIGNWARE_H
 #define DESIGNWARE_H
 
+#include "hw/pci/pcie_host.h"
 #include "hw/sysbus.h"
 #include "hw/pci/pci_bridge.h"
 #include "qom/object.h"
@@ -81,7 +82,7 @@ struct DesignwarePCIERoot {
 };
 
 struct DesignwarePCIEHost {
-    PCIHostState parent_obj;
+    PCIExpressHost parent_obj;
 
     DesignwarePCIERoot root;
     char *root_bus_name;

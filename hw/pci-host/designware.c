@@ -795,7 +795,7 @@ static const TypeInfo designware_pcie_types[] = {
         .class_init     = designware_pcie_root_bus_class_init,
     }, {
         .name           = TYPE_DESIGNWARE_PCIE_HOST,
-        .parent         = TYPE_PCI_HOST_BRIDGE,
+        .parent         = TYPE_PCIE_HOST_BRIDGE,
         .instance_size  = sizeof(DesignwarePCIEHost),
         .instance_init  = designware_pcie_host_init,
         .class_init     = designware_pcie_host_class_init,
