@@ -28,6 +28,7 @@
 #include "hw/misc/unimp.h"
 #include "hw/pci-host/designware.h"
 #include "hw/pci/pci.h"
+#include "hw/pci/pcie_host.h"
 #include "hw/riscv/boot.h"
 #ifdef CONFIG_ACPI
 #include "hw/riscv/kmh_bosc_acpi.h"
@@ -84,10 +85,12 @@
     (KMH_BOSC_FDT_PCI_ADDR_CELLS + KMH_BOSC_FDT_PCI_INT_CELLS + 1 + \
      KMH_BOSC_FDT_APLIC_INT_CELLS)
 
-#define KMH_BOSC_PCIE_CFG_SIZE            0x10000
+#define KMH_BOSC_PCIE_ECAM_SIZE           PCIE_MMCFG_SIZE_MAX
 #define KMH_BOSC_PCIE_IRQ_STRIDE          6
-#define KMH_BOSC_PCIE_SLV_BUS_BASE        0x0000000000000000ULL
 #define KMH_BOSC_PCIE_MEM_BUS_BASE        0x0000000100000000ULL
+#define KMH_BOSC_PCIE_MEM32_BUS_BASE      0x0000000050000000ULL
+#define KMH_BOSC_PCIE_ROOT_BUS_STRIDE     0x0000000004000000ULL
+#define KMH_BOSC_PCIE_WINDOW_SIZE         0x0000000002000000ULL
 #define KMH_BOSC_IOMMU_MMIO_SIZE          0x1000
 
 #define KMH_BOSC_AUTO_TEST_TRIGGER_ADDR_DEFAULT \
@@ -174,7 +177,7 @@ typedef struct KmhBoscPciePortMemMap {
     MemMapEntry dbi;
     MemMapEntry app;
     MemMapEntry mctp;
-    MemMapEntry slv;
+    MemMapEntry ecam;
     MemMapEntry mem;
 } KmhBoscPciePortMemMap;
 
@@ -184,7 +187,7 @@ static const KmhBoscPciePortMemMap kmh_bosc_pcie_memmap[] = {
         .dbi =   { 0x0000004f00000000ULL, 4 * MiB },
         .app =   { 0x0000004f00400000ULL, 1 * MiB },
         .mctp =  { 0x0000004f00500000ULL, 0x10000 },
-        .slv =   { 0x0000004800000000ULL, 4 * GiB },
+        .ecam =  { 0x0000004800000000ULL, KMH_BOSC_PCIE_ECAM_SIZE },
         .mem =   { 0x0000048000000000ULL, 384 * GiB },
     },
     [1] = {
@@ -192,7 +195,7 @@ static const KmhBoscPciePortMemMap kmh_bosc_pcie_memmap[] = {
         .dbi =   { 0x0000004f00800000ULL, 4 * MiB },
         .app =   { 0x0000004f00c00000ULL, 1 * MiB },
         .mctp =  { 0x0000004f00d00000ULL, 0x10000 },
-        .slv =   { 0x0000004900000000ULL, 4 * GiB },
+        .ecam =  { 0x0000004900000000ULL, KMH_BOSC_PCIE_ECAM_SIZE },
         .mem =   { 0x000004e000000000ULL, 64 * GiB },
     },
     [2] = {
@@ -200,7 +203,7 @@ static const KmhBoscPciePortMemMap kmh_bosc_pcie_memmap[] = {
         .dbi =   { 0x0000004f01000000ULL, 4 * MiB },
         .app =   { 0x0000004f01400000ULL, 1 * MiB },
         .mctp =  { 0x0000004f01500000ULL, 0x10000 },
-        .slv =   { 0x0000004a00000000ULL, 4 * GiB },
+        .ecam =  { 0x0000004a00000000ULL, KMH_BOSC_PCIE_ECAM_SIZE },
         .mem =   { 0x000004f000000000ULL, 64 * GiB },
     },
 };
@@ -337,6 +340,12 @@ static inline int kmh_bosc_pcie_hp_irq(int port)
 static inline int kmh_bosc_pcie_domain(int die, int port)
 {
     return die * KMH_BOSC_PCIE_PER_DIE + port;
+}
+
+static hwaddr kmh_bosc_pcie_mem32_bus_base(int segment)
+{
+    return KMH_BOSC_PCIE_MEM32_BUS_BASE +
+           (hwaddr)segment * KMH_BOSC_PCIE_ROOT_BUS_STRIDE;
 }
 
 static bool kmh_bosc_boot_from_mcu(const KmhBoscState *s)
@@ -1611,9 +1620,13 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
             for (port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
                 const KmhBoscPciePortMemMap *pcie = &kmh_bosc_pcie_memmap[port];
                 const hwaddr dbi_base = kmh_bosc_die_addr(die, pcie->dbi.base);
-                const hwaddr cfg_base = kmh_bosc_die_addr(die, pcie->app.base);
-                const hwaddr slv_base = kmh_bosc_die_addr(die, pcie->slv.base);
+                const hwaddr ecam_base = kmh_bosc_die_addr(die, pcie->ecam.base);
                 const hwaddr mem_base = kmh_bosc_die_addr(die, pcie->mem.base);
+                const int segment = kmh_bosc_pcie_domain(die, port);
+                const hwaddr mem32_bus_base =
+                    kmh_bosc_pcie_mem32_bus_base(segment);
+                const hwaddr mem64_cpu_base =
+                    mem_base + KMH_BOSC_PCIE_WINDOW_SIZE;
                 const int inta_irq = kmh_bosc_pcie_inta_irq(port);
                 g_autofree char *pcie_name =
                     g_strdup_printf("/soc/pci@%" HWADDR_PRIx, dbi_base);
@@ -1627,12 +1640,12 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 qemu_fdt_setprop_string(fdt, pcie_name, "device_type", "pci");
                 qemu_fdt_setprop_cells(fdt, pcie_name, "bus-range", 0, 0xff);
                 qemu_fdt_setprop_cell(fdt, pcie_name, "linux,pci-domain",
-                                      kmh_bosc_pcie_domain(die, port));
+                                      segment);
                 qemu_fdt_setprop_sized_cells(fdt, pcie_name, "reg",
                                              2, dbi_base,
                                              2, pcie->dbi.size,
-                                             2, cfg_base,
-                                             2, KMH_BOSC_PCIE_CFG_SIZE);
+                                             2, ecam_base,
+                                             2, pcie->ecam.size);
                 {
                     static const char *const reg_names[] = { "dbi", "config" };
                     qemu_fdt_setprop_string_array(fdt, pcie_name, "reg-names",
@@ -1641,13 +1654,13 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 }
                 qemu_fdt_setprop_sized_cells(fdt, pcie_name, "ranges",
                                              1, FDT_PCI_RANGE_MMIO,
-                                             2, KMH_BOSC_PCIE_SLV_BUS_BASE,
-                                             2, slv_base,
-                                             2, pcie->slv.size,
+                                             2, mem32_bus_base,
+                                             2, mem_base,
+                                             2, KMH_BOSC_PCIE_WINDOW_SIZE,
                                              1, FDT_PCI_RANGE_MMIO_64BIT,
                                              2, KMH_BOSC_PCIE_MEM_BUS_BASE,
-                                             2, mem_base,
-                                             2, pcie->mem.size);
+                                             2, mem64_cpu_base,
+                                             2, KMH_BOSC_PCIE_WINDOW_SIZE);
                 qemu_fdt_setprop_cell(fdt, pcie_name, "interrupt-parent",
                                       aplic_s_phandles[die]);
                 qemu_fdt_setprop_cell(fdt, pcie_name, "msi-parent",
@@ -1984,10 +1997,15 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
     int die, port;
 
     for (die = 0; die < KMH_BOSC_DIES; die++) {
+        if (!kmh_bosc_die_selected(s, die)) {
+            continue;
+        }
+
         for (port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
             const KmhBoscPciePortMemMap *pcie_map = &kmh_bosc_pcie_memmap[port];
             const hwaddr dbi_base = kmh_bosc_die_addr(die, pcie_map->dbi.base);
-            const hwaddr cfg_base = kmh_bosc_die_addr(die, pcie_map->app.base);
+            const hwaddr app_base = kmh_bosc_die_addr(die, pcie_map->app.base);
+            const hwaddr ecam_base = kmh_bosc_die_addr(die, pcie_map->ecam.base);
             const hwaddr mctp_base = kmh_bosc_die_addr(die, pcie_map->mctp.base);
             const hwaddr iopmp_base = kmh_bosc_die_addr(die, pcie_map->iopmp.base);
             DesignwarePCIEHost *host = &s->pcie[die][port];
@@ -2000,10 +2018,8 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
                 g_strdup_printf("%04x:00", kmh_bosc_pcie_domain(die, port));
             g_autofree char *dbi_rest_name =
                 g_strdup_printf("kmh-bosc-pcie-d%d-p%d-dbi-rest", die, port);
-            g_autofree char *cfg_name =
-                g_strdup_printf("kmh-bosc-pcie-d%d-p%d-config", die, port);
-            g_autofree char *app_rest_name =
-                g_strdup_printf("kmh-bosc-pcie-d%d-p%d-app-rest", die, port);
+            g_autofree char *app_name =
+                g_strdup_printf("kmh-bosc-pcie-d%d-p%d-app", die, port);
             g_autofree char *mctp_name =
                 g_strdup_printf("kmh-bosc-pcie-d%d-p%d-mctp", die, port);
             g_autofree char *iopmp_name =
@@ -2035,15 +2051,12 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
                                qdev_get_gpio_in(s->irqchip[die],
                                                 kmh_bosc_pcie_msi_irq(port)));
             host->pci.address_space.root = get_system_memory();
+            pcie_host_mmcfg_map(PCIE_HOST_BRIDGE(host), ecam_base,
+                                pcie_map->ecam.size);
 
             create_unimplemented_device(dbi_rest_name, dbi_base + 0x1000,
                                         pcie_map->dbi.size - 0x1000);
-            create_unimplemented_device(cfg_name, cfg_base,
-                                        KMH_BOSC_PCIE_CFG_SIZE);
-            create_unimplemented_device(app_rest_name,
-                                        cfg_base + KMH_BOSC_PCIE_CFG_SIZE,
-                                        pcie_map->app.size -
-                                        KMH_BOSC_PCIE_CFG_SIZE);
+            create_unimplemented_device(app_name, app_base, pcie_map->app.size);
             create_unimplemented_device(mctp_name, mctp_base,
                                         pcie_map->mctp.size);
             create_unimplemented_device(iopmp_name, iopmp_base,
@@ -2601,7 +2614,8 @@ static void kmh_bosc_machine_init(MachineState *machine)
 #ifdef CONFIG_ACPI
     if (s->generated_acpi) {
         kmh_bosc_acpi_setup(machine, &s->app_cpus, s->die_mask, s->core_mask,
-                            s->acpi_handoff_addr, s->acpi_handoff_size);
+                            s->acpi_handoff_addr, s->acpi_handoff_size,
+                            s->dw_pcie);
     }
 #endif
 
