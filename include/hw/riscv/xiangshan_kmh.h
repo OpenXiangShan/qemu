@@ -157,7 +157,8 @@ enum {
 #define XIANGSHAN_KMH_CLINT_TIMEBASE_FREQ 1000000
 
 #define XIANGSHAN_KMH_IMSIC_NUM_IDS 255
-#define XIANGSHAN_KMH_IMSIC_NUM_GUESTS 7
+/* Three guest-index bits with five implemented guest interrupt files. */
+#define XIANGSHAN_KMH_IMSIC_NUM_GUESTS 5
 #define XIANGSHAN_KMH_IMSIC_GUEST_BITS 3
 
 #define XIANGSHAN_KMH_APLIC_NUM_SOURCES 96
