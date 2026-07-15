@@ -27,10 +27,12 @@ The ``xiangshan-kunminghu`` machine supports the following devices:
 Boot options
 ------------
 
-本机型当前支持三种常用启动方式：
+本机型当前支持四种常用启动方式：
 
 * ``-kernel Image``：QEMU 使用内置的 KMH OpenSBI
   ``opensbi-riscv64-xiangshan-kmh-fw_dynamic.bin``，并自动生成设备树。
+* ``-accel kvm -cpu host -bios none -kernel Image``：在 RISC-V KVM host
+  上把 Linux 直接加载到 S-mode，不经过内层 OpenSBI。
 * ``-bios fw_jump.bin`` + ``-device loader``：外部 OpenSBI ``fw_jump.bin``
   作为固件，Linux ``Image`` 由 loader 放到指定物理地址，设备树仍由
   QEMU 生成。
@@ -262,6 +264,63 @@ Boot Linux with ``-kernel``
 这个模式只需要 CPU、串口、timer 和中断相关设备即可进入 Linux 命令行。
 如果使用的是自动测试用 ``Image`` 或 initramfs，而没有打开
 ``autotest-dtb=on``，启动日志里出现 ``/dev/pmem0`` 不存在是预期现象。
+
+Boot Linux directly with KVM
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+KVM 模式要求 QEMU 运行在带有 RISC-V KVM 支持的 RISC-V Linux host 上，
+``/dev/kvm`` 必须存在，并且 QEMU 需要用 ``--enable-kvm`` 构建。如果需要
+使用下面示例中的 my-virtio blk 设备，还需要同时使用
+``--enable-my-virtio``。
+
+``xiangshan-kunminghu`` 的 KVM 路径只支持 direct-kernel boot。Linux 直接
+从 S-mode 启动，不加载内层 M-mode OpenSBI。启动时必须使用 ``-kernel``，
+并使用 ``-bios none``；任何其它 ``-bios`` 固件都会被拒绝。推荐显式指定
+``-cpu host``，避免把只用于 TCG 的 ``xiangshan-kunminghu`` CPU model 传给
+KVM。
+
+下面示例通过 my-virtio blk 把 raw ext4 rootfs 提供为 ``/dev/vda``：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,my-virtio-blk=on,my-virtio-blk-image=/path/to/rootfs.ext4 \
+       -accel kvm \
+       -cpu host \
+       -smp 1 -m 4G \
+       -bios none \
+       -kernel /path/to/Image \
+       -append "console=ttyS0,115200 earlycon=sbi root=/dev/vda rootfstype=ext4 rw loglevel=7" \
+       -nographic \
+       -no-reboot
+
+使用带有内置 initramfs 的 ``Image`` 时，可以省略 ``my-virtio-blk``、
+``my-virtio-blk-image`` 和 ``root=/dev/vda``。也可以通过 ``-initrd`` 加载
+单独的 initramfs。
+
+KVM 使用 QEMU 生成的专用 DTB：timebase frequency 来自 KVM vCPU，只描述
+S-mode IMSIC/APLIC，不包含 M-mode IMSIC/APLIC 或 CLINT。Kunminghu 的
+S-IMSIC 使用 3-bit guest index，并实现 5 个 guest interrupt files。启动
+日志中预期可以看到类似输出：
+
+.. code-block:: text
+
+   riscv-imsic: imsics@3b000000: guest-index-bits: 3
+   riscv-aplic 31120000.aplic: 96 interrupts forwarded to MSI base 0x000000003b000000
+   virtio_blk virtio0: [vda]
+
+进行外层 TCG、内层 KVM 的嵌套测试时，不要让两层 Linux 同时写同一个 ext4
+文件系统。先在外层创建临时副本，再把副本传给内层 QEMU：
+
+.. code-block:: bash
+
+   # mkdir -p /mnt/inner-tmp
+   # mount -t tmpfs -o size=1G tmpfs /mnt/inner-tmp
+   # dd if=/dev/pmem0 of=/mnt/inner-tmp/inner-rootfs.ext4 bs=8M
+
+外层和内层都使用 ``-nographic`` 时，默认 ``Ctrl-A`` 转义会冲突。可以给
+内层命令增加 ``-echr 2``，这样使用 ``Ctrl-B x`` 退出内层，使用
+``Ctrl-A x`` 退出外层。
 
 Boot Linux with ``fw_jump.bin``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
