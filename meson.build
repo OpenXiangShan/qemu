@@ -2540,6 +2540,10 @@ config_host_data.set('CONFIG_LINUX_IO_URING', linux_io_uring.found())
 config_host_data.set('CONFIG_LIBPMEM', libpmem.found())
 config_host_data.set('CONFIG_MODULES', enable_modules)
 config_host_data.set('CONFIG_MY_VIRTIO', get_option('my_virtio').enabled())
+if get_option('devproxy').enabled() and host_os == 'windows'
+  error('devproxy requires POSIX Unix-domain socket support')
+endif
+config_host_data.set('CONFIG_DEVPROXY', get_option('devproxy').enabled())
 config_host_data.set('CONFIG_NUMA', numa.found())
 if numa.found()
   config_host_data.set('HAVE_NUMA_HAS_PREFERRED_MANY',
@@ -3342,6 +3346,7 @@ host_kconfig = \
   (have_virtfs ? ['CONFIG_VIRTFS=y'] : []) + \
   (host_os == 'linux' ? ['CONFIG_LINUX=y'] : []) + \
   (get_option('my_virtio').enabled() ? ['CONFIG_MY_VIRTIO=y'] : []) + \
+  (get_option('devproxy').enabled() ? ['CONFIG_DEVPROXY=y'] : []) + \
   (multiprocess_allowed ? ['CONFIG_MULTIPROCESS_ALLOWED=y'] : []) + \
   (vfio_user_server_allowed ? ['CONFIG_VFIO_USER_SERVER_ALLOWED=y'] : []) + \
   (hv_balloon ? ['CONFIG_HV_BALLOON_POSSIBLE=y'] : []) + \
@@ -3763,6 +3768,11 @@ stub_ss = ss.source_set()
 trace_ss = ss.source_set()
 user_ss = ss.source_set()
 util_ss = ss.source_set()
+
+devproxy_ipc = not_found
+if get_option('devproxy').enabled()
+  subdir('third_party/devproxy-ipc')
+endif
 
 # accel modules
 qtest_module_ss = ss.source_set()

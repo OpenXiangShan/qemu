@@ -50,6 +50,9 @@
 #include "qemu/log.h"
 #include "qemu/memalign.h"
 #include "qemu/memfd.h"
+#ifdef CONFIG_DEVPROXY
+#include "system/devproxy-dma.h"
+#endif
 #include "system/memory.h"
 #include "system/ioport.h"
 #include "system/dma.h"
@@ -3124,6 +3127,12 @@ MemTxResult address_space_read_full(AddressSpace *as, hwaddr addr,
     MemTxResult result = MEMTX_OK;
     FlatView *fv;
 
+#ifdef CONFIG_DEVPROXY
+    if (devproxy_dma_address_space(as, addr, len, false, attrs)) {
+        return devproxy_dma_memory_rw(as, addr, attrs, buf, len, false);
+    }
+#endif
+
     if (len > 0) {
         RCU_READ_LOCK_GUARD();
         fv = address_space_to_flatview(as);
@@ -3139,6 +3148,12 @@ MemTxResult address_space_write(AddressSpace *as, hwaddr addr,
 {
     MemTxResult result = MEMTX_OK;
     FlatView *fv;
+
+#ifdef CONFIG_DEVPROXY
+    if (devproxy_dma_address_space(as, addr, len, true, attrs)) {
+        return devproxy_dma_memory_rw(as, addr, attrs, (void *)buf, len, true);
+    }
+#endif
 
     if (len > 0) {
         RCU_READ_LOCK_GUARD();
@@ -3267,6 +3282,9 @@ typedef struct {
     MemoryRegion *mr;
     hwaddr addr;
     size_t len;
+#ifdef CONFIG_DEVPROXY
+    MemTxAttrs attrs;
+#endif
     uint8_t buffer[];
 } BounceBuffer;
 
@@ -3364,6 +3382,12 @@ bool address_space_access_valid(AddressSpace *as, hwaddr addr,
 {
     FlatView *fv;
 
+#ifdef CONFIG_DEVPROXY
+    if (devproxy_dma_address_space(as, addr, len, is_write, attrs)) {
+        return devproxy_dma_access_valid(as, addr, len, is_write, attrs);
+    }
+#endif
+
     RCU_READ_LOCK_GUARD();
     fv = address_space_to_flatview(as);
     return flatview_access_valid(fv, addr, len, is_write, attrs);
@@ -3420,6 +3444,12 @@ void *address_space_map(AddressSpace *as,
         return NULL;
     }
 
+#ifdef CONFIG_DEVPROXY
+    if (devproxy_dma_address_space(as, addr, len, is_write, attrs)) {
+        return devproxy_dma_memory_map(as, addr, plen, is_write, attrs);
+    }
+#endif
+
     l = len;
     RCU_READ_LOCK_GUARD();
     fv = address_space_to_flatview(as);
@@ -3450,6 +3480,9 @@ void *address_space_map(AddressSpace *as,
         bounce->mr = mr;
         bounce->addr = addr;
         bounce->len = l;
+#ifdef CONFIG_DEVPROXY
+        bounce->attrs = attrs;
+#endif
 
         if (!is_write) {
             flatview_read(fv, addr, attrs,
@@ -3477,6 +3510,14 @@ void address_space_unmap(AddressSpace *as, void *buffer, hwaddr len,
     MemoryRegion *mr;
     ram_addr_t addr1;
 
+#ifdef CONFIG_DEVPROXY
+    if (devproxy_dma_address_space(as, 0, 1, is_write,
+                                   MEMTXATTRS_UNSPECIFIED)) {
+        devproxy_dma_memory_unmap(as, buffer, len, is_write, access_len);
+        return;
+    }
+#endif
+
     mr = memory_region_from_host(buffer, &addr1);
     if (mr != NULL) {
         if (is_write) {
@@ -3494,8 +3535,13 @@ void address_space_unmap(AddressSpace *as, void *buffer, hwaddr len,
     assert(bounce->magic == BOUNCE_BUFFER_MAGIC);
 
     if (is_write) {
+#ifdef CONFIG_DEVPROXY
+        address_space_write(as, bounce->addr, bounce->attrs,
+                            bounce->buffer, access_len);
+#else
         address_space_write(as, bounce->addr, MEMTXATTRS_UNSPECIFIED,
                             bounce->buffer, access_len);
+#endif
     }
 
     qatomic_sub(&as->bounce_buffer_size, bounce->len);

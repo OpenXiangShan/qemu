@@ -113,6 +113,7 @@ meson_options_help() {
   printf "%s\n" '  curl            CURL block device driver'
   printf "%s\n" '  curses          curses UI'
   printf "%s\n" '  dbus-display    -display dbus support'
+  printf "%s\n" '  devproxy        split-QEMU device proxy support'
   printf "%s\n" '  dmg             dmg image format support'
   printf "%s\n" '  docs            Documentations build support'
   printf "%s\n" '  dsound          DirectSound sound support'
@@ -306,6 +307,8 @@ _meson_option_parse() {
     --disable-debug-stack-usage) printf "%s" -Ddebug_stack_usage=false ;;
     --enable-debug-tcg) printf "%s" -Ddebug_tcg=true ;;
     --disable-debug-tcg) printf "%s" -Ddebug_tcg=false ;;
+    --enable-devproxy) printf "%s" -Ddevproxy=enabled ;;
+    --disable-devproxy) printf "%s" -Ddevproxy=disabled ;;
     --enable-dmg) printf "%s" -Ddmg=enabled ;;
     --disable-dmg) printf "%s" -Ddmg=disabled ;;
     --docdir=*) quote_sh "-Ddocdir=$2" ;;

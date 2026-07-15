@@ -5,6 +5,9 @@ user_ss.add(files('accel-user.c'))
 
 subdir('tcg')
 if have_system
+  if get_option('devproxy').enabled()
+    subdir('devproxy')
+  endif
   subdir('hvf')
   subdir('qtest')
   subdir('kvm')

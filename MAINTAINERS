@@ -1706,9 +1706,17 @@ F: docs/system/riscv/microblaze-v-generic.rst
 Xiangshan Kunminghu
 M: Ran Wang <wangran@bosc.ac.cn>
 S: Maintained
+F: accel/devproxy/
+F: docs/system/riscv/xiangshan-kunminghu-cosim.rst
 F: docs/system/riscv/xiangshan-kunminghu.rst
+F: hw/misc/devproxy-*.c
 F: hw/riscv/xiangshan_kmh.c
+F: hw/riscv/xiangshan_kmh_cosim.c
+F: include/hw/misc/devproxy-*.h
 F: include/hw/riscv/xiangshan_kmh.h
+F: include/hw/riscv/xiangshan_kmh_cosim.h
+F: include/system/devproxy-*.h
+F: third_party/devproxy-ipc/
 
 RX Machines
 -----------

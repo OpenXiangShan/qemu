@@ -6,6 +6,16 @@ system_ss.add(when: 'CONFIG_ISA_TESTDEV', if_true: files('pc-testdev.c'))
 system_ss.add(when: 'CONFIG_PCI_TESTDEV', if_true: files('pci-testdev.c'))
 system_ss.add(when: 'CONFIG_UNIMP', if_true: files('unimp.c'))
 system_ss.add(when: 'CONFIG_EMPTY_SLOT', if_true: files('empty_slot.c'))
+if get_option('devproxy').enabled()
+  system_ss.add(files(
+    'devproxy-dma-bridge.c',
+    'devproxy-irq-controller.c',
+    'devproxy-irq-proxy.c',
+    'devproxy-mmio-proxy.c',
+    'devproxy-msi-controller.c',
+    'devproxy-pcie-ecam-proxy.c',
+  ), devproxy_ipc)
+endif
 system_ss.add(when: 'CONFIG_LED', if_true: files('led.c'))
 system_ss.add(when: 'CONFIG_PVPANIC_COMMON', if_true: files('pvpanic.c'))
 

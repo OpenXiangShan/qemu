@@ -67,3 +67,6 @@ config MAC_PVG
 
 config MY_VIRTIO
     bool
+
+config DEVPROXY
+    bool
