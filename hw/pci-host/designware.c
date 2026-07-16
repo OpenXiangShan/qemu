@@ -25,6 +25,7 @@
 #include "hw/pci/msi.h"
 #include "hw/pci/pci_bridge.h"
 #include "hw/pci/pci_host.h"
+#include "hw/pci/pcie_host.h"
 #include "hw/pci/pcie_port.h"
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
@@ -47,8 +48,11 @@
 #define DESIGNWARE_PCIE_ATU_REGION_INBOUND         BIT(31)
 #define DESIGNWARE_PCIE_ATU_CR1                    0x904
 #define DESIGNWARE_PCIE_ATU_TYPE_MEM               (0x0 << 0)
+#define DESIGNWARE_PCIE_ATU_TYPE_CFG0              (0x4 << 0)
+#define DESIGNWARE_PCIE_ATU_TYPE_CFG1              (0x5 << 0)
 #define DESIGNWARE_PCIE_ATU_CR2                    0x908
 #define DESIGNWARE_PCIE_ATU_ENABLE                 BIT(31)
+#define DESIGNWARE_PCIE_ATU_CFG_SHIFT_MODE_ENABLE  BIT(28)
 #define DESIGNWARE_PCIE_ATU_LOWER_BASE             0x90C
 #define DESIGNWARE_PCIE_ATU_UPPER_BASE             0x910
 #define DESIGNWARE_PCIE_ATU_LIMIT                  0x914
@@ -230,11 +234,26 @@ static uint64_t designware_pcie_root_data_access(void *opaque, hwaddr addr,
 {
     DesignwarePCIEViewport *viewport = opaque;
     DesignwarePCIERoot *root = viewport->root;
-
-    const uint8_t busnum = DESIGNWARE_PCIE_ATU_BUS(viewport->target);
-    const uint8_t devfn  = DESIGNWARE_PCIE_ATU_DEVFN(viewport->target);
+    uint8_t busnum;
+    uint8_t devfn;
     PCIBus    *pcibus    = pci_get_bus(PCI_DEVICE(root));
-    PCIDevice *pcidev    = pci_find_device(pcibus, busnum, devfn);
+    PCIDevice *pcidev;
+
+    if ((viewport->cr[1] & DESIGNWARE_PCIE_ATU_CFG_SHIFT_MODE_ENABLE) &&
+        (viewport->cr[0] == DESIGNWARE_PCIE_ATU_TYPE_CFG0 ||
+         viewport->cr[0] == DESIGNWARE_PCIE_ATU_TYPE_CFG1)) {
+        hwaddr ecam_addr = (viewport->base + addr) &
+                           (PCIE_MMCFG_SIZE_MAX - 1);
+
+        busnum = PCIE_MMCFG_BUS(ecam_addr);
+        devfn = PCIE_MMCFG_DEVFN(ecam_addr);
+        addr = PCIE_MMCFG_CONFOFFSET(ecam_addr);
+    } else {
+        busnum = DESIGNWARE_PCIE_ATU_BUS(viewport->target);
+        devfn = DESIGNWARE_PCIE_ATU_DEVFN(viewport->target);
+    }
+
+    pcidev = pci_find_device(pcibus, busnum, devfn);
 
     if (pcidev) {
         addr &= pci_config_size(pcidev) - 1;
