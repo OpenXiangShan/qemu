@@ -315,6 +315,17 @@ static void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
 }
 
 static inline void rollback_instr_counter(uint64_t unexecuted_insns, uint64_t first_pc, uint64_t second_pc) {
+    UInt64Pair hash_key = {.first = first_pc, .second = second_pc};
+    BasicBlockExecCount_t *original_bb_cnt = fetch_bbcnt(&hash_key);
+
+    if (original_bb_cnt == NULL) {
+        fprintf(stderr,
+                "profilingv2: missing BBV entry for rollback: "
+                "begin=0x%lx end=0x%lx unexecuted=%lu\n",
+                first_pc, second_pc, unexecuted_insns);
+        return;
+    }
+
     // global
     profiling_control.profiling_instr_counts -= unexecuted_insns;
     profiling_control.per_bb_vector_instr_count -= unexecuted_insns;
@@ -324,9 +335,6 @@ static inline void rollback_instr_counter(uint64_t unexecuted_insns, uint64_t fi
     fflush(stderr);
 #endif
 
-    // tb
-    UInt64Pair hash_key = {.first = first_pc, .second = second_pc};
-    BasicBlockExecCount_t *original_bb_cnt = fetch_bbcnt(&hash_key);
     original_bb_cnt->per_vector_exec_instr_count -= unexecuted_insns;
 }
 
