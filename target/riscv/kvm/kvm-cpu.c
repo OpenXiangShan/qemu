@@ -1596,6 +1596,23 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
         }
     }
 #endif
+#ifdef CONFIG_KVM_NESTED
+    if (object_property_find(OBJECT(ms), "kvm-nested") &&
+        object_property_get_bool(OBJECT(ms), "kvm-nested", &error_abort)) {
+        int ret;
+
+        if (!kvm_check_extension(s, KVM_CAP_RISCV_NESTED)) {
+            error_report("KVM does not support RISC-V nested virtualization");
+            return -ENOTSUP;
+        }
+        ret = kvm_vm_enable_cap(s, KVM_CAP_RISCV_NESTED, 0);
+        if (ret) {
+            error_report("Unable to enable RISC-V nested virtualization: %s",
+                         strerror(-ret));
+            return ret;
+        }
+    }
+#endif
     return 0;
 }
 

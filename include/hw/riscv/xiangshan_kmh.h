@@ -85,6 +85,9 @@ typedef struct XiangshanKmhState {
 #ifdef CONFIG_KVM_M_MODE
     bool kvm_m_mode;
 #endif
+#ifdef CONFIG_KVM_NESTED
+    bool kvm_nested;
+#endif
     void *my_virtio_ui;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;

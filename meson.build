@@ -2541,6 +2541,7 @@ config_host_data.set('CONFIG_LIBPMEM', libpmem.found())
 config_host_data.set('CONFIG_MODULES', enable_modules)
 config_host_data.set('CONFIG_MY_VIRTIO', get_option('my_virtio').enabled())
 config_host_data.set('CONFIG_KVM_M_MODE', get_option('kvm_m_mode').enabled())
+config_host_data.set('CONFIG_KVM_NESTED', get_option('kvm_nested').enabled())
 if get_option('devproxy').enabled() and host_os == 'windows'
   error('devproxy requires POSIX Unix-domain socket support')
 endif
@@ -4832,6 +4833,7 @@ summary_info = {}
 if have_system
   summary_info += {'KVM support':       config_all_accel.has_key('CONFIG_KVM')}
   summary_info += {'KVM M-mode support': get_option('kvm_m_mode').enabled()}
+  summary_info += {'KVM nested support': get_option('kvm_nested').enabled()}
   summary_info += {'HVF support':       config_all_accel.has_key('CONFIG_HVF')}
   summary_info += {'WHPX support':      config_all_accel.has_key('CONFIG_WHPX')}
   summary_info += {'NVMM support':      config_all_accel.has_key('CONFIG_NVMM')}

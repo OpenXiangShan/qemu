@@ -1157,6 +1157,15 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     }
 #endif
 
+#ifdef CONFIG_KVM_NESTED
+    bool kvm_nested = s->kvm_nested;
+
+    if (kvm_nested && !kvm_enabled()) {
+        error_report("'kvm-nested' requires KVM acceleration");
+        exit(1);
+    }
+#endif
+
 #ifdef CONFIG_KVM_M_MODE
     kvm_m_mode = s->kvm_m_mode;
     if (kvm_m_mode && !kvm_enabled()) {
@@ -1224,6 +1233,18 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
                                 TYPE_DESIGNWARE_PCIE_HOST);
     }
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
+
+#ifdef CONFIG_KVM_NESTED
+    if (kvm_nested) {
+        for (int cpu = 0; cpu < machine->smp.cpus; cpu++) {
+            RISCVCPU *vcpu = &s->soc.cpus.harts[cpu];
+
+            /* The actual nested-capable KVM vCPU already exposes H. */
+            riscv_cpu_set_misa_ext(&vcpu->env,
+                                   vcpu->env.misa_ext | RVH);
+        }
+    }
+#endif
 
     /* Register RAM */
     memory_region_add_subregion(system_memory,
@@ -1367,6 +1388,23 @@ static void xiangshan_kmh_set_kvm_m_mode(Object *obj, bool value,
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
 
     s->kvm_m_mode = value;
+}
+#endif
+
+#ifdef CONFIG_KVM_NESTED
+static bool xiangshan_kmh_get_kvm_nested(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->kvm_nested;
+}
+
+static void xiangshan_kmh_set_kvm_nested(Object *obj, bool value,
+                                         Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->kvm_nested = value;
 }
 #endif
 
@@ -1720,6 +1758,9 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
 #ifdef CONFIG_KVM_M_MODE
     s->kvm_m_mode = false;
 #endif
+#ifdef CONFIG_KVM_NESTED
+    s->kvm_nested = false;
+#endif
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
     s->my_virtio_net_network = g_strdup("");
@@ -1785,6 +1826,15 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
     object_class_property_set_description(
         klass, "kvm-m-mode",
         "Start KVM VCPUs in software-emulated RISC-V M-mode");
+#endif
+
+#ifdef CONFIG_KVM_NESTED
+    object_class_property_add_bool(klass, "kvm-nested",
+                                   xiangshan_kmh_get_kvm_nested,
+                                   xiangshan_kmh_set_kvm_nested);
+    object_class_property_set_description(
+        klass, "kvm-nested",
+        "Expose software-emulated RISC-V H extension to KVM guests");
 #endif
 
     object_class_property_add_bool(klass, "generated-acpi",
