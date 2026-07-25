@@ -59,6 +59,7 @@ struct XilinxUARTLite {
     SysBusDevice parent_obj;
 
     EndianMode model_endianness;
+    bool tx_at_rx;
     MemoryRegion mmio;
     CharBackend chr;
     qemu_irq irq;
@@ -149,6 +150,9 @@ uart_write(void *opaque, hwaddr addr,
             break;
 
         case R_TX:
+        case R_RX:
+            if (addr == R_RX && !s->tx_at_rx)
+                break;
             /* XXX this blocks entire thread. Rewrite to use
              * qemu_chr_fe_write and background I/O callbacks */
             qemu_chr_fe_write_all(&s->chr, &ch, 1);
@@ -183,6 +187,7 @@ static const MemoryRegionOps uart_ops[2] = {
 
 static const Property xilinx_uartlite_properties[] = {
     DEFINE_PROP_ENDIAN_NODEFAULT("endianness", XilinxUARTLite, model_endianness),
+    DEFINE_PROP_BOOL("tx-at-rx", XilinxUARTLite, tx_at_rx, false),
     DEFINE_PROP_CHR("chardev", XilinxUARTLite, chr),
 };
 
