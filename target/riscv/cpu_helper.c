@@ -27,6 +27,8 @@
 #include "exec/page-protection.h"
 #include "exec/target_page.h"
 #include "system/memory.h"
+#include "system/cpus.h"
+#include "system/runstate.h"
 #include "instmap.h"
 #include "tcg/tcg-op.h"
 #include "accel/tcg/cpu-ops.h"
@@ -2191,6 +2193,14 @@ void riscv_cpu_do_interrupt(CPUState *cs)
     }
 
     if (!async) {
+        if (cause == RISCV_EXCP_ILLEGAL_INST &&
+            env->bins == 0x0005006b &&
+            riscv_cpu_cfg(env)->bosc_debug_inst) {
+            qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
+            cpu_stop_current();
+            return;
+        }
+
         /* set tval to badaddr for traps with address information */
         switch (cause) {
 #ifdef CONFIG_TCG

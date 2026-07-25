@@ -122,6 +122,9 @@ BOOL_FIELD(ext_zic64b)
 BOOL_FIELD(ext_ssstateen)
 BOOL_FIELD(ext_sha)
 
+/* Xiangshan/BOSC bare-metal test exit instruction handling. */
+BOOL_FIELD(bosc_debug_inst)
+
 /*
  * Always 'true' booleans for named features
  * TCG always implement/can't be user disabled,

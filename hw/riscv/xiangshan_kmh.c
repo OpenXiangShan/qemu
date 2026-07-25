@@ -202,6 +202,7 @@ static XilinxUARTLite *uartlite_init(hwaddr base, qemu_irq irq, Chardev *chr)
 static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
+    XiangshanKmhState *machine = XIANGSHAN_KMH_MACHINE(ms);
     XiangshanKmhSoCState *s = XIANGSHAN_KMH_SOC(dev);
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
     MemoryRegion *system_memory = get_system_memory();
@@ -211,6 +212,17 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     qdev_prop_set_uint32(DEVICE(&s->cpus), "hartid-base", 0);
     qdev_prop_set_string(DEVICE(&s->cpus), "cpu-type", ms->cpu_type);
     sysbus_realize(SYS_BUS_DEVICE(&s->cpus), &error_fatal);
+
+    /*
+     * Sting uses 0x5006b as a platform-specific simulator exit.  An
+     * autotest machine hosts another QEMU/KVM instance, so its outer TCG
+     * CPU must let an inner guest's instruction trap reach KVM instead of
+     * shutting down the whole outer machine.
+     */
+    for (uint32_t i = 0; i < num_harts; i++) {
+        RISCV_CPU(cpu_by_arch_id(i))->cfg.bosc_debug_inst =
+            !machine->autotest_dtb;
+    }
 
     /* AIA */
     s->irqchip = xiangshan_kmh_create_aia(num_harts);
