@@ -135,6 +135,7 @@ meson_options_help() {
   printf "%s\n" '  jack            JACK sound support'
   printf "%s\n" '  keyring         Linux keyring support'
   printf "%s\n" '  kvm             KVM acceleration support'
+  printf "%s\n" '  kvm-m-mode      RISC-V KVM software M-mode support'
   printf "%s\n" '  l2tpv3          l2tpv3 network backend support'
   printf "%s\n" '  libcbor         libcbor support'
   printf "%s\n" '  libdaxctl       libdaxctl support'
@@ -364,6 +365,8 @@ _meson_option_parse() {
     --disable-keyring) printf "%s" -Dkeyring=disabled ;;
     --enable-kvm) printf "%s" -Dkvm=enabled ;;
     --disable-kvm) printf "%s" -Dkvm=disabled ;;
+    --enable-kvm-m-mode) printf "%s" -Dkvm_m_mode=enabled ;;
+    --disable-kvm-m-mode) printf "%s" -Dkvm_m_mode=disabled ;;
     --enable-l2tpv3) printf "%s" -Dl2tpv3=enabled ;;
     --disable-l2tpv3) printf "%s" -Dl2tpv3=disabled ;;
     --enable-libcbor) printf "%s" -Dlibcbor=enabled ;;

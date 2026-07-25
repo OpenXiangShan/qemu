@@ -53,6 +53,8 @@ option('module_upgrades', type : 'boolean', value : false,
        description: 'try to load modules from alternate paths for upgrades')
 option('my_virtio', type : 'feature', value : 'disabled',
        description: 'my-virtio devices and backend library')
+option('kvm_m_mode', type : 'feature', value : 'disabled',
+       description: 'RISC-V KVM software M-mode support')
 option('devproxy', type : 'feature', value : 'disabled',
        description: 'split-QEMU device proxy support')
 option('install_blobs', type : 'boolean', value : true,

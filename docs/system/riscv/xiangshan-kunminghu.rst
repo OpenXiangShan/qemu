@@ -79,6 +79,14 @@ Machine options
    是否在 QEMU 生成的设备树里加入自动测试节点。打开后会隐含需要
    QEMU 生成设备树，并且不能同时使用 ``-dtb``。
 
+``kvm-m-mode=on|off``
+   让 RISC-V KVM vCPU 从软件模拟的 M-mode 启动，默认 ``off``。该属性只有
+   QEMU 配置时使用了 ``--enable-kvm-m-mode`` 才会注册，而且运行时必须同时
+   使用 ``-accel kvm``。打开后 QEMU 会要求 host 提供
+   ``KVM_CAP_RISCV_M_MODE`` 并显式启用 capability；host 不支持时启动失败，
+   不会退回 TCG。没有编译该功能时，请求此属性会返回标准 QOM
+   ``Property 'xiangshan-kunminghu-machine.kvm-m-mode' not found`` 错误。
+
 ``dw-pcie=on|off``
    是否创建 DWC PCIe RC0 设备。默认 ``off``。如果 QEMU 当前使用生成的
    设备树，打开后会在设备树里加入 DWC PCIe RC0 节点；使用外部 ``-dtb``
@@ -247,6 +255,22 @@ configure 时需要显式加 ``--enable-my-virtio``：
 没有打开该选项时，运行时请求 ``my-virtio-*=on`` 会直接报错：
 ``my-virtio support is not compiled in; reconfigure QEMU with --enable-my-virtio``。
 
+KVM software M-mode 也默认不参与编译。用于嵌套测试的 RISC-V host 版本需要
+同时打开 KVM、M-mode 和 my-virtio：
+
+.. code-block:: bash
+
+   $ ./configure \
+       --target-list=riscv64-softmmu \
+       --enable-kvm \
+       --enable-kvm-m-mode \
+       --enable-my-virtio \
+       --disable-werror --disable-docs
+   $ ninja -C build qemu-system-riscv64
+
+如果省略 ``--enable-kvm-m-mode``，普通 TCG 和 KVM direct-S 的编译及运行行为
+保持不变，machine 类型中也不会出现 ``kvm-m-mode`` 属性。
+
 Boot Linux with ``-kernel``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -321,6 +345,68 @@ S-IMSIC 使用 3-bit guest index，并实现 5 个 guest interrupt files。启�
 外层和内层都使用 ``-nographic`` 时，默认 ``Ctrl-A`` 转义会冲突。可以给
 内层命令增加 ``-echr 2``，这样使用 ``Ctrl-B x`` 退出内层，使用
 ``Ctrl-A x`` 退出外层。
+
+Boot M-mode payloads with KVM
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+编译并打开 ``kvm-m-mode`` 后，``-kernel`` 不再表示 direct-S Linux Image，
+而是一个从 DDR 基址 ``0x80000000`` 加载的 M-mode raw payload。QEMU 把 hart
+ID 放在 ``a0``，把当前生成 DTB 的地址放在 ``a1``，并让所有 hart 初始为
+runnable，后续冷启动和 HSM 管理由 OpenSBI 或 payload 自己完成。
+
+这个模式会创建 CLINT、M/S IMSIC 和 M/S APLIC。外设 IRQ 物理连接到 M-APLIC，
+M-APLIC 通过 ``riscv,children`` 和 ``riscv,delegate`` 把 sources 交给
+S-APLIC；现有 S-IMSIC、S-APLIC 和 KVM AIA device 仍然保留。CLINT 与生成
+DTB 的 ``timebase-frequency`` 都使用 KVM vCPU timer frequency，复位后
+``mtime`` 继续使用同一个 KVM timer 时间原点。属性为 ``off`` 的普通 KVM
+仍然只创建和描述 S 级 AIA，不包含 CLINT 或 M 级 AIA。
+
+最小 Hello payload 从 M-mode 配置 PMP 后 ``mret`` 到 S-mode，并通过
+``0x310b0000`` 的 Kunminghu UART 打印标记：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,kvm-m-mode=on \
+       -accel kvm -cpu host -smp 1 -m 128M \
+       -display none -monitor none -serial stdio \
+       -bios none -kernel /path/to/kvm-m-mode-xiangshan-hello.bin \
+       -no-reboot
+
+GOS 的 ``fpga-h`` 镜像把 mysbi 放在 ``0x80000000``、GOS 放在
+``0x80200000``，使用同一 raw payload 路径：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,kvm-m-mode=on \
+       -accel kvm -cpu host -smp 1 -m 512M \
+       -display none -monitor none -serial stdio \
+       -bios none -kernel /path/to/gos/Image.bin \
+       -no-reboot
+
+generic OpenSBI ``fw_payload.bin`` 同样加载到 ``0x80000000``，嵌入的 Linux
+位于 ``0x80200000``，但不嵌入固定 DTB。下面示例通过 my-virtio blk 把 outer
+host 的独立 block device 作为 inner Linux ``/dev/vda``：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M xiangshan-kunminghu,kvm-m-mode=on,my-virtio-blk=on,my-virtio-blk-image=/dev/vdb \
+       -accel kvm -cpu host -smp 1 -m 4G \
+       -display none -monitor none -serial stdio \
+       -bios none -kernel /path/to/fw_payload.bin \
+       -append 'earlycon=sbi console=ttyS0,115200 rdinit=/bin/sh -- -c "if [ ! -b /dev/vda ]; then mknod /dev/vda b 254 0 || exit 1; fi; mkdir -p /newroot && mount -t ext4 -o ro,noload /dev/vda /newroot && exec /sbin/switch_root /newroot /opt/run.sh"' \
+       -no-reboot
+
+这里使用 ``rdinit`` 是因为 release ``Image`` 自带 initramfs；命令直接复用其中
+的 BusyBox，只读挂载独立 inner rootfs 后执行 ``/opt/run.sh``，不修改 release
+``Image`` 或原始 ext4。
+
+以上命令都需要显式 ``-accel kvm``。使用 TCG 请求 ``kvm-m-mode=on`` 会报
+``'kvm-m-mode' requires KVM acceleration``；KVM capability 缺失会报
+``KVM does not support RISC-V software M-mode``。两种情况都会退出，不会
+改变或降级到普通 direct-S 启动。
 
 Boot Linux with ``fw_jump.bin``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

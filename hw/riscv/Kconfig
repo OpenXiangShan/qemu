@@ -129,6 +129,7 @@ config XIANGSHAN_KUNMINGHU
     select RISCV_APLIC
     select RISCV_IMSIC
     select SERIAL_MM
+    select SIFIVE_TEST
     select UNIMP
     select PCI_EXPRESS_XILINX
     select XILINX

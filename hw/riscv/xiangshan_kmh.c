@@ -138,7 +138,8 @@ static void xiangshan_kmh_dw_pcie_init(XiangshanKmhSoCState *s)
     pci_host->bus->iommu_opaque = NULL;
 }
 
-static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts)
+static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts,
+                                             bool kvm_m_mode)
 {
     int i;
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
@@ -146,12 +147,17 @@ static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts)
     DeviceState *aplic_s;
     DeviceState *aplic_m = NULL;
 
-    if (!kvm_enabled()) {
+    if (!kvm_enabled() || kvm_m_mode) {
         /* M-level IMSICs */
         addr = memmap[XIANGSHAN_KMH_IMSIC_M].base;
         for (i = 0; i < num_harts; i++) {
             riscv_imsic_create(addr + i * IMSIC_HART_SIZE(0), i, true,
                                1, XIANGSHAN_KMH_IMSIC_NUM_IDS);
+#ifdef CONFIG_KVM_M_MODE
+            if (kvm_m_mode) {
+                RISCV_CPU(cpu_by_arch_id(i))->cfg.ext_smaia = false;
+            }
+#endif
         }
     }
 
@@ -164,7 +170,7 @@ static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts)
                            XIANGSHAN_KMH_IMSIC_NUM_IDS);
     }
 
-    if (!kvm_enabled()) {
+    if (!kvm_enabled() || kvm_m_mode) {
         /* M-level APLIC */
         aplic_m = riscv_aplic_create(memmap[XIANGSHAN_KMH_APLIC_M].base,
                                      memmap[XIANGSHAN_KMH_APLIC_M].size,
@@ -182,7 +188,7 @@ static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts)
         riscv_aplic_set_kvm_msicfgaddr(RISCV_APLIC(aplic_s), addr);
     }
 
-    return kvm_enabled() ? aplic_s : aplic_m;
+    return kvm_enabled() && !kvm_m_mode ? aplic_s : aplic_m;
 }
 
 static XilinxUARTLite *uartlite_init(hwaddr base, qemu_irq irq, Chardev *chr)
@@ -207,6 +213,11 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
     MemoryRegion *system_memory = get_system_memory();
     uint32_t num_harts = ms->smp.cpus;
+    bool kvm_m_mode = false;
+
+#ifdef CONFIG_KVM_M_MODE
+    kvm_m_mode = s->kvm_m_mode;
+#endif
 
     qdev_prop_set_uint32(DEVICE(&s->cpus), "num-harts", num_harts);
     qdev_prop_set_uint32(DEVICE(&s->cpus), "hartid-base", 0);
@@ -225,7 +236,7 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     }
 
     /* AIA */
-    s->irqchip = xiangshan_kmh_create_aia(num_harts);
+    s->irqchip = xiangshan_kmh_create_aia(num_harts, kvm_m_mode);
     if (kvm_enabled() && riscv_is_kvm_aia_aplic_imsic(true)) {
         kvm_riscv_aia_create(ms, IMSIC_MMIO_GROUP_MIN_SHIFT,
                              XIANGSHAN_KMH_APLIC_NUM_SOURCES,
@@ -245,16 +256,35 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                   qdev_get_gpio_in(DEVICE(s->irqchip), XIANGSHAN_KMH_UART1_IRQ),
                   serial_hd(1));
 
-    if (!kvm_enabled()) {
+    if (!kvm_enabled() || kvm_m_mode) {
+        uint32_t timebase_freq = XIANGSHAN_KMH_CLINT_TIMEBASE_FREQ;
+#ifdef CONFIG_KVM_M_MODE
+        DeviceState *mtimer;
+#endif
+
+#ifdef CONFIG_KVM_M_MODE
+        if (kvm_m_mode) {
+            timebase_freq = kvm_riscv_get_timebase_frequency(
+                &s->cpus.harts[0]);
+        }
+#endif
         /* CLINT */
         riscv_aclint_swi_create(memmap[XIANGSHAN_KMH_CLINT].base,
                                 0, num_harts, false);
-        riscv_aclint_mtimer_create(memmap[XIANGSHAN_KMH_CLINT].base +
-                                   RISCV_ACLINT_SWI_SIZE,
-                                   RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
-                                   0, num_harts, RISCV_ACLINT_DEFAULT_MTIMECMP,
-                                   RISCV_ACLINT_DEFAULT_MTIME,
-                                   XIANGSHAN_KMH_CLINT_TIMEBASE_FREQ, true);
+#ifdef CONFIG_KVM_M_MODE
+        mtimer =
+#endif
+        riscv_aclint_mtimer_create(
+            memmap[XIANGSHAN_KMH_CLINT].base + RISCV_ACLINT_SWI_SIZE,
+            RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
+            0, num_harts, RISCV_ACLINT_DEFAULT_MTIMECMP,
+            RISCV_ACLINT_DEFAULT_MTIME, timebase_freq, true);
+#ifdef CONFIG_KVM_M_MODE
+        if (kvm_m_mode) {
+            riscv_aclint_mtimer_set_time(
+                mtimer, kvm_riscv_get_timer_time(&s->cpus.harts[0]));
+        }
+#endif
     }
 
     /* KVM direct boot requires -bios none and starts directly in DRAM. */
@@ -760,12 +790,17 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     g_autofree uint32_t *imsic_s_cells = g_new0(uint32_t, ms->smp.cpus * 2);
     void *fdt;
     int cpu;
+    bool has_m_mode = !kvm_enabled();
     static const char * const cpu_compat[2] = {
         "bosc,kmh-v2", "riscv"
     };
     static const char * const soc_compat[2] = {
         "bosc,kmh-v2-soc", "simple-bus"
     };
+
+#ifdef CONFIG_KVM_M_MODE
+    has_m_mode |= s->kvm_m_mode;
+#endif
 
     fdt = ms->fdt = create_device_tree(&s->fdt_size);
     if (!fdt) {
@@ -853,13 +888,13 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     qemu_fdt_setprop_cell(fdt, "/soc", "#address-cells", 2);
     qemu_fdt_setprop_cell(fdt, "/soc", "#size-cells", 2);
 
-    if (!kvm_enabled()) {
+    if (has_m_mode) {
         clint_cells = g_new0(uint32_t, ms->smp.cpus * 4);
         imsic_m_cells = g_new0(uint32_t, ms->smp.cpus * 2);
     }
 
     for (cpu = 0; cpu < ms->smp.cpus; cpu++) {
-        if (!kvm_enabled()) {
+        if (has_m_mode) {
             clint_cells[cpu * 4 + 0] = cpu_to_be32(intc_phandles[cpu]);
             clint_cells[cpu * 4 + 1] = cpu_to_be32(IRQ_M_SOFT);
             clint_cells[cpu * 4 + 2] = cpu_to_be32(intc_phandles[cpu]);
@@ -871,7 +906,7 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
         imsic_s_cells[cpu * 2 + 1] = cpu_to_be32(IRQ_S_EXT);
     }
 
-    if (!kvm_enabled()) {
+    if (has_m_mode) {
         g_autofree char *name = g_strdup_printf("/soc/clint@%"HWADDR_PRIx,
             memmap[XIANGSHAN_KMH_CLINT].base);
         static const char * const compat[2] = {
@@ -888,11 +923,11 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
                          ms->smp.cpus * sizeof(uint32_t) * 4);
     }
 
-    if (!kvm_enabled()) {
+    if (has_m_mode) {
         imsic_m_phandle = phandle++;
     }
     imsic_s_phandle = phandle++;
-    if (!kvm_enabled()) {
+    if (has_m_mode) {
         g_autofree char *name = g_strdup_printf("/soc/imsics@%"HWADDR_PRIx,
             memmap[XIANGSHAN_KMH_IMSIC_M].base);
 
@@ -932,7 +967,7 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     }
 
     aplic_s_phandle = phandle++;
-    if (!kvm_enabled()) {
+    if (has_m_mode) {
         aplic_m_phandle = phandle++;
     }
     {
@@ -951,7 +986,7 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
         qemu_fdt_setprop_cell(fdt, name, "msi-parent", imsic_s_phandle);
         qemu_fdt_setprop_cell(fdt, name, "phandle", aplic_s_phandle);
     }
-    if (!kvm_enabled()) {
+    if (has_m_mode) {
         g_autofree char *name = g_strdup_printf("/soc/aplic@%"HWADDR_PRIx,
             memmap[XIANGSHAN_KMH_APLIC_M].base);
 
@@ -1111,12 +1146,21 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     uint64_t kernel_entry = 0;
     RISCVBootInfo boot_info;
     bool generate_dtb;
+    bool kvm_m_mode = false;
     int fdt_size;
     const char *firmware_name;
 
 #ifndef CONFIG_ACPI
     if (s->generated_acpi) {
         error_report("generated-acpi=on requires CONFIG_ACPI");
+        exit(1);
+    }
+#endif
+
+#ifdef CONFIG_KVM_M_MODE
+    kvm_m_mode = s->kvm_m_mode;
+    if (kvm_m_mode && !kvm_enabled()) {
+        error_report("'kvm-m-mode' requires KVM acceleration");
         exit(1);
     }
 #endif
@@ -1155,6 +1199,9 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_keyboard = s->my_virtio_keyboard;
     s->soc.my_virtio_mouse = s->my_virtio_mouse;
     s->soc.my_virtio_tablet = s->my_virtio_tablet;
+#ifdef CONFIG_KVM_M_MODE
+    s->soc.kvm_m_mode = kvm_m_mode;
+#endif
     s->soc.my_virtio_blk_image = s->my_virtio_blk_image;
     s->soc.my_virtio_net_hostfwd = s->my_virtio_net_hostfwd;
     s->soc.my_virtio_net_network = s->my_virtio_net_network;
@@ -1230,8 +1277,9 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     riscv_boot_info_init(&boot_info, &s->soc.cpus);
 
     if (machine->kernel_filename) {
-        kernel_start_addr = riscv_calc_kernel_start_addr(&boot_info,
-                                                         firmware_end_addr);
+        kernel_start_addr = kvm_m_mode ?
+            memmap[XIANGSHAN_KMH_DRAM].base :
+            riscv_calc_kernel_start_addr(&boot_info, firmware_end_addr);
         riscv_load_kernel(machine, &boot_info, kernel_start_addr,
                           kvm_enabled(), NULL);
         kernel_entry = boot_info.image_low_addr;
@@ -1304,6 +1352,23 @@ static void xiangshan_kmh_set_generated_dtb(Object *obj, Visitor *v,
 
     visit_type_OnOffAuto(v, name, &s->generated_dtb, errp);
 }
+
+#ifdef CONFIG_KVM_M_MODE
+static bool xiangshan_kmh_get_kvm_m_mode(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->kvm_m_mode;
+}
+
+static void xiangshan_kmh_set_kvm_m_mode(Object *obj, bool value,
+                                         Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->kvm_m_mode = value;
+}
+#endif
 
 static bool xiangshan_kmh_get_generated_acpi(Object *obj, Error **errp)
 {
@@ -1652,6 +1717,9 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_keyboard = false;
     s->my_virtio_mouse = false;
     s->my_virtio_tablet = false;
+#ifdef CONFIG_KVM_M_MODE
+    s->kvm_m_mode = false;
+#endif
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
     s->my_virtio_net_network = g_strdup("");
@@ -1709,6 +1777,15 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                               xiangshan_kmh_set_generated_dtb, NULL, NULL);
     object_class_property_set_description(klass, "generated-dtb",
                                           "Use QEMU-generated device tree");
+
+#ifdef CONFIG_KVM_M_MODE
+    object_class_property_add_bool(klass, "kvm-m-mode",
+                                   xiangshan_kmh_get_kvm_m_mode,
+                                   xiangshan_kmh_set_kvm_m_mode);
+    object_class_property_set_description(
+        klass, "kvm-m-mode",
+        "Start KVM VCPUs in software-emulated RISC-V M-mode");
+#endif
 
     object_class_property_add_bool(klass, "generated-acpi",
                                    xiangshan_kmh_get_generated_acpi,

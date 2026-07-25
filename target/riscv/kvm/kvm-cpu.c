@@ -57,6 +57,14 @@ void riscv_kvm_aplic_request(void *opaque, int irq, int level)
 }
 
 static bool cap_has_mp_state;
+#ifdef CONFIG_KVM_M_MODE
+static bool kvm_m_mode;
+
+bool kvm_riscv_m_mode_enabled(void)
+{
+    return kvm_m_mode;
+}
+#endif
 
 #define KVM_RISCV_REG_ID_U32(type, idx) (KVM_REG_RISCV | KVM_REG_SIZE_U32 | \
                                          type | idx)
@@ -603,6 +611,16 @@ static int kvm_riscv_get_regs_core(CPUState *cs)
         env->gpr[i] = reg;
     }
 
+#ifdef CONFIG_KVM_M_MODE
+    if (kvm_m_mode) {
+        ret = kvm_get_one_reg(cs, RISCV_CORE_REG(mode), &reg);
+        if (ret) {
+            return ret;
+        }
+        env->priv = reg;
+    }
+#endif
+
     return ret;
 }
 
@@ -627,6 +645,16 @@ static int kvm_riscv_put_regs_core(CPUState *cs)
             return ret;
         }
     }
+
+#ifdef CONFIG_KVM_M_MODE
+    if (kvm_m_mode) {
+        reg = env->priv;
+        ret = kvm_set_one_reg(cs, RISCV_CORE_REG(mode), &reg);
+        if (ret) {
+            return ret;
+        }
+    }
+#endif
 
     return ret;
 }
@@ -834,6 +862,17 @@ uint64_t kvm_riscv_get_timebase_frequency(RISCVCPU *cpu)
 
     return reg;
 }
+
+#ifdef CONFIG_KVM_M_MODE
+uint64_t kvm_riscv_get_timer_time(RISCVCPU *cpu)
+{
+    uint64_t reg;
+
+    KVM_RISCV_GET_TIMER(CPU(cpu), time, reg);
+
+    return reg;
+}
+#endif
 
 static int kvm_riscv_get_regs_vector(CPUState *cs)
 {
@@ -1396,7 +1435,12 @@ int kvm_arch_put_registers(CPUState *cs, int level, Error **errp)
 
     if (KVM_PUT_RESET_STATE == level) {
         RISCVCPU *cpu = RISCV_CPU(cs);
-        if (cs->cpu_index == 0) {
+        bool runnable = cs->cpu_index == 0;
+
+#ifdef CONFIG_KVM_M_MODE
+        runnable |= kvm_m_mode;
+#endif
+        if (runnable) {
             ret = kvm_riscv_sync_mpstate_to_kvm(cpu, KVM_MP_STATE_RUNNABLE);
         } else {
             ret = kvm_riscv_sync_mpstate_to_kvm(cpu, KVM_MP_STATE_STOPPED);
@@ -1533,6 +1577,25 @@ int kvm_arch_get_default_type(MachineState *ms)
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
     cap_has_mp_state = kvm_check_extension(s, KVM_CAP_MP_STATE);
+#ifdef CONFIG_KVM_M_MODE
+    kvm_m_mode = object_property_find(OBJECT(ms), "kvm-m-mode") &&
+                 object_property_get_bool(OBJECT(ms), "kvm-m-mode",
+                                          &error_abort);
+    if (kvm_m_mode) {
+        int ret;
+
+        if (!kvm_check_extension(s, KVM_CAP_RISCV_M_MODE)) {
+            error_report("KVM does not support RISC-V software M-mode");
+            return -ENOTSUP;
+        }
+        ret = kvm_vm_enable_cap(s, KVM_CAP_RISCV_M_MODE, 0);
+        if (ret) {
+            error_report("Unable to enable RISC-V software M-mode: %s",
+                         strerror(-ret));
+            return ret;
+        }
+    }
+#endif
     return 0;
 }
 
@@ -1741,15 +1804,28 @@ void kvm_riscv_reset_vcpu(RISCVCPU *cpu)
     env->gpr[11] = cpu->env.fdt_addr;          /* a1 */
 
     kvm_riscv_reset_regs_csr(env);
+#ifdef CONFIG_KVM_M_MODE
+    if (kvm_m_mode) {
+        env->priv = PRV_M;
+    }
+#endif
 }
 
 void kvm_riscv_set_irq(RISCVCPU *cpu, int irq, int level)
 {
     int ret;
-    unsigned virq = level ? KVM_INTERRUPT_SET : KVM_INTERRUPT_UNSET;
+    unsigned virq;
 
-    if (irq != IRQ_S_EXT) {
-        perror("kvm riscv set irq != IRQ_S_EXT\n");
+    if (irq == IRQ_S_EXT) {
+        virq = level ? KVM_INTERRUPT_SET : KVM_INTERRUPT_UNSET;
+#ifdef CONFIG_KVM_M_MODE
+    } else if (kvm_m_mode && (irq == IRQ_M_SOFT || irq == IRQ_M_TIMER ||
+                             irq == IRQ_M_EXT)) {
+        virq = level ? KVM_RISCV_INTERRUPT_SET(irq) :
+                       KVM_RISCV_INTERRUPT_UNSET(irq);
+#endif
+    } else {
+        error_report("Unsupported RISC-V KVM interrupt %d", irq);
         abort();
     }
 

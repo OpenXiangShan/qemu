@@ -21,6 +21,11 @@
 
 #define KVM_INTERRUPT_SET	-1U
 #define KVM_INTERRUPT_UNSET	-2U
+#define KVM_RISCV_INTERRUPT_UNSET_FLAG	(1U << 31)
+#define KVM_RISCV_INTERRUPT_IRQ_MASK	0xffU
+#define KVM_RISCV_INTERRUPT_SET(irq)	((__u32)(irq))
+#define KVM_RISCV_INTERRUPT_UNSET(irq)	\
+	(KVM_RISCV_INTERRUPT_UNSET_FLAG | (__u32)(irq))
 
 /* for KVM_GET_REGS and KVM_SET_REGS */
 struct kvm_regs {
@@ -66,6 +71,7 @@ struct kvm_riscv_core {
 /* Possible privilege modes for kvm_riscv_core */
 #define KVM_RISCV_MODE_S	1
 #define KVM_RISCV_MODE_U	0
+#define KVM_RISCV_MODE_M	3
 
 /* General CSR registers for KVM_GET_ONE_REG and KVM_SET_ONE_REG */
 struct kvm_riscv_csr {

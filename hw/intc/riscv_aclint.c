@@ -314,11 +314,13 @@ static void riscv_aclint_mtimer_reset_enter(Object *obj, ResetType type)
      */
     RISCVAclintMTimerState *mtimer = RISCV_ACLINT_MTIMER(obj);
 
-    /*
-     * Clear mtime register by writing to 0 it.
-     * Pending mtime interrupts will also be cleared at the same time.
-     */
+    /* Pending mtime interrupts are cleared by the write as well. */
+#ifdef CONFIG_KVM_M_MODE
+    riscv_aclint_mtimer_write(mtimer, mtimer->time_base,
+                              mtimer->time_reset, 8);
+#else
     riscv_aclint_mtimer_write(mtimer, mtimer->time_base, 0, 8);
+#endif
 }
 
 static const VMStateDescription vmstate_riscv_mtimer = {
@@ -403,6 +405,16 @@ DeviceState *riscv_aclint_mtimer_create(hwaddr addr, hwaddr size,
 
     return dev;
 }
+
+#ifdef CONFIG_KVM_M_MODE
+void riscv_aclint_mtimer_set_time(DeviceState *dev, uint64_t time)
+{
+    RISCVAclintMTimerState *mtimer = RISCV_ACLINT_MTIMER(dev);
+
+    mtimer->time_reset = time;
+    riscv_aclint_mtimer_write(mtimer, mtimer->time_base, time, 8);
+}
+#endif
 
 /* CPU read [M|S]SWI register */
 static uint64_t riscv_aclint_swi_read(void *opaque, hwaddr addr,

@@ -32,6 +32,9 @@ typedef struct RISCVAclintMTimerState {
     /*< private >*/
     SysBusDevice parent_obj;
     uint64_t time_delta;
+#ifdef CONFIG_KVM_M_MODE
+    uint64_t time_reset;
+#endif
     uint64_t *timecmp;
     QEMUTimer **timers;
 
@@ -50,6 +53,9 @@ DeviceState *riscv_aclint_mtimer_create(hwaddr addr, hwaddr size,
     uint32_t hartid_base, uint32_t num_harts,
     uint32_t timecmp_base, uint32_t time_base, uint32_t timebase_freq,
     bool provide_rdtime);
+#ifdef CONFIG_KVM_M_MODE
+void riscv_aclint_mtimer_set_time(DeviceState *dev, uint64_t time);
+#endif
 
 #define TYPE_RISCV_ACLINT_SWI "riscv.aclint.swi"
 

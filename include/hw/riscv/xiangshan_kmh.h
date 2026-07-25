@@ -25,6 +25,9 @@ typedef struct XiangshanKmhSoCState {
     /*< public >*/
     RISCVHartArrayState cpus;
     DeviceState *irqchip;
+#ifdef CONFIG_KVM_M_MODE
+    bool kvm_m_mode;
+#endif
     MemoryRegion rom;
     MemoryRegion sram;
     MemoryRegion flash;
@@ -79,6 +82,9 @@ typedef struct XiangshanKmhState {
     bool my_virtio_keyboard;
     bool my_virtio_mouse;
     bool my_virtio_tablet;
+#ifdef CONFIG_KVM_M_MODE
+    bool kvm_m_mode;
+#endif
     void *my_virtio_ui;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;

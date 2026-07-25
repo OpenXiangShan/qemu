@@ -31,5 +31,9 @@ void riscv_kvm_aplic_request(void *opaque, int irq, int level);
 int kvm_riscv_sync_mpstate_to_kvm(RISCVCPU *cpu, int state);
 void riscv_kvm_cpu_finalize_features(RISCVCPU *cpu, Error **errp);
 uint64_t kvm_riscv_get_timebase_frequency(RISCVCPU *cpu);
+#ifdef CONFIG_KVM_M_MODE
+uint64_t kvm_riscv_get_timer_time(RISCVCPU *cpu);
+bool kvm_riscv_m_mode_enabled(void);
+#endif
 
 #endif
