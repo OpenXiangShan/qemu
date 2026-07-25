@@ -244,23 +244,27 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                                    XIANGSHAN_KMH_CLINT_TIMEBASE_FREQ, true);
     }
 
-    /* ROM */
-    memory_region_init_rom(&s->rom, OBJECT(dev), "xiangshan.kunminghu.rom",
-                           memmap[XIANGSHAN_KMH_ROM].size, &error_fatal);
-    memory_region_add_subregion(system_memory,
-                                memmap[XIANGSHAN_KMH_ROM].base, &s->rom);
+    /* KVM direct boot requires -bios none and starts directly in DRAM. */
+    if (!kvm_enabled()) {
+        memory_region_init_rom(&s->rom, OBJECT(dev),
+                               "xiangshan.kunminghu.rom",
+                               memmap[XIANGSHAN_KMH_ROM].size, &error_fatal);
+        memory_region_add_subregion(system_memory,
+                                    memmap[XIANGSHAN_KMH_ROM].base, &s->rom);
 
-    /* SRAM */
-    memory_region_init_ram(&s->sram, OBJECT(dev), "riscv.bosc.kmh.sram",
-                           memmap[XIANGSHAN_KMH_SRAM].size, &error_fatal);
-    memory_region_add_subregion(system_memory,
-                           memmap[XIANGSHAN_KMH_SRAM].base, &s->sram);
+        memory_region_init_ram(&s->sram, OBJECT(dev), "riscv.bosc.kmh.sram",
+                               memmap[XIANGSHAN_KMH_SRAM].size, &error_fatal);
+        memory_region_add_subregion(system_memory,
+                                    memmap[XIANGSHAN_KMH_SRAM].base,
+                                    &s->sram);
 
-    /* FLASH */
-    memory_region_init_rom(&s->flash, NULL, "riscv.bosc.kmh.flash0",
-                           memmap[XIANGSHAN_KMH_FLASH].size, &error_fatal);
-    memory_region_add_subregion(system_memory, memmap[XIANGSHAN_KMH_FLASH].base,
-                                &s->flash);
+        memory_region_init_rom(&s->flash, NULL, "riscv.bosc.kmh.flash0",
+                               memmap[XIANGSHAN_KMH_FLASH].size,
+                               &error_fatal);
+        memory_region_add_subregion(system_memory,
+                                    memmap[XIANGSHAN_KMH_FLASH].base,
+                                    &s->flash);
+    }
 
     if (s->dw_pcie) {
         xiangshan_kmh_dw_pcie_init(s);
