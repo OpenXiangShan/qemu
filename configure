@@ -1979,10 +1979,10 @@ preserve_env() {
 
     if test -n "$envval"
     then
-	echo "$envname='$envval'" >> config.status
-	echo "export $envname" >> config.status
+	printf "%s=%s\n" "$envname" "$(quote_sh "$envval")" >> config.status
+	printf "export %s\n" "$envname" >> config.status
     else
-	echo "unset $envname" >> config.status
+	printf "unset %s\n" "$envname" >> config.status
     fi
 }
 
