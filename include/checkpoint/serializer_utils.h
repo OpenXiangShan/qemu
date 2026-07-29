@@ -52,7 +52,8 @@ static single_core_rvgc_rvv_rvh_memlayout single_core_rvgcvh_default_memlayout =
 };
 
 
-void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_status_buffer, int buffer_size);
+bool serialize_pmem(uint64_t inst_count, int using_gcpt_mmio,
+                    char *hardware_status_buffer, int buffer_size);
 void serializeRegs(int cpu_index, char *buffer, single_core_rvgc_rvv_rvh_memlayout *cpt_percpu_layout, uint64_t all_cpu_num, uint64_t arg_mtime);
 int cpt_header_encode(void *gcpt_mmio, checkpoint_header *cpt_header, single_core_rvgc_rvv_rvh_memlayout *cpt_memlayout);
 

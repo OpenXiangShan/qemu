@@ -92,6 +92,10 @@ typedef struct sync_info{
     bool *early_exit;  // such as wfi
     gint *checkpoint_end;
     gint *waiting;
+
+    /* Leader (last to arrive) takes the checkpoint and advances barrier_gen. */
+    gint barrier_arrive;
+    gint barrier_gen;
 }SyncInfo_t;
 
 enum CheckpointMode{

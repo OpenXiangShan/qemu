@@ -27,7 +27,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-static gint wait_id = 0;
 static uint64_t global_mtime = 0;
 gint simpoint_checkpoint_exit = 0;
 
@@ -35,7 +34,7 @@ gint simpoint_checkpoint_exit = 0;
 
 static void try_sync(NEMUState* ns, uint64_t icount, int cpu_idx,
                              bool exit_sync_period, bool *sync_end);
-__attribute_maybe_unused__ static void
+static bool __attribute_maybe_unused__
 serialize(uint64_t memory_addr, int cpu_idx, int cpus, uint64_t inst_count);
 
 __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* ns, uint64_t icount, int cpu_idx,
@@ -44,14 +43,16 @@ __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* 
 
 static inline void send_fifo(NEMUState *ns){
     ns->q2d_buf.cpt_ready = true;
-    write(ns->q2d_fifo, &ns->q2d_buf, sizeof(Qemu2Detail));
+    ssize_t ret = write(ns->q2d_fifo, &ns->q2d_buf, sizeof(Qemu2Detail));
+    (void)ret;
 }
 
 static inline void read_fifo(NEMUState *ns){
     ns->sync_control_info.info_vaild_periods -= 1;
     if (ns->sync_control_info.info_vaild_periods <= 0) {
-        read(ns->d2q_fifo, &ns->sync_control_info.u_arch_info,
+        ssize_t ret = read(ns->d2q_fifo, &ns->sync_control_info.u_arch_info,
              sizeof(Detail2Qemu));
+        (void)ret;
     }
 }
 
@@ -60,20 +61,11 @@ inline uint64_t simpoint_get_next_instructions(NEMUState *ns)
     GList *first_insns_item = g_list_first(ns->simpoint_info.cpt_instructions);
     if (first_insns_item == NULL) {
         set_simpoint_checkpoint_exit();
-        return LONG_LONG_MAX;
-    } else {
-        if (first_insns_item->data == 0) {
-            ns->simpoint_info.cpt_instructions = g_list_remove(
-                ns->simpoint_info.cpt_instructions,
-                g_list_first(ns->simpoint_info.cpt_instructions)->data);
-            ns->path_manager.checkpoint_path_list = g_list_remove(
-                ns->path_manager.checkpoint_path_list,
-                g_list_first(ns->path_manager.checkpoint_path_list)->data);
-            return LONG_LONG_MAX;
-        }
-        return GPOINTER_TO_UINT(first_insns_item->data) *
-               ns->nemu_args.cpt_interval;
+        return UINT64_MAX;
     }
+
+    return GPOINTER_TO_UINT(first_insns_item->data) *
+           ns->nemu_args.cpt_interval;
 }
 
 MODE_DEF_HELPER(simpoint,
@@ -192,9 +184,6 @@ static void single_try_set_mie(void *env, NEMUState *ns)
     info_report("Notify: disable timmer interrupr");
 }
 
-static void no_try_set_mie(void *env, NEMUState *ns)
-{
-}
 #define NO_PRINT
 
 void set_simpoint_checkpoint_exit(void){
@@ -206,7 +195,7 @@ __attribute__((unused)) static void set_global_mtime(void)
     cpu_physical_memory_read(CLINT_MMIO + CLINT_MTIME, &global_mtime, 8);
 }
 
-__attribute_maybe_unused__ static void
+static bool __attribute_maybe_unused__
 serialize(uint64_t memory_addr, int cpu_idx, int cpus, uint64_t inst_count)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -241,8 +230,8 @@ serialize(uint64_t memory_addr, int cpu_idx, int cpus, uint64_t inst_count)
         cpu_physical_memory_write(memory_addr, hardware_status_buffer,
                                   cpt_header.cpt_offset + 1024 * 1024 * cpus);
     }
-    serialize_pmem(inst_count, false, hardware_status_buffer,
-                   cpt_header.cpt_offset + 1024 * 1024 * cpus);
+    return serialize_pmem(inst_count, false, hardware_status_buffer,
+                          cpt_header.cpt_offset + 1024 * 1024 * cpus);
 }
 
 static inline int sync_multicore(NEMUState *ns, uint64_t icount, int cpu_idx, int early_exit){
@@ -266,28 +255,22 @@ static void try_sync(NEMUState* ns, uint64_t icount, int cpu_idx,
                              bool exit_sync_period, bool *sync_end)
 {
     if (sync_multicore(ns, icount, cpu_idx, exit_sync_period) == WAIT) {
-        int tmp_wait_id = g_atomic_int_add(&wait_id, 1);
-        tmp_wait_id += 1;
-        if (tmp_wait_id != ns->sync_info.online_cpus) {
-            g_atomic_int_set(&ns->sync_info.waiting[cpu_idx], 1);
-//            info_report("cpu %d goto wait online state %d, wait id %d instructions %ld", cpu_idx, ns->sync_info.online_cpus, tmp_wait_id, icount - ns->sync_info.kernel_insns[cpu_idx]);
-            if (tmp_wait_id == 1) {
-                cpu_disable_ticks();
-                set_global_mtime();
+        /* A generation prevents arrivals leaking into the next barrier. */
+        int my_gen = g_atomic_int_get(&ns->sync_info.barrier_gen);
+        int arrived = g_atomic_int_add(&ns->sync_info.barrier_arrive, 1) + 1;
+        bool is_leader = (arrived == ns->sync_info.cpus);
+        g_assert(arrived <= ns->sync_info.cpus);
+        if (arrived == 1) {
+            /* The first arrival freezes global time. */
+            cpu_disable_ticks();
+            set_global_mtime();
+        }
+        if (is_leader) {
+            *sync_end = true;
+        } else {
+            while (g_atomic_int_get(&ns->sync_info.barrier_gen) == my_gen) {
+                cpu_relax();
             }
-
-            while (g_atomic_int_get(&ns->sync_info.checkpoint_end[cpu_idx]) == 0) {}
-            g_atomic_int_set(&ns->sync_info.checkpoint_end[cpu_idx], 0);
-
-            g_atomic_int_set(&ns->sync_info.waiting[cpu_idx], 0);
-        }else{
-//            info_report("cpu %d goto sync end, cpu_online %d, wait id %d instruction count %ld", cpu_idx, ns->sync_info.online_cpus, tmp_wait_id, icount - ns->sync_info.kernel_insns[cpu_idx]);
-            for (int i = 0; i < ns->sync_info.cpus; i++) {
-                if (i != cpu_idx) {
-                    while (g_atomic_int_get(&ns->sync_info.waiting[i]) != 1) {}
-                }
-            }
-            *sync_end = 1;
         }
     }
 }
@@ -303,31 +286,31 @@ void check_exit(uint64_t icount) {
 __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* ns, uint64_t icount, int cpu_idx,
                              bool exit_sync_period){
     bool sync_end = false;
-    static uint64_t wait_times = 0;
+    static aligned_uint64_t wait_times;
+
     try_sync(ns, icount, cpu_idx, exit_sync_period, &sync_end);
 
     if (sync_end) {
-        g_atomic_pointer_add(&wait_times, 1);
+        qatomic_fetch_add(&wait_times, 1);
         ns->cpt_func.update_sync_limit_instructions(ns);
 
         if ((icount - ns->sync_info.kernel_insns[cpu_idx]) >= ns->cpt_func.get_cpt_limit_instructions(ns)) {
 
-            info_report("cpu %d get cpt limit wait times %ld", cpu_idx, g_atomic_pointer_get(&wait_times));
-            g_atomic_pointer_set(&wait_times, 0);
+            info_report("cpu %d get cpt limit wait times %ld", cpu_idx,
+                        qatomic_read_u64(&wait_times));
+            qatomic_set_u64(&wait_times, 0);
 
-            serialize(0x80300000, cpu_idx, ns->sync_info.cpus, icount);
-            // update checkpoint limit instructions
-            ns->cpt_func.update_cpt_limit_instructions(ns, icount);
-            ns->cpt_func.after_take_cpt(ns, cpu_idx);
-        }
-
-        g_atomic_int_set(&wait_id, 0);
-
-        for (int i = 0; i < ns->sync_info.cpus; i++) {
-            if (g_atomic_int_get(&ns->sync_info.waiting[i]) == 1) {
-                g_atomic_int_set(&ns->sync_info.checkpoint_end[i], 1);
+            if (serialize(0x80300000, cpu_idx, ns->sync_info.cpus,
+                          icount)) {
+                /* Consume the SimPoint only after its checkpoint is written. */
+                ns->cpt_func.update_cpt_limit_instructions(ns, icount);
+                ns->cpt_func.after_take_cpt(ns, cpu_idx);
             }
         }
+
+        /* Reset arrivals before releasing peers into the next generation. */
+        g_atomic_int_set(&ns->sync_info.barrier_arrive, 0);
+        g_atomic_int_add(&ns->sync_info.barrier_gen, 1);
 
         cpu_enable_ticks();
     }
@@ -344,6 +327,9 @@ static void sync_init(NEMUState *ns, gint cpus){
     if(ns->nemu_args.checkpoint != NULL){
         // if checkpoint mode, default online 2 cpud
         ns->sync_info.online_cpus = cpus;
+        for (int i = 0; i < cpus; i++) {
+            ns->sync_info.online[i] = 1;
+        }
     }else{
         // if not, online cpus will add by before_worklod
         ns->sync_info.online_cpus = 0;
@@ -363,6 +349,9 @@ static void sync_init(NEMUState *ns, gint cpus){
     ns->sync_info.checkpoint_end = g_malloc0(cpus * sizeof(bool));
     // check sync status
     ns->sync_info.waiting = g_malloc0(cpus * sizeof(gint));
+
+    ns->sync_info.barrier_arrive = 0;
+    ns->sync_info.barrier_gen = 0;
 }
 
 NEMUState *local_nemu_state;
@@ -412,7 +401,7 @@ void multicore_checkpoint_init(MachineState *machine)
         ns->cpt_func.try_take_cpt = single_core_try_take_cpt;
         ns->cpt_func.try_set_mie = single_try_set_mie;
     }else{
-        ns->cpt_func.try_set_mie = no_try_set_mie;
+        ns->cpt_func.try_set_mie = single_try_set_mie;
     }
 }
 
