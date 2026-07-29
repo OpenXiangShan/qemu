@@ -13,9 +13,6 @@
 
 static bool instrsCouldTakeCpt(NEMUState *ns, int64_t icount) {
     uint64_t limit_instructions = simpoint_get_next_instructions(ns);
-    if (limit_instructions==0) {
-        return false;
-    }
 //    limit_instructions += 100000;
 
     switch (ns->nemu_args.checkpoint_mode) {
@@ -42,9 +39,10 @@ static bool instrsCouldTakeCpt(NEMUState *ns, int64_t icount) {
     return false;
 }
 
-static void serialize(NEMUState *ns, uint64_t icount) {
+static bool serialize(NEMUState *ns, uint64_t icount)
+{
     serializeRegs(0, ns->memory, &single_core_rvgcvh_default_memlayout, 1, 0);
-    serialize_pmem(icount, false, NULL, 0);
+    return serialize_pmem(icount, false, NULL, 0);
 }
 
 static bool could_take_checkpoint(NEMUState *ns, uint64_t icount){
@@ -89,8 +87,9 @@ static void update_cpt_limit_instructions(NEMUState *ns, uint64_t icount){
 void single_core_try_take_cpt(NEMUState* ns, uint64_t icount, int cpu_idx, bool exit_sync_period) {
     uint64_t workload_exec_insns = icount - ns->sync_info.kernel_insns[0];
     if (could_take_checkpoint(ns, workload_exec_insns)) {
-        serialize(ns, workload_exec_insns);
-        update_cpt_limit_instructions(ns, workload_exec_insns);
+        if (serialize(ns, workload_exec_insns)) {
+            update_cpt_limit_instructions(ns, workload_exec_insns);
+        }
     }
 }
 #endif

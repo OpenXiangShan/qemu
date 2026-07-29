@@ -16,7 +16,8 @@
 
 
 
-void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_status_buffer, int buffer_size)
+bool serialize_pmem(uint64_t inst_count, int using_gcpt_mmio,
+                    char *hardware_status_buffer, int buffer_size)
 {
 
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -40,13 +41,32 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
 
     //prepare path
     if (ns->nemu_args.checkpoint_mode == SimpointCheckpointing) {
-        strcpy(filepath,((GString*)(g_list_first(ns->path_manager.checkpoint_path_list)->data))->str);
+        GList *path_item = g_list_first(ns->path_manager.checkpoint_path_list);
+        if (path_item == NULL ||
+            g_strlcpy(filepath, ((GString *)path_item->data)->str,
+                      sizeof(filepath)) >= sizeof(filepath)) {
+            error_report("invalid or oversized SimPoint checkpoint path");
+            return false;
+        }
         info_report("prepare for generate checkpoint path %s inst_count %ld pmem_size %ld", filepath, inst_count, guest_pmem_size);
     }else if(ns->nemu_args.checkpoint_mode==UniformCheckpointing || ns->nemu_args.checkpoint_mode == SyncUniformCheckpoint){
-        sprintf(filepath, "%s/%ld/_%ld_.gz", ns->path_manager.uniform_path->str, inst_count, inst_count);
+        if (snprintf(filepath, sizeof(filepath), "%s/%ld/_%ld_.gz",
+                     ns->path_manager.uniform_path->str, inst_count,
+                     inst_count) >= sizeof(filepath)) {
+            error_report("uniform checkpoint path is too long");
+            return false;
+        }
         info_report("prepare for generate checkpoint path %s base_path %s inst_count %ld pmem_size %ld", filepath, ns->path_manager.uniform_path->str, inst_count, guest_pmem_size);
+    } else {
+        error_report("unsupported checkpoint mode");
+        return false;
     }
-    assert(g_mkdir_with_parents(g_path_get_dirname(filepath), 0775)==0);
+    g_autofree char *checkpoint_dir = g_path_get_dirname(filepath);
+    if (g_mkdir_with_parents(checkpoint_dir, 0775) != 0) {
+        error_report("failed to create checkpoint directory %s: %s",
+                     checkpoint_dir, strerror(errno));
+        return false;
+    }
 
 #ifdef USE_ZSTD_COMPRESS
     //zstd compress
@@ -62,20 +82,37 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
         fprintf(stdout, "compress gcpt success, compress size %ld", gcpt_compress_size);
     }
 
-    size_t const compress_size = ZSTD_compress(compress_buffer, compress_buffer_size, pmem_addr, guest_pmem_size, 1);
-    assert(compress_size<=compress_buffer_size&&compress_size!=0);
+    size_t const compress_size = ZSTD_compress(
+        compress_buffer, compress_buffer_size, pmem_addr, guest_pmem_size, 1);
+    if (ZSTD_isError(compress_size)) {
+        error_report("failed to compress checkpoint: %s",
+                     ZSTD_getErrorName(compress_size));
+        free(compress_buffer);
+        return false;
+    }
 
     FILE *compress_file=fopen(filepath,"wb");
+    if (compress_file == NULL) {
+        error_report("failed to open checkpoint %s: %s", filepath,
+                     strerror(errno));
+        free(compress_buffer);
+        return false;
+    }
     size_t fw_size = fwrite(compress_buffer,1,compress_size,compress_file);
+    bool write_ok = fw_size == compress_size;
 
-    if (fw_size != (size_t)compress_size) {
-        fprintf(stderr, "fwrite: %s : %s \n", filepath, strerror(errno));
+    if (!write_ok) {
+        fprintf(stderr, "fwrite: %s: %s\n", filepath, strerror(errno));
     }
     if (fclose(compress_file)) {
-        fprintf(stderr, "fclose: %s : %s \n", filepath, strerror(errno));
+        fprintf(stderr, "fclose: %s: %s\n", filepath, strerror(errno));
+        write_ok = false;
     }
 
     free(compress_buffer);
+    if (!write_ok) {
+        return false;
+    }
     info_report("serialize pmem finish\n");
 
 #endif
@@ -83,11 +120,12 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
 #ifdef USE_ZLIB_COMPRESS
     //zlib compress
     gzFile compressed_mem=NULL;
+    bool zlib_write_ok = true;
     compressed_mem=gzopen(filepath,"wb");
 
     if (!compressed_mem) {
         error_printf("filename %s can't open", filepath);
-        return;
+        return false;
     }
 
     uint64_t write_size;
@@ -97,17 +135,24 @@ void serialize_pmem(uint64_t inst_count, int using_gcpt_mmio, char* hardware_sta
         printf("wirte in index %d\n",i);
         if (write_size != seg_size) {
             error_printf("qmp_gzpmemsave write error size %ld index %d\n",write_size,i);
+            zlib_write_ok = false;
             goto exit;
         }
     }
     info_report("success write into checkpoint file: %s",filepath);
 exit:
-    gzclose(compressed_mem);
+    if (gzclose(compressed_mem) != Z_OK) {
+        zlib_write_ok = false;
+    }
+    if (!zlib_write_ok) {
+        return false;
+    }
 #endif
     //    useless for now
     //    uint64_t mtime;
     //    cpu_physical_memory_read(MTIME_CMP_CPT_ADDR, &mtime, 8);
     //    cpu_physical_memory_write(CLINT_MMIO+CLINT_MTIME, &mtime, 8);
+    return true;
 }
 
 
