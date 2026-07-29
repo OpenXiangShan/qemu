@@ -379,7 +379,7 @@ static inline uint32_t get_rows(DisasContext *s)
 {
     return s->mreglen / s->mrowlen;
 }
-static bool trans_mzero(DisasContext *s, arg_mm_i *a)
+static bool trans_mzero(DisasContext *s, arg_mm_zero *a)
 {
     if (!require_matrix(s)) {
         return false;
