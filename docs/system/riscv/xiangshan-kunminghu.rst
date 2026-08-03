@@ -88,9 +88,9 @@ Machine options
    ``Property 'xiangshan-kunminghu-machine.kvm-m-mode' not found`` 错误。
 
 ``dw-pcie=on|off``
-   是否创建 DWC PCIe RC0 设备。默认 ``off``。如果 QEMU 当前使用生成的
-   设备树，打开后会在设备树里加入 DWC PCIe RC0 节点；使用外部 ``-dtb``
-   时，需要外部设备树自己描述同一个 PCIe host。
+   是否创建 DWC PCIe RC0 和 RC1 设备。默认 ``off``。如果 QEMU 当前使用
+   生成的设备树，打开后会在设备树里加入两个 DWC PCIe host 节点；使用
+   外部 ``-dtb`` 时，需要外部设备树自己描述同样的 PCIe host。
 
 ``iommu-sys=auto|on|off``
    是否创建 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
@@ -505,21 +505,26 @@ OpenSBI 正常把 FDT 传给 UEFI，因为 handoff 地址本身通过 FDT 描述
 Use DWC PCIe
 ~~~~~~~~~~~~
 
-打开 ``dw-pcie=on`` 后，QEMU 会创建 DWC PCIe RC0 设备。如果当前使用
-QEMU 生成的设备树，设备树会加入 ``/soc/pcie@32000000``，compatible 为
-``snps,dw-pcie``。当前实现先建模最小可用 PCIe host：
+打开 ``dw-pcie=on`` 后，QEMU 会创建 DWC PCIe RC0 和 RC1 设备。如果当前
+使用 QEMU 生成的设备树，设备树会加入 ``/soc/pcie@32000000`` 和
+``/soc/pcie@40000000``，compatible 都为 ``snps,dw-pcie``。当前实现先建模
+最小可用 PCIe host：
 
-* DBI window：``0x32000000``，参考 KMH DTS 的 ``dbi`` reg。
-* config window：``0x67ff0000``，大小 ``0x10000``。
-* 低 MMIO window：CPU ``0x60000000..0x67feffff`` 映射到 PCI
+* RC0 DBI window：``0x32000000``，参考 KMH DTS 的 ``dbi`` reg。
+* RC0 config window：``0x67ff0000``，大小 ``0x10000``。
+* RC0 低 MMIO window：CPU ``0x60000000..0x67feffff`` 映射到 PCI
+  ``0x40000000..0x47feffff``。
+* RC1 DBI window：``0x40000000``，参考 KMH DTS 的 ``dbi`` reg。
+* RC1 config window：``0x77ff0000``，大小 ``0x10000``。
+* RC1 低 MMIO window：CPU ``0x70000000..0x77feffff`` 映射到 PCI
   ``0x40000000..0x47feffff``。
 * MSI 使用生成 DTB 中的 ``msi-parent = <&imsics_s>``，也就是 RISC-V
   IMSIC 外部 MSI 域。
 * 如果同时打开 ``iommu-sys=on``，PCIe 节点会加入指向 system IOMMU 的
   ``iommu-map``。
 
-QEMU DWC root port 的下游 bus 名为 ``dw-pcie``。例如挂一个 virtio PCIe
-网卡：
+QEMU DWC root port 的下游 bus 名分别为 ``dw-pcie`` 和 ``dw-pcie1``。
+例如在 RC0 挂一个 virtio PCIe 网卡：
 
 .. code-block:: bash
 
@@ -538,11 +543,13 @@ QEMU DWC root port 的下游 bus 名为 ``dw-pcie``。例如挂一个 virtio PCI
    dw-pcie 32000000.pcie: PCI host bridge to bus 0000:00
    pci 0000:01:00.0: [1af4:1041] type 00 class 0x020000 PCIe Endpoint
 
-当前生成 DTB 按 ``kmh-v2-synps-pcie.dtsi`` 保留 ``interrupts = <12>, <13>``
-和 ``interrupt-names = "msi", "hp"``，但暂不生成 PCI legacy INTx
-``interrupt-map``。因此 ``pcieport ... of_irq_parse_pci: failed`` 这类 legacy
-INTx 解析日志是预期现象；优先使用 MSI/MSI-X 设备。真实 DTS 中其它 RC 和
-64-bit high MMIO window 还没有在 QEMU 生成 DTB 中打开。
+RC1 上的设备把 ``bus=dw-pcie`` 改成 ``bus=dw-pcie1`` 即可。当前生成 DTB 按
+``kmh-v2-synps-pcie.dtsi`` 保留 RC0 ``interrupts = <12>, <13>``、RC1
+``interrupts = <15>, <16>`` 和 ``interrupt-names = "msi", "hp"``，但暂不
+生成 PCI legacy INTx ``interrupt-map``。因此 ``pcieport ...
+of_irq_parse_pci: failed`` 这类 legacy INTx 解析日志是预期现象；优先使用
+MSI/MSI-X 设备。真实 DTS 中 64-bit high MMIO window 还没有在 QEMU 生成 DTB
+中打开。
 
 Use my-virtio MMIO devices
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -78,6 +78,9 @@
 #define XIANGSHAN_KMH_PCIE0_CFG_BASE 0x67ff0000ULL
 #define XIANGSHAN_KMH_PCIE0_CFG_SIZE 0x00010000ULL
 #define XIANGSHAN_KMH_PCIE0_LOW_BUS_BASE 0x40000000ULL
+#define XIANGSHAN_KMH_PCIE1_CFG_BASE 0x77ff0000ULL
+#define XIANGSHAN_KMH_PCIE1_CFG_SIZE 0x00010000ULL
+#define XIANGSHAN_KMH_PCIE1_LOW_BUS_BASE 0x40000000ULL
 
 static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_ROM]      =        {     0x1000,       0x40000 },
@@ -92,6 +95,7 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_MY_VIRTIO_TABLET] = { 0x310F0000,        0x1000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
+    [XIANGSHAN_KMH_PCIE1_DBI] =       { 0x40000000,      0x400000 },
     [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },
     [XIANGSHAN_KMH_APLIC_M]  =        { 0x31100000,        0x4000 },
     [XIANGSHAN_KMH_APLIC_S]  =        { 0x31120000,        0x4000 },
@@ -100,7 +104,47 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_IMSIC_S]  =        { 0x3B000000,       0x80000 },
     [XIANGSHAN_KMH_UART1]    =        { 0x40600000,        0x1000 },
     [XIANGSHAN_KMH_PCIE0_BAR] =       { 0x60000000,     0x7ff0000 },
+    [XIANGSHAN_KMH_PCIE1_BAR] =       { 0x70000000,     0x7ff0000 },
     [XIANGSHAN_KMH_DRAM]     =        { 0x80000000,           0x0 },
+};
+
+typedef struct XiangshanKmhPciePort {
+    int dbi;
+    int bar;
+    hwaddr cfg_base;
+    hwaddr cfg_size;
+    hwaddr low_bus_base;
+    int msi_irq;
+    int hp_irq;
+    const char *root_bus_name;
+    const char *sec_bus_name;
+    const char *root_bus_path;
+} XiangshanKmhPciePort;
+
+static const XiangshanKmhPciePort xiangshan_kmh_pcie_ports[] = {
+    {
+        .dbi = XIANGSHAN_KMH_PCIE0_DBI,
+        .bar = XIANGSHAN_KMH_PCIE0_BAR,
+        .cfg_base = XIANGSHAN_KMH_PCIE0_CFG_BASE,
+        .cfg_size = XIANGSHAN_KMH_PCIE0_CFG_SIZE,
+        .low_bus_base = XIANGSHAN_KMH_PCIE0_LOW_BUS_BASE,
+        .msi_irq = XIANGSHAN_KMH_RC_MSI0_IRQ,
+        .hp_irq = XIANGSHAN_KMH_RC_HP0_IRQ,
+        .root_bus_name = "pcie",
+        .sec_bus_name = "dw-pcie",
+        .root_bus_path = "0000:00",
+    }, {
+        .dbi = XIANGSHAN_KMH_PCIE1_DBI,
+        .bar = XIANGSHAN_KMH_PCIE1_BAR,
+        .cfg_base = XIANGSHAN_KMH_PCIE1_CFG_BASE,
+        .cfg_size = XIANGSHAN_KMH_PCIE1_CFG_SIZE,
+        .low_bus_base = XIANGSHAN_KMH_PCIE1_LOW_BUS_BASE,
+        .msi_irq = XIANGSHAN_KMH_RC_MSI1_IRQ,
+        .hp_irq = XIANGSHAN_KMH_RC_HP1_IRQ,
+        .root_bus_name = "pcie1",
+        .sec_bus_name = "dw-pcie1",
+        .root_bus_path = "0001:00",
+    },
 };
 
 #ifndef CONFIG_MY_VIRTIO
@@ -114,28 +158,28 @@ static bool xiangshan_kmh_my_virtio_requested(const XiangshanKmhState *s)
 
 static void xiangshan_kmh_dw_pcie_init(XiangshanKmhSoCState *s)
 {
-    DesignwarePCIEHost *pcie0 = &s->pcie0;
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
-    PCIHostState *pci_host;
 
-    /*
-     * PCIE RC0
-     */
-    sysbus_realize(SYS_BUS_DEVICE(pcie0), &error_abort);
-    sysbus_mmio_map(SYS_BUS_DEVICE(pcie0), 0,
-                    memmap[XIANGSHAN_KMH_PCIE0_DBI].base);
+    for (int i = 0; i < ARRAY_SIZE(xiangshan_kmh_pcie_ports); i++) {
+        const XiangshanKmhPciePort *port = &xiangshan_kmh_pcie_ports[i];
+        DesignwarePCIEHost *host = &s->pcie[i];
+        PCIHostState *pci_host;
 
-    sysbus_connect_irq(SYS_BUS_DEVICE(pcie0), DESIGNWARE_PCIE_IRQ_MSI,
-                       qdev_get_gpio_in(DEVICE(s->irqchip),
-                                        XIANGSHAN_KMH_RC_MSI0_IRQ));
+        sysbus_realize(SYS_BUS_DEVICE(host), &error_abort);
+        sysbus_mmio_map(SYS_BUS_DEVICE(host), 0, memmap[port->dbi].base);
+        sysbus_connect_irq(SYS_BUS_DEVICE(host), DESIGNWARE_PCIE_IRQ_MSI,
+                           qdev_get_gpio_in(DEVICE(s->irqchip),
+                                            port->msi_irq));
 
-    pci_host = PCI_HOST_BRIDGE(pcie0);
-    /*
-     * The generated DT uses IMSIC as the PCI MSI parent. Without the optional
-     * IOMMU, let PCI devices issue DMA/MSI writes directly to system memory.
-     */
-    pci_host->bus->iommu_ops = NULL;
-    pci_host->bus->iommu_opaque = NULL;
+        pci_host = PCI_HOST_BRIDGE(host);
+        /*
+         * The generated DT uses IMSIC as the PCI MSI parent. Without the
+         * optional IOMMU, let PCI devices issue DMA/MSI writes directly to
+         * system memory.
+         */
+        pci_host->bus->iommu_ops = NULL;
+        pci_host->bus->iommu_opaque = NULL;
+    }
 }
 
 static DeviceState *xiangshan_kmh_create_aia(uint32_t num_harts,
@@ -705,8 +749,6 @@ static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
     MachineState *ms = MACHINE(s);
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
     void *fdt = ms->fdt;
-    g_autofree char *name = g_strdup_printf("/soc/pcie@%"HWADDR_PRIx,
-        memmap[XIANGSHAN_KMH_PCIE0_DBI].base);
     static const char * const reg_names[2] = {
         "dbi", "config"
     };
@@ -714,43 +756,49 @@ static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
         "msi", "hp"
     };
 
-    qemu_fdt_add_subnode(fdt, name);
-    qemu_fdt_setprop_string(fdt, name, "compatible", "snps,dw-pcie");
-    qemu_fdt_setprop_sized_cells(fdt, name, "reg",
-                                 2, memmap[XIANGSHAN_KMH_PCIE0_DBI].base,
-                                 2, memmap[XIANGSHAN_KMH_PCIE0_DBI].size,
-                                 2, XIANGSHAN_KMH_PCIE0_CFG_BASE,
-                                 2, XIANGSHAN_KMH_PCIE0_CFG_SIZE);
-    qemu_fdt_setprop_string_array(fdt, name, "reg-names",
-                                  (char **)&reg_names,
-                                  ARRAY_SIZE(reg_names));
-    qemu_fdt_setprop_cell(fdt, name, "#address-cells", 3);
-    qemu_fdt_setprop_cell(fdt, name, "#size-cells", 2);
-    qemu_fdt_setprop_string(fdt, name, "device_type", "pci");
-    qemu_fdt_setprop_cells(fdt, name, "bus-range", 0x0, 0xff);
-    qemu_fdt_setprop_sized_cells(fdt, name, "ranges",
-                                 1, FDT_PCI_RANGE_MMIO,
-                                 2, XIANGSHAN_KMH_PCIE0_LOW_BUS_BASE,
-                                 2, memmap[XIANGSHAN_KMH_PCIE0_BAR].base,
-                                 2, memmap[XIANGSHAN_KMH_PCIE0_BAR].size);
-    qemu_fdt_setprop_cell(fdt, name, "num-ib-windows", 1);
-    qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
-    qemu_fdt_setprop_cell(fdt, name, "msi-parent", imsic_s_phandle);
-    qemu_fdt_setprop_cells(fdt, name, "interrupts",
-                           XIANGSHAN_KMH_RC_MSI0_IRQ,
-                           FDT_IRQ_TYPE_EDGE_RISING,
-                           XIANGSHAN_KMH_RC_HP_IRQ,
-                           FDT_IRQ_TYPE_EDGE_RISING);
-    if (iommu_sys_phandle) {
-        qemu_fdt_setprop_cells(fdt, name, "iommu-map",
-                               0, iommu_sys_phandle, 0, 0,
-                               0, iommu_sys_phandle, 0, 0xffff);
+    for (int i = 0; i < ARRAY_SIZE(xiangshan_kmh_pcie_ports); i++) {
+        const XiangshanKmhPciePort *port = &xiangshan_kmh_pcie_ports[i];
+        g_autofree char *name = g_strdup_printf("/soc/pcie@%"HWADDR_PRIx,
+            memmap[port->dbi].base);
+
+        qemu_fdt_add_subnode(fdt, name);
+        qemu_fdt_setprop_string(fdt, name, "compatible", "snps,dw-pcie");
+        qemu_fdt_setprop_sized_cells(fdt, name, "reg",
+                                     2, memmap[port->dbi].base,
+                                     2, memmap[port->dbi].size,
+                                     2, port->cfg_base,
+                                     2, port->cfg_size);
+        qemu_fdt_setprop_string_array(fdt, name, "reg-names",
+                                      (char **)&reg_names,
+                                      ARRAY_SIZE(reg_names));
+        qemu_fdt_setprop_cell(fdt, name, "#address-cells", 3);
+        qemu_fdt_setprop_cell(fdt, name, "#size-cells", 2);
+        qemu_fdt_setprop_string(fdt, name, "device_type", "pci");
+        qemu_fdt_setprop_cells(fdt, name, "bus-range", 0x0, 0xff);
+        qemu_fdt_setprop_sized_cells(fdt, name, "ranges",
+                                     1, FDT_PCI_RANGE_MMIO,
+                                     2, port->low_bus_base,
+                                     2, memmap[port->bar].base,
+                                     2, memmap[port->bar].size);
+        qemu_fdt_setprop_cell(fdt, name, "num-ib-windows", 1);
+        qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
+        qemu_fdt_setprop_cell(fdt, name, "msi-parent", imsic_s_phandle);
+        qemu_fdt_setprop_cells(fdt, name, "interrupts",
+                               port->msi_irq,
+                               FDT_IRQ_TYPE_EDGE_RISING,
+                               port->hp_irq,
+                               FDT_IRQ_TYPE_EDGE_RISING);
+        if (iommu_sys_phandle) {
+            qemu_fdt_setprop_cells(fdt, name, "iommu-map",
+                                   0, iommu_sys_phandle, 0, 0,
+                                   0, iommu_sys_phandle, 0, 0xffff);
+        }
+        qemu_fdt_setprop_string_array(fdt, name, "interrupt-names",
+                                      (char **)&interrupt_names,
+                                      ARRAY_SIZE(interrupt_names));
+        qemu_fdt_setprop_cell(fdt, name, "num-lanes", 1);
+        qemu_fdt_setprop_string(fdt, name, "status", "okay");
     }
-    qemu_fdt_setprop_string_array(fdt, name, "interrupt-names",
-                                  (char **)&interrupt_names,
-                                  ARRAY_SIZE(interrupt_names));
-    qemu_fdt_setprop_cell(fdt, name, "num-lanes", 1);
-    qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
 static void xiangshan_kmh_fdt_add_my_virtio(XiangshanKmhState *s,
@@ -1101,15 +1149,16 @@ static void xiangshan_kmh_create_iommu_sys(XiangshanKmhState *s)
     const MemMapEntry *memmap = xiangshan_kmh_memmap;
     DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
     XiangshanKmhSoCState *soc = &s->soc;
-    PCIBus *bus = NULL;
+    PCIBus *buses[ARRAY_SIZE(xiangshan_kmh_pcie_ports)] = {};
     Object *iommu_obj;
     RISCVIOMMUState *iommu;
 
     if (s->dw_pcie) {
-        DesignwarePCIEHost *pcie0 = &soc->pcie0;
-        PCIHostState *pci_host = PCI_HOST_BRIDGE(pcie0);
+        for (int i = 0; i < ARRAY_SIZE(xiangshan_kmh_pcie_ports); i++) {
+            PCIHostState *pci_host = PCI_HOST_BRIDGE(&soc->pcie[i]);
 
-        bus = pci_host->bus;
+            buses[i] = pci_host->bus;
+        }
     }
 
     object_property_set_uint(OBJECT(iommu_sys), "addr",
@@ -1129,8 +1178,12 @@ static void xiangshan_kmh_create_iommu_sys(XiangshanKmhState *s)
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
 
-    if (bus && !bus->iommu_ops && !bus->iommu_opaque) {
-        riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
+    for (int i = 0; i < ARRAY_SIZE(buses); i++) {
+        PCIBus *bus = buses[i];
+
+        if (bus && !bus->iommu_ops && !bus->iommu_opaque) {
+            riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
+        }
     }
 }
 
@@ -1229,8 +1282,20 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_tablet_evdev_path = s->my_virtio_tablet_evdev_path;
     s->soc.my_virtio_vnc_listen = s->my_virtio_vnc_listen;
     if (s->dw_pcie) {
-        object_initialize_child(OBJECT(machine), "pcie0", &s->soc.pcie0,
-                                TYPE_DESIGNWARE_PCIE_HOST);
+        for (int i = 0; i < ARRAY_SIZE(xiangshan_kmh_pcie_ports); i++) {
+            const XiangshanKmhPciePort *port = &xiangshan_kmh_pcie_ports[i];
+            g_autofree char *child_name = g_strdup_printf("pcie%d", i);
+            DesignwarePCIEHost *host = &s->soc.pcie[i];
+
+            object_initialize_child(OBJECT(machine), child_name, host,
+                                    TYPE_DESIGNWARE_PCIE_HOST);
+            qdev_prop_set_string(DEVICE(host), "root-bus-name",
+                                 port->root_bus_name);
+            qdev_prop_set_string(DEVICE(host), "sec-bus-name",
+                                 port->sec_bus_name);
+            qdev_prop_set_string(DEVICE(host), "root-bus-path",
+                                 port->root_bus_path);
+        }
     }
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 

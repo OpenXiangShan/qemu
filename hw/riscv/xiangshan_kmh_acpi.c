@@ -45,6 +45,7 @@ static const MemMapEntry xiangshan_kmh_acpi_memmap[] = {
     [XIANGSHAN_KMH_MY_VIRTIO_TABLET] = { 0x310F0000,        0x1000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
+    [XIANGSHAN_KMH_PCIE1_DBI] =       { 0x40000000,      0x400000 },
     [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },
     [XIANGSHAN_KMH_APLIC_M]  =        { 0x31100000,        0x4000 },
     [XIANGSHAN_KMH_APLIC_S]  =        { 0x31120000,        0x4000 },
@@ -53,6 +54,7 @@ static const MemMapEntry xiangshan_kmh_acpi_memmap[] = {
     [XIANGSHAN_KMH_IMSIC_S]  =        { 0x3B000000,       0x80000 },
     [XIANGSHAN_KMH_UART1]    =        { 0x40600000,        0x1000 },
     [XIANGSHAN_KMH_PCIE0_BAR] =       { 0x60000000,     0x7ff0000 },
+    [XIANGSHAN_KMH_PCIE1_BAR] =       { 0x70000000,     0x7ff0000 },
     [XIANGSHAN_KMH_DRAM]     =        { 0x80000000,           0x0 },
 };
 
