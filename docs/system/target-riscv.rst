@@ -69,6 +69,7 @@ undocumented; you can get a complete list by running
    riscv/kmh-bosc-soc
    riscv/microblaze-v-generic
    riscv/microchip-icicle-kit
+   riscv/qemu-to-iosystem
    riscv/shakti-c
    riscv/sifive_u
    riscv/virt

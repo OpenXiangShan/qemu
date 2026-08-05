@@ -1,4 +1,7 @@
 riscv_ss = ss.source_set()
+if get_option('io_system').enabled()
+  riscv_ss.add(io_system_backend)
+endif
 riscv_ss.add(files('boot.c'))
 riscv_ss.add(when: 'CONFIG_RISCV_NUMA', if_true: files('numa.c'))
 riscv_ss.add(files('riscv_hart.c'))
@@ -15,6 +18,8 @@ riscv_ss.add(when: 'CONFIG_RISCV_IOMMU', if_true: files(
 riscv_ss.add(when: 'CONFIG_MICROBLAZE_V', if_true: files('microblaze-v-generic.c'))
 riscv_ss.add(when: 'CONFIG_KMH_BOSC_SOC', if_true: files('kmh_bosc_soc.c'))
 riscv_ss.add(when: 'CONFIG_XIANGSHAN_KUNMINGHU', if_true: files('xiangshan_kmh.c'))
+riscv_ss.add(when: 'CONFIG_QEMU_TO_IOSYSTEM',
+             if_true: files('qemu_to_iosystem.c'))
 riscv_ss.add(when: 'CONFIG_XIANGSHAN_KUNMINGHU_COSIM',
              if_true: files('xiangshan_kmh_cosim.c'))
 riscv_ss.add(when: 'CONFIG_XIANGSHAN_NANHUV5', if_true: files('xiangshan_nhv5.c'))

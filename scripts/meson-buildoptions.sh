@@ -132,6 +132,7 @@ meson_options_help() {
   printf "%s\n" '  hvf             HVF acceleration support'
   printf "%s\n" '  iconv           Font glyph conversion support'
   printf "%s\n" '  igvm            Independent Guest Virtual Machine (IGVM) file support'
+  printf "%s\n" '  io-system       io-system C-model library'
   printf "%s\n" '  jack            JACK sound support'
   printf "%s\n" '  keyring         Linux keyring support'
   printf "%s\n" '  kvm             KVM acceleration support'
@@ -356,6 +357,8 @@ _meson_option_parse() {
     --disable-iconv) printf "%s" -Diconv=disabled ;;
     --enable-igvm) printf "%s" -Digvm=enabled ;;
     --disable-igvm) printf "%s" -Digvm=disabled ;;
+    --enable-io-system) printf "%s" -Dio_system=enabled ;;
+    --disable-io-system) printf "%s" -Dio_system=disabled ;;
     --includedir=*) quote_sh "-Dincludedir=$2" ;;
     --enable-install-blobs) printf "%s" -Dinstall_blobs=true ;;
     --disable-install-blobs) printf "%s" -Dinstall_blobs=false ;;

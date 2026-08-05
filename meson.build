@@ -2540,6 +2540,7 @@ config_host_data.set('CONFIG_LINUX_IO_URING', linux_io_uring.found())
 config_host_data.set('CONFIG_LIBPMEM', libpmem.found())
 config_host_data.set('CONFIG_MODULES', enable_modules)
 config_host_data.set('CONFIG_MY_VIRTIO', get_option('my_virtio').enabled())
+config_host_data.set('CONFIG_IO_SYSTEM', get_option('io_system').enabled())
 config_host_data.set('CONFIG_KVM_M_MODE', get_option('kvm_m_mode').enabled())
 config_host_data.set('CONFIG_KVM_NESTED', get_option('kvm_nested').enabled())
 if get_option('devproxy').enabled() and host_os == 'windows'
@@ -3348,6 +3349,7 @@ host_kconfig = \
   (have_virtfs ? ['CONFIG_VIRTFS=y'] : []) + \
   (host_os == 'linux' ? ['CONFIG_LINUX=y'] : []) + \
   (get_option('my_virtio').enabled() ? ['CONFIG_MY_VIRTIO=y'] : []) + \
+  (get_option('io_system').enabled() ? ['CONFIG_IO_SYSTEM=y'] : []) + \
   (get_option('devproxy').enabled() ? ['CONFIG_DEVPROXY=y'] : []) + \
   (multiprocess_allowed ? ['CONFIG_MULTIPROCESS_ALLOWED=y'] : []) + \
   (vfio_user_server_allowed ? ['CONFIG_VFIO_USER_SERVER_ALLOWED=y'] : []) + \
@@ -3774,6 +3776,48 @@ util_ss = ss.source_set()
 devproxy_ipc = not_found
 if get_option('devproxy').enabled()
   subdir('third_party/devproxy-ipc')
+endif
+
+io_system_backend = not_found
+if get_option('io_system').enabled()
+  io_system_lib_dir = join_paths(meson.project_source_root(), '..',
+                                 'io-system-lib')
+  io_system_lib_build_dir = join_paths(meson.project_build_root(),
+                                       'io-system-lib-build')
+  io_system_lib_output_dir = meson.current_build_dir()
+  io_system_glib_cflags = run_command('pkg-config', '--cflags', 'glib-2.0',
+                                      check: true).stdout().strip().split()
+  io_system_qemu_cflags = [
+    '-I' + meson.project_source_root(),
+    '-I' + join_paths(meson.project_source_root(), 'include'),
+    '-I' + meson.project_build_root(),
+    '-I' + join_paths(meson.project_source_root(), 'linux-headers'),
+    '-I' + join_paths(meson.project_build_root(), 'linux-headers'),
+  ] + io_system_glib_cflags + glib_cflags
+  io_system_dl = cc.find_library('dl', required: true)
+  io_system_make = find_program('make', required: true)
+  io_system_libs = custom_target('io-system-libs',
+    output: [
+      'libio_system.a',
+      'libio_system_backend.a',
+    ],
+    command: [
+      io_system_make,
+      '-C', io_system_lib_dir,
+      'BUILD_DIR=' + io_system_lib_build_dir,
+      'OUTPUT_DIR=' + io_system_lib_output_dir,
+      'IO_SYSTEM_QEMU_BACKEND=1',
+      'QEMU_CFLAGS_LIST=' + '|'.join(io_system_qemu_cflags),
+      'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
+      'all',
+    ],
+    build_by_default: true,
+    build_always_stale: true,
+  )
+  io_system_backend = declare_dependency(
+    include_directories: include_directories('../io-system-lib/include'),
+    sources: io_system_libs,
+    dependencies: io_system_dl)
 endif
 
 # accel modules

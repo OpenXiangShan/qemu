@@ -140,6 +140,20 @@ config XIANGSHAN_KUNMINGHU
     select MY_VIRTIO_GPU if MY_VIRTIO
     select MY_VIRTIO_INPUT if MY_VIRTIO
 
+config QEMU_TO_IOSYSTEM
+    bool
+    default y
+    depends on RISCV64 && IO_SYSTEM
+    select DEVICE_TREE
+    select PCI
+    select PCI_DEVICES
+    select MSI_NONBROKEN
+    select RISCV_ACLINT
+    select RISCV_IMSIC
+    select SERIAL_MM
+    select SIFIVE_TEST
+    select UNIMP
+
 config XIANGSHAN_KUNMINGHU_COSIM
     bool
     default y
