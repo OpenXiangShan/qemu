@@ -48,10 +48,12 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
         ns->cpt_func.try_set_mie(env ,ns);
     } else if (a0 == NOTIFY_PROFILER) {
         // workload loaded
-        g_atomic_int_set(&ns->sync_info.online[cs->cpu_index], 1);
-        g_atomic_int_add(&ns->sync_info.online_cpus, 1);
-
-        g_atomic_pointer_set(&ns->sync_info.kernel_insns[cs->cpu_index], env->profiling_insns);
+        if (g_atomic_int_get(&ns->sync_info.online[cs->cpu_index]) == 0) {
+            qatomic_set_i64(&ns->sync_info.kernel_insns[cs->cpu_index],
+                            env->profiling_insns);
+            g_atomic_int_set(&ns->sync_info.online[cs->cpu_index], 1);
+            g_atomic_int_inc(&ns->sync_info.online_cpus);
+        }
 
         printf("Notify cpu index %d nemu_trap get insns %ld get workload start profiling\n", cs->cpu_index,
         env->profiling_insns);
@@ -63,8 +65,10 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
 
         ns->cpt_func.try_take_cpt(ns, env->profiling_insns, cs->cpu_index, true);
 
-        g_atomic_int_set(&ns->sync_info.online[cs->cpu_index], 0);
-        g_atomic_int_add(&ns->sync_info.online_cpus, -1);
+        if (g_atomic_int_compare_and_exchange(
+                &ns->sync_info.online[cs->cpu_index], 1, 0)) {
+            g_atomic_int_add(&ns->sync_info.online_cpus, -1);
+        }
 
 
     } else if(a0 == GOOD_TRAP){
