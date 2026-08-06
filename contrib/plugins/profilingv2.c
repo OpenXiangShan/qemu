@@ -35,6 +35,7 @@ typedef struct ProfilingControl {
     uint64_t execute_instr_counts;
     uint64_t profiling_instr_counts;
     uint64_t per_bb_vector_instr_count;
+    GMutex bbv_lock;
     GHashTable *bbv;
     gzFile bbv_file;
 } ProfilingControl_t;
@@ -61,6 +62,8 @@ typedef struct {
     (Translation Block) aborts due to a fault/exception.
     */
     uint64_t middle_exit_flag;
+    /* BBV entry for the TB described by the fields above. */
+    uint64_t current_bbv_entry;
 } VCPUScoreBoard;
 
 typedef struct BasicBlockExecCount {
@@ -88,6 +91,7 @@ static qemu_plugin_u64 current_block_begin_pc;
 static qemu_plugin_u64 current_tb_execd_insn_cnt;
 static qemu_plugin_u64 current_tb_total_cnt;
 static qemu_plugin_u64 middle_exit_flag;
+static qemu_plugin_u64 current_bbv_entry;
 
 static guint hash_pair(gconstpointer key) {
     const UInt64Pair *p = (const UInt64Pair *)key;
@@ -121,10 +125,13 @@ static void init_profiling_control(const GString *target_dirname,
                                      const GString *workload_filename) {
     profiling_control.start_profiling = false;
     profiling_control.unique_trans_id = 0;
-    profiling_control.unique_exec_id = 0;
+    /* SimPoint dimensions are one-based; dimension zero is invalid. */
+    profiling_control.unique_exec_id = 1;
     profiling_control.execute_instr_counts = 0;
     profiling_control.profiling_instr_counts = 0;
-    profiling_control.bbv = g_hash_table_new_full(hash_pair, compare_pair, g_free, g_free);
+    g_mutex_init(&profiling_control.bbv_lock);
+    profiling_control.bbv =
+        g_hash_table_new_full(hash_pair, compare_pair, g_free, g_free);
     init_bbv_file(target_dirname, workload_filename);
 }
 
@@ -139,6 +146,8 @@ static void init_score_board() {
     current_tb_total_cnt = qemu_plugin_scoreboard_u64_in_struct(score_board, VCPUScoreBoard, current_tb_total_cnt);
     last_pc_next_insn_addr = qemu_plugin_scoreboard_u64_in_struct(score_board, VCPUScoreBoard, last_pc_next_insn_addr);
     middle_exit_flag = qemu_plugin_scoreboard_u64_in_struct(score_board, VCPUScoreBoard, middle_exit_flag);
+    current_bbv_entry = qemu_plugin_scoreboard_u64_in_struct(
+        score_board, VCPUScoreBoard, current_bbv_entry);
 }
 
 static BasicBlockExecCount_t *fetch_bbcnt(UInt64Pair *hash_key) {
@@ -148,11 +157,11 @@ static BasicBlockExecCount_t *fetch_bbcnt(UInt64Pair *hash_key) {
     return result;
 }
 
-static inline void score_board_record_inject_before_tb_exec(struct qemu_plugin_insn* tb_begin_instr,
-                                                     struct qemu_plugin_insn* tb_end_instr,
-                                                     uint64_t tb_begin_pc,
-                                                     uint64_t tb_end_pc,
-                                                     uint64_t tb_instrs) {
+static inline void score_board_record_inject_before_tb_exec(
+    struct qemu_plugin_insn *tb_begin_instr,
+    struct qemu_plugin_insn *tb_end_instr, uint64_t tb_begin_pc,
+    uint64_t tb_end_pc, uint64_t tb_instrs, BasicBlockExecCount_t *bb_cnt)
+{
     /*
      * Now we can set start/end for this block so the next block can
      * check where we are at. Do this on the first instruction and not
@@ -176,6 +185,9 @@ static inline void score_board_record_inject_before_tb_exec(struct qemu_plugin_i
     qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(
         tb_begin_instr, QEMU_PLUGIN_INLINE_STORE_U64, middle_exit_flag,
         1);
+    qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(
+        tb_begin_instr, QEMU_PLUGIN_INLINE_STORE_U64, current_bbv_entry,
+        (uint64_t)(uintptr_t)bb_cnt);
     qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(
         tb_end_instr, QEMU_PLUGIN_INLINE_STORE_U64, middle_exit_flag,
         0);
@@ -217,7 +229,9 @@ static void nemu_trap_check(unsigned int vcpu_index, void *userdata) {
         // middle, and the number of instructions after the nemu_trap is
         // not included in profiling, so it needs to be corrected
         profiling_control.start_profiling = true;
+        g_mutex_lock(&profiling_control.bbv_lock);
         g_hash_table_foreach(profiling_control.bbv, clean_exec_count, NULL);
+        g_mutex_unlock(&profiling_control.bbv_lock);
         profiling_control.profiling_instr_counts = 0;
         profiling_control.per_bb_vector_instr_count = 0;
         printf("PLUGIN: worklaod loaded........................\n");
@@ -271,14 +285,26 @@ static void bbv_output(gpointer data, gpointer user_data) {
     }
 }
 
+static gint compare_exec_id(gconstpointer a, gconstpointer b)
+{
+    const BasicBlockExecCount_t *bb_a = a;
+    const BasicBlockExecCount_t *bb_b = b;
+
+    return (bb_a->exec_id > bb_b->exec_id) -
+           (bb_a->exec_id < bb_b->exec_id);
+}
+
 static inline void try_output_to_bb_file() {
     if (profiling_control.per_bb_vector_instr_count >= profiling_info.intervals) {
         assert(profiling_control.bbv_file);
         gzprintf(profiling_control.bbv_file, "T");
-        GList *bbv_list = g_hash_table_get_values(profiling_control.bbv);
+        g_mutex_lock(&profiling_control.bbv_lock);
+        GList *bbv_list = g_list_sort(
+            g_hash_table_get_values(profiling_control.bbv), compare_exec_id);
 
         g_list_foreach(bbv_list, bbv_output, NULL);
         g_list_free(bbv_list);
+        g_mutex_unlock(&profiling_control.bbv_lock);
         gzprintf(profiling_control.bbv_file, "\n");
         profiling_control.per_bb_vector_instr_count = 0;
     }
@@ -291,6 +317,11 @@ static void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
     }
 
     BasicBlockExecCount_t *bb_cnt = userdata;
+    /* Correct the preceding TB before a vector can be emitted and reset. */
+    if (profiling_control.start_profiling) {
+        try_output_to_bb_file();
+    }
+
     if (bb_cnt->exec_times == 0) {
         bb_cnt->exec_id = profiling_control.unique_exec_id++;
     }
@@ -309,13 +340,23 @@ static void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
     fflush(stderr);
 #endif
 
-    if (profiling_control.start_profiling) {
-        try_output_to_bb_file();
-    }
 }
 
-static inline void rollback_instr_counter(uint64_t unexecuted_insns, uint64_t first_pc, uint64_t second_pc) {
+static inline void rollback_instr_counter(
+    uint64_t unexecuted_insns, BasicBlockExecCount_t *original_bb_cnt,
+    uint64_t first_pc, uint64_t second_pc) {
+    if (original_bb_cnt == NULL) {
+        fprintf(stderr,
+                "profilingv2: missing BBV entry for rollback: "
+                "begin=0x%lx end=0x%lx unexecuted=%lu\n",
+                first_pc, second_pc, unexecuted_insns);
+    }
+
     // global
+    g_assert(unexecuted_insns <= profiling_control.profiling_instr_counts);
+    g_assert(unexecuted_insns <=
+             profiling_control.per_bb_vector_instr_count);
+    g_assert(unexecuted_insns <= profiling_control.execute_instr_counts);
     profiling_control.profiling_instr_counts -= unexecuted_insns;
     profiling_control.per_bb_vector_instr_count -= unexecuted_insns;
     profiling_control.execute_instr_counts -= unexecuted_insns;
@@ -324,10 +365,11 @@ static inline void rollback_instr_counter(uint64_t unexecuted_insns, uint64_t fi
     fflush(stderr);
 #endif
 
-    // tb
-    UInt64Pair hash_key = {.first = first_pc, .second = second_pc};
-    BasicBlockExecCount_t *original_bb_cnt = fetch_bbcnt(&hash_key);
-    original_bb_cnt->per_vector_exec_instr_count -= unexecuted_insns;
+    if (original_bb_cnt != NULL) {
+        g_assert(unexecuted_insns <=
+                 original_bb_cnt->per_vector_exec_instr_count);
+        original_bb_cnt->per_vector_exec_instr_count -= unexecuted_insns;
+    }
 }
 
 static void vcpu_tb_middle_exit_exec(unsigned int cpu_index, void *udata) {
@@ -340,15 +382,19 @@ static void vcpu_tb_middle_exit_exec(unsigned int cpu_index, void *udata) {
     uint64_t tb_total_cnt = qemu_plugin_u64_get(current_tb_total_cnt, cpu_index);
     uint64_t first_pc     = qemu_plugin_u64_get(current_block_begin_pc, cpu_index);
     uint64_t lnpc         = qemu_plugin_u64_get(last_pc_next_insn_addr, cpu_index);
+    BasicBlockExecCount_t *original_bb_cnt =
+        (BasicBlockExecCount_t *)(uintptr_t)qemu_plugin_u64_get(
+            current_bbv_entry, cpu_index);
 
     // fix insns count
-    uint64_t unexecuted_insns = tb_total_cnt - tb_execd_cnt; // all instrs - execed instrs + mmio instr
-    g_assert(unexecuted_insns >= 0);
+    g_assert(tb_execd_cnt <= tb_total_cnt);
+    uint64_t unexecuted_insns = tb_total_cnt - tb_execd_cnt;
 
     if (unexecuted_insns > 0) {
         // mmio or except
         if(current_block_first_pc == lnpc) {
-            rollback_instr_counter(unexecuted_insns, first_pc, second_pc);
+            rollback_instr_counter(unexecuted_insns, original_bb_cnt, first_pc,
+                                   second_pc);
 #ifndef NO_LOG
             fprintf(stderr, "first pc %lx, second pc %lx, current block first pc %lx, lnpc %lx\n", first_pc, second_pc, current_block_first_pc, lnpc);
             fflush(stderr);
@@ -356,7 +402,8 @@ static void vcpu_tb_middle_exit_exec(unsigned int cpu_index, void *udata) {
         // exception
         } else {
             unexecuted_insns += 1; // exception instr will execute when ret out of trap_handler
-            rollback_instr_counter(unexecuted_insns, first_pc, second_pc);
+            rollback_instr_counter(unexecuted_insns, original_bb_cnt, first_pc,
+                                   second_pc);
 #ifndef NO_LOG
             fprintf(stderr, "first pc %lx, second pc %lx, current block first pc %lx, lnpc %lx\n", first_pc, second_pc, current_block_first_pc, lnpc);
             fflush(stderr);
@@ -376,10 +423,12 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
     hash_key->first = tb_begin_pc;
     hash_key->second = tb_end_pc;
     BasicBlockExecCount_t *bb_cnt;
+    g_mutex_lock(&profiling_control.bbv_lock);
     bb_cnt = fetch_bbcnt(hash_key);
 
     if (bb_cnt) {
         bb_cnt->trans_count++;
+        g_free(hash_key);
     } else {
         bb_cnt = g_new0(BasicBlockExecCount_t, 1);
         bb_cnt->begin_addr = tb_begin_pc;
@@ -392,12 +441,15 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
         bb_cnt->per_vector_exec_instr_count = 0;
         g_hash_table_insert(profiling_control.bbv, hash_key, bb_cnt);
     }
+    g_mutex_unlock(&profiling_control.bbv_lock);
 #ifndef NO_LOG
     fprintf(stderr, "trans new bb, first pc: %lx second pc: %lx\n", tb_begin_pc, tb_end_pc);
 #endif
 
     // mmio tb will not update tb info
-    score_board_record_inject_before_tb_exec(tb_begin_instr, tb_end_instr, tb_begin_pc, tb_end_pc, tb_instrs);
+    score_board_record_inject_before_tb_exec(tb_begin_instr, tb_end_instr,
+                                             tb_begin_pc, tb_end_pc,
+                                             tb_instrs, bb_cnt);
 
     // mmio tb will not inject middle check
     // after mmio block, will inject this
@@ -419,7 +471,10 @@ static void profiling_exit(qemu_plugin_id_t id, void *userdata) {
     fflush(stderr);
 
     gzclose(profiling_control.bbv_file);
+    g_mutex_lock(&profiling_control.bbv_lock);
     g_hash_table_destroy(profiling_control.bbv);
+    g_mutex_unlock(&profiling_control.bbv_lock);
+    g_mutex_clear(&profiling_control.bbv_lock);
 
 }
 
