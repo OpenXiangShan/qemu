@@ -9,6 +9,7 @@ riscv_ss.add(files(
   'crypto_helper.c',
   'fpu_helper.c',
   'm128_helper.c',
+  'matrix_helper.c',
   'op_helper.c',
   'translate.c',
   'tcg-cpu.c',
@@ -19,11 +20,10 @@ riscv_ss.add(files(
 
 
 riscv_system_ss.add(files(
+  '../../../accel/tcg/checkpoint-gen.c',
   'debug.c',
   'mips_csr.c',
   'pmp.c',
   'pmu.c',
   'th_csr.c',
 ))
-
-

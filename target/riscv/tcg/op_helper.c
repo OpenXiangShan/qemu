@@ -17,7 +17,6 @@
  * You should have received a copy of the GNU General Public License along with
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "target/riscv/tcg/csr.h"
@@ -29,6 +28,64 @@
 #include "exec/helper-proto.h"
 #include "exec/tlb-flags.h"
 #include "trace.h"
+#include "system/runstate.h"
+
+#ifndef CONFIG_USER_ONLY
+#include "checkpoint/checkpoint.h"
+
+extern GMutex sync_lock;
+void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
+
+#define DISABLE_TIME_INTR 0x100
+#define NOTIFY_PROFILER 0x101
+#define NOTIFY_WORKLOAD_EXIT 0x102
+
+    // nemu trap -> nemu_singal(GOOD_TRAP)
+#define GOOD_TRAP 0x0
+
+    CPUState *cs = env_cpu(env);
+    MachineState *ms = MACHINE(qdev_get_machine());
+    NEMUState *ns = NEMU_MACHINE(ms);
+
+    fflush(stdout);
+
+    if (a0 == DISABLE_TIME_INTR) {
+        ns->cpt_func.try_set_mie(env ,ns);
+    } else if (a0 == NOTIFY_PROFILER) {
+        // workload loaded
+        g_atomic_int_set(&ns->sync_info.online[cs->cpu_index], 1);
+        g_atomic_int_add(&ns->sync_info.online_cpus, 1);
+
+        g_atomic_pointer_set(&ns->sync_info.kernel_insns[cs->cpu_index], env->profiling_insns);
+
+        printf("Notify cpu index %d nemu_trap get insns %ld get workload start profiling\n", cs->cpu_index,
+        env->profiling_insns);
+
+    } else if (a0 == NOTIFY_WORKLOAD_EXIT) {
+        // notice hart exit
+        printf("Notify cpu index %d nemu_trap get insns %ld get worklaod exit\n",
+        cs->cpu_index, env->profiling_insns);
+
+        ns->cpt_func.try_take_cpt(ns, env->profiling_insns, cs->cpu_index, true);
+
+        g_atomic_int_set(&ns->sync_info.online[cs->cpu_index], 0);
+        g_atomic_int_add(&ns->sync_info.online_cpus, -1);
+
+
+    } else if(a0 == GOOD_TRAP){
+        // exit when in simpoint profiling or normal running
+        if (ns->sync_info.cpus > 1) {
+            while (g_atomic_int_get(&ns->sync_info.online_cpus) != 0) {}
+        }
+        printf("Hit GOOD TRAP\n");
+        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+
+    } else {
+        printf("Hit BAD TRAP " TARGET_FMT_lu "\n", a0);
+        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+    }
+}
+#endif
 
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
@@ -541,6 +598,7 @@ void helper_ctr_clear(CPURISCVState *env)
     riscv_ctr_clear(env);
 }
 
+extern NEMUState *local_nemu_state;
 void helper_wfi(CPURISCVState *env)
 {
     CPUState *cs = env_cpu(env);
@@ -548,6 +606,9 @@ void helper_wfi(CPURISCVState *env)
     bool prv_u = env->priv == PRV_U;
     bool prv_s = env->priv == PRV_S;
 
+    //prv_s smode
+    //no smode and at uprv
+    // mstatus_tw在没有其他因素的前提下可以在较低权限模式下执行，当tw=1时，如果wfi在任何较低的权限模式下执行，且未在特定于实现的限定期限内完成，则wfi可能导致非法指令异常。时限可能永远是0，在这种情况下，当tw=1时，wfi在低特权模式下始终产生非法指令异常。当不存在低于M的特权级，tw只读为0
     if (((prv_s || (!rvs && prv_u)) && get_field(env->mstatus, MSTATUS_TW)) ||
         (rvs && prv_u && !env->virt_enabled)) {
         riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
@@ -555,6 +616,12 @@ void helper_wfi(CPURISCVState *env)
                (prv_u || (prv_s && get_field(env->hstatus, HSTATUS_VTW)))) {
         riscv_raise_exception(env, RISCV_EXCP_VIRT_INSTRUCTION_FAULT, GETPC());
     } else {
+#ifndef CONFIG_USER_ONLY
+        if (local_nemu_state) {
+            try_take_cpt(local_nemu_state, env->profiling_insns,
+                         cs->cpu_index, true);
+        }
+#endif
         cs->halted = 1;
         cs->exception_index = EXCP_HLT;
         cpu_loop_exit(cs);

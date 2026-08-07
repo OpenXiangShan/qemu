@@ -15,4 +15,8 @@
 
 #include "accel/tcg/getpc.h"
 
+#define HELPER_H "accel/tcg/checkpoint-helper.h"
+#include "exec/helper-proto.h.inc"
+#undef HELPER_H
+
 #endif /* HELPER_PROTO_COMMON_H */

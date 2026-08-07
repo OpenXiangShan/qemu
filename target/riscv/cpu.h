@@ -206,6 +206,9 @@ extern RISCVCPUImpliedExtsRule *riscv_multi_ext_implied_rules[];
 #define RV_MAX_TRIGGERS 1024
 #define RV_DEFAULT_NUM_TRIGGERS 2
 
+#define RV_RLEN_MAX 4096
+#define RV_MACC_LEN 32
+
 FIELD(VTYPE, VLMUL, 0, 3)
 FIELD(VTYPE, VSEW, 3, 3)
 FIELD(VTYPE, VTA, 6, 1)
@@ -230,6 +233,10 @@ FIELD(VTYPE, RESERVED, 9, sizeof(uint64_t) * 8 - 10)
 typedef int (*aia_ireg_rmw_fn)(void *arg, uint32_t reg, uint64_t *val,
                                uint64_t new_val, uint64_t write_mask);
 #endif
+
+FIELD(MSIZE, SIZEM, 0, 8)
+FIELD(MSIZE, SIZEN, 8, 8)
+FIELD(MSIZE, SIZEK, 16, 16)
 
 typedef struct PMUCTRState {
     /* Current value of a counter */
@@ -261,6 +268,18 @@ struct CPUArchState {
     uint8_t vxrm;
     uint8_t vxsat;
     bool vill;
+
+    /* matrix state */
+    uint64_t mreg[8 * RV_RLEN_MAX / RV_MACC_LEN * RV_RLEN_MAX / 64]
+        QEMU_ALIGNED(16);
+    uint64_t sizem;
+    uint64_t sizen;
+    uint64_t sizek;
+    uint64_t mrstart;
+    uint64_t mcsr;
+    uint64_t mxsat;
+    uint64_t mxrm;
+    uint64_t xmisa;
 
     uint64_t pc;
     uint64_t load_res;
@@ -531,6 +550,8 @@ struct CPUArchState {
     hwaddr kernel_addr;
     hwaddr fdt_addr;
 
+    uint64_t profiling_insns;
+
 #ifdef CONFIG_KVM
     /* kvm timer */
     bool kvm_timer_dirty;
@@ -647,6 +668,7 @@ int riscv_cpu_pending_to_irq(CPURISCVState *env,
 
 bool riscv_cpu_fp_enabled(CPURISCVState *env);
 bool riscv_cpu_vector_enabled(CPURISCVState *env);
+bool riscv_cpu_matrix_enabled(CPURISCVState *env);
 void riscv_cpu_set_virt_enabled(CPURISCVState *env, bool enable);
 int riscv_env_mmu_index(CPURISCVState *env, bool ifetch);
 bool cpu_get_fcfien(CPURISCVState *env);
@@ -742,6 +764,19 @@ FIELD(TB_FLAGS, PM_SIGNEXTEND, 31, 1)
 FIELD(EXT_TB_FLAGS, MISA_EXT, 0, 32)
 FIELD(EXT_TB_FLAGS, ALTFMT, 32, 1)
 FIELD(EXT_TB_FLAGS, BIG_ENDIAN, 33, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_PWI32, 34, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_PWI64, 35, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_I4I32, 36, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_I8I32, 37, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_I16I64, 38, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_F16F16, 39, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_F32F32, 40, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_F64F64, 41, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_MILL, 42, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_NILL, 43, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_KILL, 44, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_NPILL, 45, 1)
+FIELD(EXT_TB_FLAGS, MATRIX_BF16, 46, 1)
 
 #ifdef TARGET_RISCV32
 #define riscv_cpu_mxl(env)  ((void)(env), MXL_RV32)

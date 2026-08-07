@@ -22,7 +22,7 @@ static bool do_inline;
 /* Plugins need to take care of their own locking */
 static GMutex lock;
 static GHashTable *hotblocks;
-static guint64 limit = 20;
+static guint64 limit = 2000;
 
 /*
  * Counting Structure

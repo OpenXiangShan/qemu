@@ -24,6 +24,30 @@
     }                                \
 } while (0)
 
+#ifndef CONFIG_USER_ONLY
+static bool trans_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
+{
+    gen_helper_nemu_trap(tcg_env, cpu_gpr[10]);
+    return true;
+}
+
+static bool trans_old_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
+{
+    gen_helper_nemu_trap(tcg_env, cpu_gpr[10]);
+    return true;
+}
+#else
+static bool trans_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
+{
+    return false;
+}
+
+static bool trans_old_nemu_trap(DisasContext *ctx, arg_nemu_trap *a)
+{
+    return false;
+}
+#endif /* CONFIG_USER_ONLY */
+
 static bool trans_ecall(DisasContext *ctx, arg_ecall *a)
 {
     /* always generates U-level ECALL, fixed in do_interrupt handler */

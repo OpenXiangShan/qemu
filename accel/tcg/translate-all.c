@@ -269,6 +269,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
     void *host_pc;
 
     assert_memory_lock();
+    // map_jit region write protect, prevent anyone write in
     qemu_thread_jit_write();
 
     phys_pc = get_page_addr_code_hostp(env, s.pc, &host_pc);
@@ -284,6 +285,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
     }
     QEMU_BUILD_BUG_ON(CF_COUNT_MASK + 1 != TCG_MAX_INSNS);
 
+    //prepare tcg ctx
  buffer_overflow:
     assert_no_pages_locked();
     tb = tcg_tb_alloc(tcg_ctx);

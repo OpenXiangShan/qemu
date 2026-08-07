@@ -23,6 +23,12 @@
 
 static void set_can_do_io(DisasContextBase *db, bool val)
 {
+    //                ! = ! =
+    //saved_can_do_io 0 1 1 0
+    //val             1 1 0 0
+    // max_insns==1 and cannot do io -> can do io
+    // max_insns!=1 and can do io -> can not do io
+    // so io can do when insns == 1
     QEMU_BUILD_BUG_ON(sizeof_field(CPUState, neg.can_do_io) != 1);
     tcg_gen_st8_i32(tcg_constant_i32(val), tcg_env,
                     offsetof(CPUState, neg.can_do_io) - sizeof(CPUState));
@@ -45,8 +51,11 @@ static TCGOp *gen_tb_start(DisasContextBase *db, uint32_t cflags)
     TCGv_i32 count = NULL;
     TCGOp *icount_start_insn = NULL;
 
+    //use icount or not use irq
     if ((cflags & CF_USE_ICOUNT) || !(cflags & CF_NOIRQ)) {
+        // new tmp var
         count = tcg_temp_new_i32();
+        //load count, icount_decr
         tcg_gen_ld_i32(count, tcg_env,
                        offsetof(CPUState, neg.icount_decr.u32) -
                        sizeof(CPUState));
@@ -59,6 +68,7 @@ static TCGOp *gen_tb_start(DisasContextBase *db, uint32_t cflags)
          * can update the argument with the actual insn count.
          */
         tcg_gen_sub_i32(count, count, tcg_constant_i32(0));
+        // return tcg_ctx->ops last node
         icount_start_insn = tcg_last_op();
     }
 
@@ -72,11 +82,13 @@ static TCGOp *gen_tb_start(DisasContextBase *db, uint32_t cflags)
     if (cflags & CF_NOIRQ) {
         tcg_ctx->exitreq_label = NULL;
     } else {
+        // if not use NOIRQ if cond_ld(count,0) goto tb_start
         tcg_ctx->exitreq_label = gen_new_label();
         tcg_gen_brcondi_i32(TCG_COND_LT, count, 0, tcg_ctx->exitreq_label);
     }
 
     if (cflags & CF_USE_ICOUNT) {
+        //if use icount store count in icount_decr.u16.low
         tcg_gen_st16_i32(count, tcg_env,
                          offsetof(CPUState, neg.icount_decr.u16.low) -
                          sizeof(CPUState));
@@ -126,6 +138,7 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int *max_insns,
     uint32_t cflags = tb_cflags(tb);
     TCGOp *icount_start_insn;
     TCGOp *first_insn_start = NULL;
+    TCGv_i64 *cpu_exec_count = ops->cpu_exec_count;
     bool plugin_enabled;
 
     tcg_ctx->addr_type = addr_type;
@@ -136,6 +149,7 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int *max_insns,
     db->pc_next = pc;
     db->is_jmp = DISAS_NEXT;
     db->num_insns = 0;
+    // 512 or max_insns & 0x1ff
     db->max_insns = *max_insns;
     db->insn_start = NULL;
     db->fake_insn = false;
@@ -156,8 +170,12 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int *max_insns,
     plugin_enabled = plugin_gen_tb_start(cpu, db);
     db->plugin_enabled = plugin_enabled;
 
+    if (ops->checkpoint_gen_callback) {
+        ops->checkpoint_gen_callback();
+    }
     while (true) {
         *max_insns = ++db->num_insns;
+
         ops->insn_start(db, cpu);
         db->insn_start = tcg_last_op();
         if (first_insn_start == NULL) {
@@ -175,6 +193,9 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int *max_insns,
          * done next -- either exiting this loop or locate the start of
          * the next instruction.
          */
+        if (cpu_exec_count) {
+            tcg_gen_addi_i64(*cpu_exec_count, *cpu_exec_count, 1);
+        }
         ops->translate_insn(db, cpu);
 
         /*

@@ -32,6 +32,20 @@
 #define FSR_NXA             (FPEXC_NX << FSR_AEXC_SHIFT)
 #define FSR_AEXC            (FSR_NVA | FSR_OFA | FSR_UFA | FSR_DZA | FSR_NXA)
 
+/* Matrix Sub Extension */
+#define MATRIX_PW_I32       0x80
+#define MATRIX_PW_I64       0x40
+#define MATRIX_MULT_F64F64  0x20
+#define MATRIX_MULT_F32F32  0x10
+#define MATRIX_MULT_F16F16  0x8
+#define MATRIX_MULT_I8I32   0x4
+#define MATRIX_MULT_I16I64  0x2
+#define MATRIX_MULT_I4I32   0x1
+
+/* Matrix Status */
+#define MCSR_RM            0xC
+#define MCSR_SAT           0x10
+
 /* Control and Status Registers */
 
 /* zicfiss user ssp csr */
@@ -68,6 +82,14 @@
 #define VCSR_VXSAT          (0x1 << VCSR_VXSAT_SHIFT)
 #define VCSR_VXRM_SHIFT     1
 #define VCSR_VXRM           (0x3 << VCSR_VXRM_SHIFT)
+
+/* Matrix CSR */
+#define CSR_MRSTART         0x801
+#define CSR_MCSR            0x802
+#define CSR_MSIZE           0x803
+#define CSR_MLENB           0xCC0
+#define CSR_MRLENB          0xCC1
+#define CSR_XMISA           0xCC2
 
 /* User Timers and Counters */
 #define CSR_CYCLE           0xc00
@@ -664,6 +686,7 @@ typedef enum {
 #define SSTATUS_MXR         0x00080000
 #define SSTATUS_SPELP       MSTATUS_SPELP   /* zicfilp */
 #define SSTATUS_SDT         MSTATUS_SDT
+#define SSTATUS_MS          0x01800000
 
 #define SSTATUS64_UXL       0x0000000300000000ULL
 

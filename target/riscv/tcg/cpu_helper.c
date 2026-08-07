@@ -451,6 +451,12 @@ bool riscv_cpu_vector_enabled(CPURISCVState *env)
     return false;
 }
 
+/* Return true if matrix support is enabled for this CPU. */
+bool riscv_cpu_matrix_enabled(CPURISCVState *env)
+{
+    return env_archcpu(env)->cfg.ext_matrix;
+}
+
 void riscv_cpu_swap_hypervisor_regs(CPURISCVState *env)
 {
     uint64_t mstatus_mask = MSTATUS_MXR | MSTATUS_SUM |

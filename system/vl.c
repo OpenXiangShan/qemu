@@ -145,6 +145,7 @@
 #include "qemu/keyval.h"
 #include "memory-internal.h"
 
+
 #define MAX_VIRTIO_CONSOLES 1
 
 typedef struct BlockdevOptionsQueueEntry {
@@ -3736,6 +3737,7 @@ void qemu_init(int argc, char **argv)
             }
         }
     }
+
     /*
      * Clear error location left behind by the loop.
      * Best done right after the loop.  Do not insert code here!
@@ -3867,4 +3869,5 @@ void qemu_init(int argc, char **argv)
         os_setup_post();
     }
     resume_mux_open();
+
 }

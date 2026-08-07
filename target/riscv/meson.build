@@ -26,6 +26,13 @@ riscv_system_ss.add(files(
   'machine.c',
   'time_helper.c',
   'riscv-qmp-cmds.c',
+  'serializer.c',
+  'multicore.c',
+  'serializer_utils.c',
+  'checkpoint.pb.c',
+  'pb_common.c',
+  'pb_decode.c',
+  'pb_encode.c',
 ))
 
 subdir('tcg')

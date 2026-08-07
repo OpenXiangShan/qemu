@@ -162,3 +162,8 @@ config K230
     select SERIAL_MM
     select UNIMP
     select K230_WDT
+config NEMU
+    bool
+    select SERIAL
+    select SIFIVE_PLIC
+    select XILINX

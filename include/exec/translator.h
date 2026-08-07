@@ -115,6 +115,8 @@ struct DisasContextBase {
  * @disas_log:
  *      Print instruction disassembly to log.
  */
+
+#include "tcg/tcg.h"
 typedef struct TranslatorOps {
     void (*init_disas_context)(DisasContextBase *db, CPUState *cpu);
     void (*tb_start)(DisasContextBase *db, CPUState *cpu);
@@ -122,6 +124,8 @@ typedef struct TranslatorOps {
     void (*translate_insn)(DisasContextBase *db, CPUState *cpu);
     void (*tb_stop)(DisasContextBase *db, CPUState *cpu);
     bool (*disas_log)(const DisasContextBase *db, CPUState *cpu, FILE *f);
+    TCGv_i64 *cpu_exec_count;
+    void (*checkpoint_gen_callback)(void);
 } TranslatorOps;
 
 /**

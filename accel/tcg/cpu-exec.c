@@ -890,6 +890,7 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 {
     trace_exec_tb(tb, pc);
     tb = cpu_tb_exec(cpu, tb, tb_exit);
+
     if (*tb_exit != TB_EXIT_REQUESTED) {
         *last_tb = tb;
         return;
@@ -936,6 +937,7 @@ static int __attribute__((noinline))
 cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 {
     int ret;
+//    CPURISCVState *env = cpu_env(cpu);
 
     /* if an exception is pending, we execute it here */
     while (!cpu_handle_exception(cpu, &ret)) {
@@ -1000,7 +1002,6 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
             }
 
             cpu_loop_exec_tb(cpu, tb, s.pc, &last_tb, &tb_exit);
-
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             align_clocks(sc, cpu);

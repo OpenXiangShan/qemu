@@ -194,6 +194,33 @@ static TCGTBCPUState riscv_get_tb_cpu_state(CPUState *cs)
     flags = FIELD_DP32(flags, TB_FLAGS, PM_PMM, riscv_pm_get_pmm(env));
     flags = FIELD_DP32(flags, TB_FLAGS, PM_SIGNEXTEND, pm_signext);
 
+    if (cpu->cfg.ext_matrix) {
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_PWI32,
+                               !!(env->xmisa & MATRIX_PW_I32));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_PWI64,
+                               !!(env->xmisa & MATRIX_PW_I64));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_I4I32,
+                               !!(env->xmisa & MATRIX_MULT_I4I32));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_I8I32,
+                               !!(env->xmisa & MATRIX_MULT_I8I32));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_I16I64,
+                               !!(env->xmisa & MATRIX_MULT_I16I64));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_F16F16,
+                               !!(env->xmisa & MATRIX_MULT_F16F16));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_F32F32,
+                               !!(env->xmisa & MATRIX_MULT_F32F32));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_F64F64,
+                               !!(env->xmisa & MATRIX_MULT_F64F64));
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_MILL,
+                               env->sizem > get_mrows(env) || !env->sizem);
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_NILL,
+                               env->sizen > get_mrows(env) || !env->sizen);
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_KILL,
+                               env->sizek > get_rlenb(env) || !env->sizek);
+        ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MATRIX_NPILL,
+                               env->sizen > 2 * get_mrows(env) || !env->sizen);
+    }
+
     ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, MISA_EXT, env->misa_ext);
     ext_flags = FIELD_DP64(ext_flags, EXT_TB_FLAGS, BIG_ENDIAN,
                            mo_endian_env(env) == MO_BE);

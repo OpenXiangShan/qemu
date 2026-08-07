@@ -45,3 +45,6 @@
 [submodule "tests/lcitool/libvirt-ci"]
 	path = tests/lcitool/libvirt-ci
 	url = https://gitlab.com/libvirt/libvirt-ci.git
+[submodule "resource/nanopb"]
+	path = resource/nanopb
+	url = https://github.com/nanopb/nanopb

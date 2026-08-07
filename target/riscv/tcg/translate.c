@@ -28,6 +28,9 @@
 #include "exec/translation-block.h"
 #include "exec/log.h"
 #include "semihosting/semihost.h"
+#ifndef CONFIG_USER_ONLY
+#include "checkpoint/checkpoint.h"
+#endif
 
 #include "internals.h"
 
@@ -39,6 +42,8 @@
 
 /* global register indices */
 static TCGv cpu_gpr[32], cpu_gprh[32], cpu_pc;
+static TCGv sizem, sizen, sizek;
+static TCGv_i64 cpu_exec_count;
 static TCGv_i64 cpu_fpr[32]; /* assume F and D extensions */
 static TCGv_i32 cpu_vl, cpu_vstart;
 static TCGv load_res;
@@ -67,6 +72,7 @@ typedef struct DisasContext {
     uint32_t opcode;
     RISCVExtStatus mstatus_fs;
     RISCVExtStatus mstatus_vs;
+    uint32_t mcsr_ms;
     uint32_t mem_idx;
     privilege_mode_t priv;
     /*
@@ -97,6 +103,20 @@ typedef struct DisasContext {
      */
     int8_t lmul;
     uint8_t sew;
+    bool bf16;
+    bool pwi32;
+    bool pwi64;
+    bool i4i32;
+    bool i8i32;
+    bool i16i64;
+    bool f16f16;
+    bool f32f32;
+    bool f64f64;
+    bool mill;
+    bool nill;
+    bool kill;
+    bool npill;
+    uint16_t mrowlen;
     uint8_t vta;
     uint8_t vma;
     bool cfg_vta_all_1s;
@@ -108,6 +128,9 @@ typedef struct DisasContext {
     /* actual address width */
     uint8_t addr_xl;
     bool addr_signed;
+    uint8_t ntemp;
+    /* Space for 3 operands plus 1 extra for address computation. */
+    TCGv temp[4];
     /* Ztso */
     bool ztso;
     /* Use icount trigger for native debug */
@@ -330,6 +353,20 @@ static void gen_goto_tb(DisasContext *ctx, unsigned tb_slot_idx,
         gen_update_pc(ctx, diff);
         lookup_and_goto_ptr(ctx);
     }
+}
+
+/*
+ * Wrappers for getting reg values.
+ *
+ * The $zero register does not have cpu_gpr[0] allocated -- we supply the
+ * constant zero as a source, and an uninitialized sink as destination.
+ *
+ * Further, we may provide an extension for word operations.
+ */
+static TCGv temp_new(DisasContext *ctx)
+{
+    assert(ctx->ntemp < ARRAY_SIZE(ctx->temp));
+    return ctx->temp[ctx->ntemp++] = tcg_temp_new();
 }
 
 /*
@@ -780,6 +817,11 @@ static int ex_plus_1(DisasContext *ctx, int nf)
     return nf + 1;
 }
 
+static int ex_plus_8(DisasContext *ctx, int rs)
+{
+    return rs + 8;
+}
+
 #define EX_SH(amount) \
     static int ex_shift_##amount(DisasContext *ctx, int imm) \
     {                                         \
@@ -1220,6 +1262,7 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #include "insn_trans/trans_xventanacondops.c.inc"
 #include "insn_trans/trans_xmips.c.inc"
 #include "insn_trans/trans_xlrbr.c.inc"
+#include "insn_trans/trans_rvmm.c.inc"
 
 /* Include the auto-generated decoder for 16 bit insn */
 #include "decode-insn16.c.inc"
@@ -1355,6 +1398,23 @@ static void riscv_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     ctx->decoders = cpu->decoders;
     ctx->mo_endianness = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, BIG_ENDIAN)
                          ? MO_BE : MO_LE;
+    ctx->bf16 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_BF16);
+    ctx->pwi32 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_PWI32);
+    ctx->pwi64 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_PWI64);
+    ctx->i4i32 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_I4I32);
+    ctx->i8i32 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_I8I32);
+    ctx->i16i64 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_I16I64);
+    ctx->f16f16 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_F16F16);
+    ctx->f32f32 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_F32F32);
+    ctx->f64f64 = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_F64F64);
+    ctx->mill = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_MILL);
+    ctx->nill = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_NILL);
+    ctx->kill = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_KILL);
+    ctx->npill = FIELD_EX64(ext_tb_flags, EXT_TB_FLAGS, MATRIX_NPILL);
+    ctx->mcsr_ms = get_field(env->mstatus, SSTATUS_MS);
+    ctx->mrowlen = cpu->cfg.mrowlen;
+    ctx->ntemp = 0;
+    memset(ctx->temp, 0, sizeof(ctx->temp));
 }
 
 static void riscv_tr_tb_start(DisasContextBase *db, CPUState *cpu)
@@ -1442,6 +1502,10 @@ static const TranslatorOps riscv_tr_ops = {
     .insn_start         = riscv_tr_insn_start,
     .translate_insn     = riscv_tr_translate_insn,
     .tb_stop            = riscv_tr_tb_stop,
+    .cpu_exec_count     = &cpu_exec_count,
+#ifndef CONFIG_USER_ONLY
+    .checkpoint_gen_callback = checkpoint_gen_empty_callback,
+#endif
 };
 
 void riscv_translate_code(CPUState *cs, TranslationBlock *tb,
@@ -1502,4 +1566,9 @@ void riscv_translate_init(void)
     cpu_vstart = tcg_global_mem_new_i32(tcg_env, vstart_offset, "vstart");
     load_res = tcg_global_mem_new(tcg_env, res_offset, "load_res");
     load_val = tcg_global_mem_new(tcg_env, val_offset, "load_val");
+    cpu_exec_count = tcg_global_mem_new_i64(
+        tcg_env, offsetof(CPURISCVState, profiling_insns), "profiling_insns");
+    sizem = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizem), "sizem");
+    sizen = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizen), "sizen");
+    sizek = tcg_global_mem_new(tcg_env, offsetof(CPURISCVState, sizek), "sizek");
 }

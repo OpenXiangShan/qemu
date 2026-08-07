@@ -184,6 +184,24 @@ static inline float16 check_nanbox_bf16(CPURISCVState *env, uint64_t f)
     }
 }
 
+static inline target_ulong get_rlenb(CPURISCVState *env)
+{
+    return env_archcpu(env)->cfg.mrowlen >> 3;
+}
+
+static inline target_ulong get_mrows(CPURISCVState *env)
+{
+    return env_archcpu(env)->cfg.mrowlen / RV_MACC_LEN;
+}
+
+static inline target_ulong get_mlenb(CPURISCVState *env)
+{
+    return get_mrows(env) * get_rlenb(env);
+}
+
+/* rounding incremental calculation */
+uint8_t get_round(uint8_t rm, uint64_t v, uint8_t shift);
+
 static inline target_ulong get_xepc_mask(CPURISCVState *env)
 {
     RISCVCPU *cpu = env_archcpu(env);
