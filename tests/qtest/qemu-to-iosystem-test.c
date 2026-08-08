@@ -27,7 +27,7 @@
 #define QTI_MSI_ADDR          0x80030000ULL
 #define QTI_IMAGE_SIZE        4096
 #define QTI_PAGE_SIZE         4096
-#define QTI_QUEUE_NUM         8
+#define QTI_QUEUE_NUM         128
 #define QTI_BLK_IRQ           15
 #define QTI_BLK_EIID          0x55
 
@@ -229,6 +229,10 @@ static void qti_submit_write_request(QTestState *qts)
                      1u, !=, 0);
     qti_write32(qts, QTI_BLK_BASE + VIRTIO_MMIO_INTERRUPT_ACK, 1);
 
+    for (int i = 0; i < 32 && qtest_readl(qts, QTI_MSI_ADDR) != QTI_BLK_EIID;
+         i++) {
+        qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG);
+    }
     g_assert_cmpuint(qtest_readl(qts, QTI_MSI_ADDR), ==, QTI_BLK_EIID);
 }
 
@@ -307,6 +311,111 @@ static void test_machine_virtio_blk(void)
     g_assert_nonnull(strstr(trace, "port=io2q channel=memory-read"));
     g_assert_nonnull(strstr(trace, "port=io2q channel=memory-write"));
     g_assert_nonnull(strstr(trace, "address=0x0000000080030000"));
+    close(image_fd);
+    unlink(image_path);
+    unlink(trace_path);
+}
+
+static void test_machine_rtl_system_virtio_blk(void)
+{
+    const char *rtl_api = g_getenv("IO_RTL_SYSTEM_API_SO");
+    char image_path[] = "/tmp/qti-rtl-blk.XXXXXX";
+    char trace_path[] = "/tmp/qti-rtl-trace.XXXXXX";
+    QTestState *qts;
+    uint8_t zero[0x2000] = { 0 };
+    int image_fd;
+    int trace_fd;
+    g_autofree char *trace = NULL;
+    gsize trace_len = 0;
+
+    if (!rtl_api || !*rtl_api ||
+        !g_file_test(rtl_api, G_FILE_TEST_IS_REGULAR)) {
+        g_test_skip("IO_RTL_SYSTEM_API_SO does not name a built RTL API");
+        return;
+    }
+
+    image_fd = mkstemp(image_path);
+    g_assert_cmpint(image_fd, >=, 0);
+    g_assert_cmpint(ftruncate(image_fd, QTI_IMAGE_SIZE), ==, 0);
+
+    trace_fd = mkstemp(trace_path);
+    g_assert_cmpint(trace_fd, >=, 0);
+    close(trace_fd);
+
+    qts = qtest_initf("-M qemu_to_iosystem,generated-dtb=off,"
+                      "io-system-backend=rtl-system,"
+                      "io-system-backend-lib=%s,"
+                      "my-virtio-blk=on,my-virtio-blk-image=%s,"
+                      "io-system-trace-file=%s "
+                      "-m 128M -smp 1 -bios none -nodefaults -serial none",
+                      rtl_api, image_path, trace_path);
+
+    qtest_memwrite(qts, QTI_QUEUE_BASE, zero, sizeof(zero));
+    qtest_memwrite(qts, QTI_REQ_OUT_BASE, zero, 0x1000);
+    qtest_memwrite(qts, QTI_REQ_IN_BASE, zero, 0x1000);
+
+    qti_configure_aplic_for_blk(qts);
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG),
+                    ==, 0x80000104u);
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE +
+                                APLIC_SOURCECFG_BASE +
+                                (QTI_BLK_IRQ - 1) * 4),
+                    ==, APLIC_SOURCECFG_EDGE_RISE);
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_TARGET_BASE +
+                                (QTI_BLK_IRQ - 1) * 4),
+                    ==, QTI_BLK_EIID);
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_SETIP_BASE +
+                                4 * (QTI_BLK_IRQ / 32)),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + 0x1e00 +
+                                4 * (QTI_BLK_IRQ / 32)) &
+                    (1u << (QTI_BLK_IRQ % 32)),
+                    ==, 1u << (QTI_BLK_IRQ % 32));
+
+    qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_SETIPNUM, QTI_BLK_IRQ);
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_SETIP_BASE) &
+                    (1u << QTI_BLK_IRQ),
+                    ==, 0);
+    for (int i = 0; i < 32 && qtest_readl(qts, QTI_MSI_ADDR) != QTI_BLK_EIID;
+         i++) {
+        qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG);
+    }
+    g_assert_cmphex(qtest_readl(qts, QTI_MSI_ADDR), ==, QTI_BLK_EIID);
+    qtest_writel(qts, QTI_MSI_ADDR, 0);
+
+    qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SMSICFGADDR,
+                 QTI_IMSIC_S_BASE >> 12);
+    qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SMSICFGADDRH, 0);
+    qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_SETIPNUM, QTI_BLK_IRQ);
+    for (int i = 0; i < 32 &&
+         (qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_SETIP_BASE) &
+          (1u << QTI_BLK_IRQ)); i++) {
+        qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG);
+    }
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_SETIP_BASE) &
+                    (1u << QTI_BLK_IRQ),
+                    ==, 0);
+    qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SMSICFGADDR,
+                 QTI_MSI_ADDR >> 12);
+    qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SMSICFGADDRH, 0);
+
+    qti_configure_blk(qts);
+    qti_submit_write_request(qts);
+    qti_submit_read_request(qts);
+    g_assert_cmphex(qtest_readl(qts, QTI_NET_BASE), ==, 0xffffffffu);
+
+    /* The VCS DPI runtime converts libqtest's SIGTERM into exit status 255. */
+    qtest_set_expected_status(qts, 255);
+    qtest_quit(qts);
+    g_assert_true(g_file_get_contents(trace_path, &trace, &trace_len, NULL));
+    g_assert_nonnull(strstr(trace, "port=io2q channel=memory-read"));
+    g_assert_nonnull(strstr(trace, "port=io2q channel=memory-write"));
+    g_assert_nonnull(strstr(trace, "address=0x0000000080030000"));
+    g_assert_nonnull(strstr(trace,
+                            "address=0x000000003b000000 beat_index=0 "
+                            "beat_size=4 response=OKAY"));
+    g_assert_nonnull(strstr(trace, "address=0x0000000031090000"));
+    g_assert_nonnull(strstr(trace, "response=DECERR"));
     close(image_fd);
     unlink(image_path);
     unlink(trace_path);
@@ -495,6 +604,8 @@ int main(int argc, char **argv)
                    test_machine_unimplemented_bridge);
     qtest_add_func("/qemu_to_iosystem/virtio-blk",
                    test_machine_virtio_blk);
+    qtest_add_func("/qemu_to_iosystem/rtl-system-virtio-blk",
+                   test_machine_rtl_system_virtio_blk);
     qtest_add_func("/qemu_to_iosystem/dwc-pcie-root",
                    test_machine_dwc_pcie_root);
     qtest_add_func("/qemu_to_iosystem/dwc-pcie-nvme-config",

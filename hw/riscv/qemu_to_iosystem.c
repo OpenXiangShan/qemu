@@ -132,6 +132,11 @@ static bool qti_backend_uses_cmodel_devices(IoSystemBackendKind kind)
     return kind == IO_SYSTEM_BACKEND_CMODEL;
 }
 
+static bool qti_backend_uses_rtl_system(IoSystemBackendKind kind)
+{
+    return kind == IO_SYSTEM_BACKEND_RTL_SYSTEM;
+}
+
 static const char *qti_axi_response_name(IoAxiResponse response)
 {
     switch (response) {
@@ -415,6 +420,20 @@ static uint64_t qti_clock(void *opaque)
 static void qti_log(void *opaque, int level, const char *fmt, va_list ap)
     G_GNUC_PRINTF(3, 0);
 
+static bool qti_info_logs_enabled(void)
+{
+    static int initialized;
+    static bool enabled;
+
+    if (!initialized) {
+        const char *env = getenv("QTI_IO_SYSTEM_INFO_LOG");
+
+        enabled = env && env[0] && env[0] != '0';
+        initialized = 1;
+    }
+    return enabled;
+}
+
 static void qti_log(void *opaque, int level, const char *fmt, va_list ap)
 {
     (void)opaque;
@@ -423,7 +442,7 @@ static void qti_log(void *opaque, int level, const char *fmt, va_list ap)
         error_vreport(fmt, ap);
     } else if (level == 1) {
         warn_vreport(fmt, ap);
-    } else {
+    } else if (qti_info_logs_enabled()) {
         info_vreport(fmt, ap);
     }
 }
@@ -437,6 +456,8 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         .backend_kind = s->io_system_backend_kind,
         .backend_library_path = s->io_system_backend_lib,
         .backend_vcs_libdir = s->io_system_vcs_libdir,
+        .my_virtio_blk_enabled = s->my_virtio_blk,
+        .my_virtio_blk_image_path = s->my_virtio_blk_image,
         .io2q_max_beat_bytes = IO_AXI_MAX_BEAT_BYTES,
         .io2q_initial_outstanding = 1,
         .trace_capacity = s->io_system_trace_file &&
@@ -560,8 +581,8 @@ static void qti_fdt_add_virtio_blk(QemuToIoSystemState *s,
     void *fdt = ms->fdt;
     const IoManifestEntry *blk = qti_manifest_entry(
         IO_MANIFEST_DEVICE_MY_VIRTIO_BLK);
-    g_autofree char *name = g_strdup_printf("/soc/%s@%"PRIx64,
-                                            blk->name, blk->base);
+    g_autofree char *name = g_strdup_printf("/soc/virtio@%"PRIx64,
+                                            blk->base);
 
     qemu_fdt_add_subnode(fdt, name);
     qemu_fdt_setprop_string(fdt, name, "compatible", "virtio,mmio");
@@ -739,6 +760,10 @@ static void qti_fdt_add_pcie(QemuToIoSystemState *s,
 static void qti_create_fdt(QemuToIoSystemState *s)
 {
     MachineState *ms = MACHINE(s);
+    bool has_io_system_aplic =
+        qti_backend_uses_cmodel_devices(s->io_system_backend_kind) ||
+        (qti_backend_uses_rtl_system(s->io_system_backend_kind) &&
+         s->my_virtio_blk);
     uint32_t phandle = 1;
     uint32_t imsic_m_phandle;
     uint32_t imsic_s_phandle;
@@ -898,7 +923,7 @@ static void qti_create_fdt(QemuToIoSystemState *s)
         qemu_fdt_setprop_cell(fdt, name, "phandle", imsic_s_phandle);
     }
 
-    if (qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
+    if (has_io_system_aplic) {
         aplic_s_phandle = phandle++;
         aplic_m_phandle = phandle++;
         {
@@ -938,7 +963,9 @@ static void qti_create_fdt(QemuToIoSystemState *s)
                                    aplic_s_phandle, 1, QTI_APLIC_NUM_SOURCES);
             qemu_fdt_setprop_cell(fdt, name, "phandle", aplic_m_phandle);
         }
+    }
 
+    if (qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
         qti_fdt_add_dmac(s, aplic_s_phandle, &phandle);
     } else {
         qti_fdt_add_rtl_system_dmac(s);
@@ -960,8 +987,7 @@ static void qti_create_fdt(QemuToIoSystemState *s)
         qemu_fdt_setprop_string(fdt, name, "status", "okay");
     }
 
-    if (s->my_virtio_blk &&
-        qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
+    if (s->my_virtio_blk && has_io_system_aplic) {
         qti_fdt_add_virtio_blk(s, aplic_s_phandle);
     }
 
@@ -1000,14 +1026,23 @@ static void qti_machine_init(MachineState *machine)
 
     qti_create_imsics(machine->smp.cpus);
 
-    if (!qti_backend_uses_cmodel_devices(s->io_system_backend_kind) &&
-        (s->my_virtio_blk || s->dw_pcie)) {
-        error_report("io-system backend %s does not support my-virtio-blk or dw-pcie in qemu_to_iosystem",
+    if (s->dw_pcie &&
+        !qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
+        error_report("io-system backend %s does not support dw-pcie in qemu_to_iosystem",
                      qti_backend_kind_name(s->io_system_backend_kind));
         exit(1);
     }
 
-    if (s->my_virtio_blk) {
+    if (s->my_virtio_blk &&
+        !qti_backend_uses_cmodel_devices(s->io_system_backend_kind) &&
+        !qti_backend_uses_rtl_system(s->io_system_backend_kind)) {
+        error_report("io-system backend %s does not support my-virtio-blk in qemu_to_iosystem",
+                     qti_backend_kind_name(s->io_system_backend_kind));
+        exit(1);
+    }
+
+    if (s->my_virtio_blk &&
+        qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
         qti_create_my_virtio_blk(s);
     }
     if (s->dw_pcie) {
