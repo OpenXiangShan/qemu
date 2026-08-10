@@ -135,7 +135,7 @@ static void init_profiling_control(const GString *target_dirname,
     init_bbv_file(target_dirname, workload_filename);
 }
 
-static void init_score_board() {
+static void init_score_board(void) {
     score_board = qemu_plugin_scoreboard_new(sizeof(VCPUScoreBoard));
 
     current_block_end_pc = qemu_plugin_scoreboard_u64_in_struct(score_board, VCPUScoreBoard, current_block_end_pc);
@@ -294,7 +294,7 @@ static gint compare_exec_id(gconstpointer a, gconstpointer b)
            (bb_a->exec_id < bb_b->exec_id);
 }
 
-static inline void try_output_to_bb_file() {
+static inline void try_output_to_bb_file(void) {
     if (profiling_control.per_bb_vector_instr_count >= profiling_info.intervals) {
         assert(profiling_control.bbv_file);
         gzprintf(profiling_control.bbv_file, "T");
@@ -412,7 +412,7 @@ static void vcpu_tb_middle_exit_exec(unsigned int cpu_index, void *udata) {
     }
 }
 
-static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
+static void vcpu_tb_trans(struct qemu_plugin_tb *tb, void *userdata) {
     uint64_t tb_begin_pc = qemu_plugin_tb_vaddr(tb);
     uint64_t tb_instrs = qemu_plugin_tb_n_insns(tb);
     struct qemu_plugin_insn *tb_begin_instr = qemu_plugin_tb_get_insn(tb, 0);
@@ -465,7 +465,7 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
 }
 
 
-static void profiling_exit(qemu_plugin_id_t id, void *userdata) {
+static void profiling_exit(void *userdata) {
     fprintf(stderr, "SimPoint profiling exit, total guest instructions = %ld, total profiling instrs = %ld\n",
            profiling_control.execute_instr_counts, profiling_control.profiling_instr_counts);
     fflush(stderr);
@@ -515,7 +515,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
     init_score_board();
 
-    qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
+    qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans, NULL);
 
     qemu_plugin_register_atexit_cb(id, profiling_exit, NULL);
 

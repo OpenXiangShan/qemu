@@ -54,8 +54,7 @@ void helper_nemu_trap(CPURISCVState *env, target_ulong a0) {
     } else if (a0 == NOTIFY_PROFILER) {
         // workload loaded
         if (g_atomic_int_get(&ns->sync_info.online[cs->cpu_index]) == 0) {
-            qatomic_set_i64(&ns->sync_info.kernel_insns[cs->cpu_index],
-                            env->profiling_insns);
+            ns->sync_info.kernel_insns[cs->cpu_index] = env->profiling_insns;
             g_atomic_int_set(&ns->sync_info.online[cs->cpu_index], 1);
             g_atomic_int_inc(&ns->sync_info.online_cpus);
         }

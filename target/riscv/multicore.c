@@ -290,19 +290,19 @@ void check_exit(uint64_t icount) {
 __attribute_maybe_unused__ static inline void multicore_try_take_cpt(NEMUState* ns, uint64_t icount, int cpu_idx,
                              bool exit_sync_period){
     bool sync_end = false;
-    static aligned_uint64_t wait_times;
+    static uint64_t wait_times;
 
     try_sync(ns, icount, cpu_idx, exit_sync_period, &sync_end);
 
     if (sync_end) {
-        qatomic_fetch_add(&wait_times, 1);
+        wait_times++;
         ns->cpt_func.update_sync_limit_instructions(ns);
 
         if ((icount - ns->sync_info.kernel_insns[cpu_idx]) >= ns->cpt_func.get_cpt_limit_instructions(ns)) {
 
-            info_report("cpu %d get cpt limit wait times %ld", cpu_idx,
-                        qatomic_read_u64(&wait_times));
-            qatomic_set_u64(&wait_times, 0);
+            info_report("cpu %d get cpt limit wait times %" PRIu64, cpu_idx,
+                        wait_times);
+            wait_times = 0;
 
             if (serialize(0x80300000, cpu_idx, ns->sync_info.cpus,
                           icount)) {

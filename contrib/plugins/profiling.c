@@ -21,14 +21,14 @@ typedef struct {
     uint64_t second;
 } UInt64Pair;
 
-guint hash_pair(gconstpointer key) {
+static guint hash_pair(gconstpointer key) {
     const UInt64Pair *p = (const UInt64Pair *)key;
     uint64_t h1 = p->first;
     uint64_t h2 = p->second;
     return h1 ^ (h2 << 1);
 }
 
-gboolean compare_pair(gconstpointer a, gconstpointer b) {
+static gboolean compare_pair(gconstpointer a, gconstpointer b) {
     const UInt64Pair *p1 = (const UInt64Pair *)(a);
     const UInt64Pair *p2 = (const UInt64Pair *)(b);
     return (p1->first == p2->first) && (p1->second == p2->second);
@@ -118,10 +118,8 @@ static void profiling_init(const char *target_dirname,
                            const char *workload_filename) {
     assert(g_mkdir_with_parents(target_dirname, 0775) == 0);
 
-    char gz_path[FILENAME_MXLEN] = {0};
-
-    snprintf(gz_path, FILENAME_MXLEN, "%s/%s", target_dirname,
-             "simpoint_bbv.gz");
+    g_autofree char *gz_path =
+        g_build_filename(target_dirname, "simpoint_bbv.gz", NULL);
 
     printf("SimPoint bbv path %s \n", gz_path);
 
@@ -173,7 +171,7 @@ static gint cmp_id(gconstpointer a, gconstpointer b) {
     }
 }
 
-void bbv_output(gpointer data, gpointer user_data) {
+static void bbv_output(gpointer data, gpointer user_data) {
     g_assert(data);
     BasicBlockExecCount_t *ec = (BasicBlockExecCount_t *)data;
     g_assert((int64_t)(ec->exec_insns_count) >= 0);
@@ -185,13 +183,13 @@ void bbv_output(gpointer data, gpointer user_data) {
     }
 }
 
-void clean_exec_count(gpointer key, gpointer value, gpointer user_data) {
+static void clean_exec_count(gpointer key, gpointer value, gpointer user_data) {
     g_assert(value);
     BasicBlockExecCount_t *ec = (BasicBlockExecCount_t *)value;
     ec->exec_insns_count = 0;
 }
 
-void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
+static void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
     if (cpu_index != 0) {
         return;
     }
@@ -201,7 +199,7 @@ void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
 
     BasicBlockExecCount_t *cnt = (BasicBlockExecCount_t *)userdata;
     g_assert(cnt);
-    BasicBlockExecCount_t *mmio_original_cnt;
+    BasicBlockExecCount_t *mmio_original_cnt = NULL;
 
     // Lazy Load: Load ebpc and lpc only when MMIO_split_flag is true, used to
     // determine whether the original MMIO TB has finished execution
@@ -215,10 +213,12 @@ void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
         }
     }
 
+    bool mmio_split = MMIO_split_flag;
+
     // Check MMIO split flag. If the original MMIO TB has not finished
     // execution, the current pre-counted TB is still included in the original
     // TB
-    if (MMIO_split_flag) {
+    if (mmio_split) {
         // Fetch original MMIO TB bbcnt
         g_assert(cnt->start_addr <= MMIO_split_tb_endpc);
         g_assert(
@@ -267,9 +267,10 @@ void vcpu_tb_exec(unsigned int cpu_index, void *userdata) {
 
         // when MMIO_split_flag is valid, save the counting information to the
         // original TB
-        if (!MMIO_split_flag) {
+        if (!mmio_split) {
             cnt->exec_insns_count += cnt->insns;
         } else {
+            g_assert(mmio_original_cnt);
             mmio_original_cnt->exec_insns_count += cnt->insns;
         }
     }
@@ -322,7 +323,6 @@ static void nemu_trap_check(unsigned int vcpu_index, void *userdata) {
     if (vcpu_index != 0) {
         return;
     }
-    uint64_t data = (uint64_t)userdata;
     static int nemu_trap_count = 0;
 
     g_mutex_lock(&profiling_info.lock);
@@ -390,8 +390,8 @@ static void vcpu_tb_middle_exit_exec(unsigned int cpu_index, void *udata) {
     uint64_t lpc_next = qemu_plugin_u64_get(last_pc_next_insn_addr, cpu_index);
 
     // fix insns count
+    g_assert(tb_insn_cnt <= tb_total_cnt);
     uint64_t unexecuted_insns = tb_total_cnt - tb_insn_cnt + 1;
-    g_assert(unexecuted_insns >= 0);
 
     // determine whether it is a fault or a MMIO insn
     if (current_pc == lpc_next) // MMIO insn
@@ -428,7 +428,7 @@ static void vcpu_tb_middle_exit_exec(unsigned int cpu_index, void *udata) {
     }
 }
 
-static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
+static void vcpu_tb_trans(struct qemu_plugin_tb *tb, void *userdata) {
     uint64_t pc = qemu_plugin_tb_vaddr(tb);
     size_t insns = qemu_plugin_tb_n_insns(tb);
     struct qemu_plugin_insn *first_insn = qemu_plugin_tb_get_insn(tb, 0);
@@ -519,7 +519,7 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
 }
 
 //
-static void profiling_exit(qemu_plugin_id_t id, void *userdata) {
+static void profiling_exit(void *userdata) {
     g_mutex_lock(&profiling_info.lock);
     // close bbv file
     gzclose(profiling_info.bbv_file);
@@ -570,8 +570,8 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
         if (g_strcmp0(tokens[0], "workload") == 0) {
 
-            strncpy(profiling_info.args.workload_path, tokens[1],
-                    FILENAME_MXLEN);
+            g_strlcpy(profiling_info.args.workload_path, tokens[1],
+                      FILENAME_MXLEN);
 
         } else if (g_strcmp0(tokens[0], "intervals") == 0) {
 
@@ -579,7 +579,8 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
         } else if (g_strcmp0(tokens[0], "target") == 0) {
 
-            strncpy(profiling_info.args.target_path, tokens[1], FILENAME_MXLEN);
+            g_strlcpy(profiling_info.args.target_path, tokens[1],
+                      FILENAME_MXLEN);
 
         } else {
 
@@ -629,7 +630,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     middle_exit_flag = qemu_plugin_scoreboard_u64_in_struct(
         state, VCPUScoreBoard, middle_exit_flag);
 
-    qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
+    qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans, NULL);
 
     // exit manual
     qemu_plugin_register_atexit_cb(id, profiling_exit, NULL);

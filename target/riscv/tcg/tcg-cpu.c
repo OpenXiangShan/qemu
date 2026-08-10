@@ -259,6 +259,8 @@ static void riscv_restore_state_to_opc(CPUState *cs,
     RISCVMXL xl = FIELD_EX32(tb->flags, TB_FLAGS, XL);
     target_ulong pc;
 
+    env->profiling_insns--;
+
     if (tb_cflags(tb) & CF_PCREL) {
         pc = (env->pc & TARGET_PAGE_MASK) | data[0];
     } else {
