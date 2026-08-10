@@ -467,6 +467,35 @@ static void test_machine_aplic_mmio(void)
     qtest_quit(qts);
 }
 
+static void test_machine_service_mode_bh(void)
+{
+    char image_path[] = "/tmp/qti-bh-blk.XXXXXX";
+    QTestState *qts;
+    uint8_t zero[0x2000] = { 0 };
+    int image_fd;
+
+    image_fd = mkstemp(image_path);
+    g_assert_cmpint(image_fd, >=, 0);
+    g_assert_cmpint(ftruncate(image_fd, QTI_IMAGE_SIZE), ==, 0);
+    close(image_fd);
+
+    qts = qtest_initf("-M qemu_to_iosystem,generated-dtb=off,"
+                      "io2q-async=on,io2q-outstanding=4,"
+                      "io-system-service-mode=bh,my-virtio-blk=on,"
+                      "my-virtio-blk-image=%s "
+                      "-m 128M -smp 1 -bios none -nodefaults -serial none",
+                      image_path);
+
+    qtest_memwrite(qts, QTI_QUEUE_BASE, zero, sizeof(zero));
+    qtest_memwrite(qts, QTI_REQ_OUT_BASE, zero, 0x1000);
+    qtest_memwrite(qts, QTI_REQ_IN_BASE, zero, 0x1000);
+    qti_configure_aplic_for_blk(qts);
+    qti_configure_blk(qts);
+    qti_submit_write_request(qts);
+    qtest_quit(qts);
+    unlink(image_path);
+}
+
 static void test_machine_unimplemented_bridge(void)
 {
     char trace_path[] = "/tmp/qti-unmapped-trace.XXXXXX";
@@ -600,6 +629,8 @@ int main(int argc, char **argv)
 
     qtest_add_func("/qemu_to_iosystem/aplic-mmio",
                    test_machine_aplic_mmio);
+    qtest_add_func("/qemu_to_iosystem/service-mode-bh",
+                   test_machine_service_mode_bh);
     qtest_add_func("/qemu_to_iosystem/unimplemented-bridge",
                    test_machine_unimplemented_bridge);
     qtest_add_func("/qemu_to_iosystem/virtio-blk",

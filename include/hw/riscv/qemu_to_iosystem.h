@@ -10,6 +10,7 @@
 
 #include "hw/boards.h"
 #include "hw/irq.h"
+#include "qemu/main-loop.h"
 #include "hw/riscv/riscv_hart.h"
 #include "io_dwc_dmac.h"
 #include "io_dwc_pcie.h"
@@ -60,6 +61,13 @@ typedef struct QemuToIoSystemState {
     char *io_system_trace_file;
     FILE *io_system_trace_fp;
     size_t io_system_trace_emitted;
+    uint64_t io2q_outstanding;
+    bool io2q_async;
+    IoSystemServiceMode service_mode;
+    char *io_system_service_mode;
+    QEMUBH *io_system_service_bh;
+    CPUState *io_system_service_cpu;
+    uint32_t io_system_service_work_pending;
     uint64_t fw_jump_fdt_addr;
     int fdt_size;
 } QemuToIoSystemState;

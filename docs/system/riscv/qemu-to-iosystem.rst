@@ -27,6 +27,18 @@ Build
 ``../io-system-lib/Makefile``，生成并链接静态库 ``libio_system.a`` 和
 ``libio_system_backend.a``。
 
+Scheduler/service properties
+----------------------------
+
+``io2q-async=off``、``io2q-outstanding=1`` 和
+``io-system-service-mode=inline`` 是稳定兼容默认值。可用
+``io2q-async=on`` 开启协作式 IO2Q 排队，用 ``io2q-outstanding=N`` 设置
+outstanding 深度，并用 ``io-system-service-mode=bh`` 让 QEMU bottom half
+以有限 budget 调用 ``io_system_service()``；``inline`` 模式则在每次成功
+Q2IO MMIO 后立即 service。对于具有线程亲和性的 picker/VCS RTL backend，BH
+会把有限 budget 的 service 投递回首次处理 Q2IO MMIO 的 vCPU 线程，避免从
+QEMU 主循环线程跨线程进入同一个 VCS runtime；该模式不创建额外 worker thread。
+
 Boot Linux with my-virtio-blk
 -----------------------------
 

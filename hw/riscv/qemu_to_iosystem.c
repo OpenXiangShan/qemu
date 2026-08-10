@@ -60,6 +60,9 @@
 #define QTI_FDT_MAX_INT_MAP_WIDTH 7
 #define FDT_IRQ_TYPE_EDGE_RISING 4
 #define FDT_IRQ_TYPE_LEVEL_HIGH 4
+#define QTI_IO_SYSTEM_SERVICE_BUDGET 16
+
+static void qti_schedule_io_system_service(QemuToIoSystemState *s);
 
 enum {
     QTI_ROM,
@@ -229,6 +232,16 @@ static uint64_t qti_io_bridge_read(void *opaque, hwaddr offset, unsigned size)
                       __func__, name ? name : "io-system", addr, size,
                       status);
         memset(buf, 0xff, size);
+    } else if (s->service_mode == IO_SYSTEM_SERVICE_INLINE) {
+        status = io_system_service(s->io_system, 0);
+        if (status != IO_SYSTEM_OK) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "%s: inline service failed status=%d\n",
+                          __func__, status);
+            memset(buf, 0xff, size);
+        }
+    } else {
+        qti_schedule_io_system_service(s);
     }
 
     qti_trace_dump_new(s);
@@ -253,6 +266,15 @@ static void qti_io_bridge_write(void *opaque, hwaddr offset,
                       " size=%u value=0x%" PRIx64 " status=%d\n",
                       __func__, name ? name : "io-system", addr, size,
                       value, status);
+    } else if (s->service_mode == IO_SYSTEM_SERVICE_INLINE) {
+        status = io_system_service(s->io_system, 0);
+        if (status != IO_SYSTEM_OK) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "%s: inline service failed status=%d\n",
+                          __func__, status);
+        }
+    } else {
+        qti_schedule_io_system_service(s);
     }
     qti_trace_dump_new(s);
 }
@@ -410,6 +432,75 @@ static int qti_guest_memory_atomic(void *opaque, uint64_t gpa, void *value,
     return IO_SYSTEM_ERR_UNSUPPORTED;
 }
 
+static bool qti_io_system_service_once(QemuToIoSystemState *s)
+{
+    IoSystemStatus status;
+
+    if (!s || !s->io_system) {
+        return false;
+    }
+    status = io_system_service(s->io_system, QTI_IO_SYSTEM_SERVICE_BUDGET);
+    if (status != IO_SYSTEM_OK) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "qemu-to-iosystem: async service failed status=%d\n",
+                      status);
+        return false;
+    }
+
+    return io_system_needs_service(s->io_system);
+}
+
+static void qti_io_system_service_on_cpu(CPUState *cpu,
+                                         run_on_cpu_data data)
+{
+    QemuToIoSystemState *s = data.host_ptr;
+    bool needs_more;
+
+    (void)cpu;
+    needs_more = qti_io_system_service_once(s);
+    qatomic_set(&s->io_system_service_work_pending, 0);
+    if (needs_more && s->io_system_service_bh) {
+        qemu_bh_schedule(s->io_system_service_bh);
+    }
+}
+
+static void qti_io_system_service_bh(void *opaque)
+{
+    QemuToIoSystemState *s = opaque;
+
+    if (!s || !s->io_system) {
+        return;
+    }
+
+    /* Picker/VCS must be serviced on the vCPU thread that accepted MMIO. */
+    if (qti_backend_uses_rtl_system(s->io_system_backend_kind) &&
+        s->io_system_service_cpu) {
+        if (!qatomic_xchg(&s->io_system_service_work_pending, 1)) {
+            async_run_on_cpu(s->io_system_service_cpu,
+                             qti_io_system_service_on_cpu,
+                             RUN_ON_CPU_HOST_PTR(s));
+        }
+        return;
+    }
+
+    if (qti_io_system_service_once(s) && s->io_system_service_bh) {
+        qemu_bh_schedule(s->io_system_service_bh);
+    }
+}
+
+static void qti_schedule_io_system_service(QemuToIoSystemState *s)
+{
+    if (s && qti_backend_uses_rtl_system(s->io_system_backend_kind) &&
+        current_cpu && !s->io_system_service_cpu) {
+        s->io_system_service_cpu = current_cpu;
+    }
+    if (s && s->service_mode == IO_SYSTEM_SERVICE_BH &&
+        s->io_system_service_bh && s->io_system &&
+        io_system_needs_service(s->io_system)) {
+        qemu_bh_schedule(s->io_system_service_bh);
+    }
+}
+
 static uint64_t qti_clock(void *opaque)
 {
     (void)opaque;
@@ -459,7 +550,12 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         .my_virtio_blk_enabled = s->my_virtio_blk,
         .my_virtio_blk_image_path = s->my_virtio_blk_image,
         .io2q_max_beat_bytes = IO_AXI_MAX_BEAT_BYTES,
-        .io2q_initial_outstanding = 1,
+        .io2q_async_enabled = s->io2q_async,
+        .io2q_outstanding_depth = (uint32_t)(s->io2q_outstanding ?
+                                             s->io2q_outstanding : 1),
+        .service_mode = s->service_mode,
+        .io2q_initial_outstanding = (uint32_t)(s->io2q_outstanding ?
+                                              s->io2q_outstanding : 1),
         .trace_capacity = s->io_system_trace_file &&
                           *s->io_system_trace_file ?
                           QTI_TRACE_CAPACITY_WITH_FILE : 0,
@@ -1266,6 +1362,39 @@ static void qti_set_io_system_vcs_libdir(Object *obj, const char *value,
     s->io_system_vcs_libdir = g_strdup(value && *value ? value : "");
 }
 
+static bool qti_get_io2q_async(Object *obj, Error **errp)
+{
+    return QEMU_TO_IOSYSTEM_MACHINE(obj)->io2q_async;
+}
+
+static void qti_set_io2q_async(Object *obj, bool value, Error **errp)
+{
+    QEMU_TO_IOSYSTEM_MACHINE(obj)->io2q_async = value;
+}
+
+static char *qti_get_service_mode(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return g_strdup(s->io_system_service_mode ? s->io_system_service_mode :
+                    "inline");
+}
+
+static void qti_set_service_mode(Object *obj, const char *value, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+    const char *mode = value && *value ? value : "inline";
+
+    if (strcmp(mode, "inline") && strcmp(mode, "bh")) {
+        error_setg(errp, "io-system-service-mode must be inline or bh");
+        return;
+    }
+    g_free(s->io_system_service_mode);
+    s->io_system_service_mode = g_strdup(mode);
+    s->service_mode = !strcmp(mode, "bh") ? IO_SYSTEM_SERVICE_BH :
+                      IO_SYSTEM_SERVICE_INLINE;
+}
+
 static void qti_get_uint64(Object *obj, Visitor *v, const char *name,
                            void *opaque, Error **errp)
 {
@@ -1307,6 +1436,13 @@ static void qti_machine_instance_init(Object *obj)
     s->io_system_vcs_libdir = g_strdup("");
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->io_system_trace_file = g_strdup("");
+    s->io2q_outstanding = 1;
+    s->io2q_async = false;
+    s->service_mode = IO_SYSTEM_SERVICE_INLINE;
+    s->io_system_service_mode = g_strdup("inline");
+    s->io_system_service_bh = qemu_bh_new(qti_io_system_service_bh, s);
+    s->io_system_service_cpu = NULL;
+    s->io_system_service_work_pending = 0;
     s->fw_jump_fdt_addr = QTI_FW_JUMP_FDT_ADDR;
 }
 
@@ -1315,6 +1451,10 @@ static void qti_machine_instance_finalize(Object *obj)
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
 
     qti_trace_dump_new(s);
+    if (s->io_system_service_bh) {
+        qemu_bh_delete(s->io_system_service_bh);
+        s->io_system_service_bh = NULL;
+    }
     if (s->io_system_trace_fp) {
         fclose(s->io_system_trace_fp);
     }
@@ -1336,6 +1476,7 @@ static void qti_machine_instance_finalize(Object *obj)
     g_free(s->io_system_vcs_libdir);
     g_free(s->io_system_trace_file);
     g_free(s->my_virtio_blk_image);
+    g_free(s->io_system_service_mode);
 }
 
 static void qti_machine_class_init(ObjectClass *klass, const void *data)
@@ -1401,6 +1542,19 @@ static void qti_machine_class_init(ObjectClass *klass, const void *data)
                                   qti_set_io_system_trace_file);
     object_class_property_set_description(klass, "io-system-trace-file",
                                           "Write io-system AXI beat trace to this file");
+
+    object_class_property_add_bool(klass, "io2q-async",
+                                   qti_get_io2q_async, qti_set_io2q_async);
+    object_class_property_set_description(klass, "io2q-async",
+                                          "Enable cooperative io2q scheduling");
+
+    object_class_property_add_str(klass, "io-system-service-mode",
+                                  qti_get_service_mode, qti_set_service_mode);
+    object_class_property_set_description(klass, "io-system-service-mode",
+                                          "Service io-system inline or through a BH");
+
+    QTI_UINT64_PROP("io2q-outstanding", io2q_outstanding,
+                    "Max outstanding io2q transactions for the RTL runtime");
 
     QTI_UINT64_PROP("fw-jump-fdt-addr", fw_jump_fdt_addr,
                     "Generated DTB load address for fw_jump boot");
