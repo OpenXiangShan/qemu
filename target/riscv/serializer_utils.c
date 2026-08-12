@@ -196,9 +196,14 @@ __attribute_maybe_unused__ void serializeRegs(int cpu_index, char *buffer, singl
     // store csr regs
     buffer_offset = cpt_percpu_layout->csr_reg_cpt_addr;
     for (int i = 0; i < CSR_TABLE_SIZE; i++) {
-        if (csr_ops[i].read != NULL) {
-            target_ulong val;
-            csr_ops[i].read(env, i, &val);
+        if (csr_ops[i].predicate != NULL) {
+            target_ulong val = 0;
+            RISCVException ret = riscv_csrrw_debug(env, i, &val, 0, 0);
+
+            if (ret != RISCV_EXCP_NONE) {
+                continue;
+            }
+
             uint64_t checkpoint_val = val;
             memcpy(buffer + buffer_offset + i * 8, &checkpoint_val,
                    sizeof(checkpoint_val));
