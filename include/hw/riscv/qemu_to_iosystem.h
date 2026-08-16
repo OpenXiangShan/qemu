@@ -11,6 +11,7 @@
 #include "hw/boards.h"
 #include "hw/irq.h"
 #include "qemu/main-loop.h"
+#include "qemu/thread.h"
 #include "hw/riscv/riscv_hart.h"
 #include "io_dwc_dmac.h"
 #include "io_dwc_pcie.h"
@@ -53,13 +54,26 @@ typedef struct QemuToIoSystemState {
     OnOffAuto generated_dtb;
     bool my_virtio_blk;
     bool dw_pcie;
+    bool io_system_pcie_iommu_map;
     IoSystemBackendKind io_system_backend_kind;
+    IoSystemIommuKind io_system_iommu_kind;
+    IoSystemIommuPlacement io_system_iommu_placement;
     char *io_system_backend;
+    char *io_system_iommu;
+    char *io_system_iommu_placement_str;
     char *io_system_backend_lib;
     char *io_system_vcs_libdir;
+    char *io_system_iommu_refmodel_dir;
+    char *io_system_iommu_rtl_ip_dir;
+    char *io_system_iommu_picker_out;
+    char *io_system_iommu_vcs_libdir;
     char *my_virtio_blk_image;
     char *io_system_trace_file;
     FILE *io_system_trace_fp;
+    QEMUBH *io_system_posted_msi_bh;
+    QemuMutex io_system_posted_msi_lock;
+    struct QtiPostedMsi *io_system_posted_msi_head;
+    struct QtiPostedMsi *io_system_posted_msi_tail;
     size_t io_system_trace_emitted;
     uint64_t io2q_outstanding;
     bool io2q_async;

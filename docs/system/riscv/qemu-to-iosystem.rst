@@ -39,6 +39,52 @@ Q2IO MMIO 后立即 service。对于具有线程亲和性的 picker/VCS RTL back
 会把有限 budget 的 service 投递回首次处理 Q2IO MMIO 的 vCPU 线程，避免从
 QEMU 主循环线程跨线程进入同一个 VCS runtime；该模式不创建额外 worker thread。
 
+io-system IOMMU
+---------------
+
+``io-system-iommu=none|cmodel|rtl`` 选择 io-system 内的 IOMMU model。
+默认值为 ``none``，此时设备 DMA 仍然直接访问最终 guest physical memory。
+
+``io-system-iommu-placement=auto|external|embedded`` 控制 IOMMU 放置位置。
+``auto`` 规则如下：
+
+* ``io-system-backend=cmodel`` 配合 ``io-system-iommu=cmodel`` 或 ``rtl``
+  时使用 ``external``，C-model 设备 DMA 先进入 IOMMU API，再由 IOMMU 的
+  downstream/translation callbacks 访问最终 guest memory；
+* ``io-system-backend=rtl-system`` 配合 ``io-system-iommu=rtl`` 时使用
+  ``embedded``，host 侧不创建 external IOMMU，避免对 RTL 已发出的最终
+  ``m_axi`` transaction 再做一次翻译；
+* ``io-system-backend=rtl-system,io-system-iommu=cmodel`` 为 v1 不支持组合，
+  启动时报错。
+
+C-model IOMMU refmodel 源码已经 vendored 到
+``io-system-lib/src/cmodel/iommu_refmodel``，并直接编进
+``libio_system.a``；选择 ``io-system-iommu=cmodel`` 时不再 ``dlopen``
+``libiommu_refmodel_api.so``。``io-system-iommu-refmodel-dir`` 作为兼容属性
+保留，但内置 cmodel 路径不依赖它。
+
+RTL IOMMU 仍通过 ``.so`` 动态加载。先在 ``io-system-lib`` 下执行
+``make iommu-rtl-api``，会把当前可用的 picker 产物 stage 到
+``output/iommu-rtl``。如果指定 ``io-system-iommu-picker-out=PATH``，
+会优先查找 ``PATH/lib/libiommu_api.so`` 和 ``PATH/libiommu_api.so``；
+本 workspace 的测试命令使用
+``io-system-iommu-picker-out=/nfs/home/guoyaxing/my-workspace/io-system-lib/output/iommu-rtl``。
+也可用
+``IO_SYSTEM_IOMMU_RTL_API_SO`` 直接指定 ``.so``。
+``io-system-iommu-rtl-ip-dir`` 和 ``io-system-iommu-vcs-libdir`` 保留给
+RTL IOMMU 构建/运行路径管理。
+
+生成 DTB 且启用 io-system IOMMU 时，``/soc/iommu@311f0000`` 会使用
+``riscv,iommu`` binding 暴露 ``0x311f0000/0x1000`` MMIO aperture；如果同时
+启用 ``dw-pcie=on``，PCIe 节点默认会带 ``iommu-map`` 指向该 IOMMU。
+调试 RTL IOMMU bypass/PA 路径时，可以用
+``io-system-pcie-iommu-map=off`` 保留 IOMMU MMIO 节点但不把 PCIe requester
+绑定到 Linux IOMMU driver。DWC DMAC 这类 platform DMA requester 会通过
+``iommus`` 属性携带 requester id。
+``my-virtio-blk`` 当前作为 legacy boot 设备使用，未协商
+``VIRTIO_F_ACCESS_PLATFORM``，因此生成 DTB 不把它挂到 IOMMU 下。使用外部
+``-dtb`` 时，需要外部设备树自己描述同一个 IOMMU。
+
 Boot Linux with my-virtio-blk
 -----------------------------
 

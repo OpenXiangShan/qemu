@@ -26,7 +26,9 @@
 #include "hw/pci/pci.h"
 #include "hw/qdev-properties.h"
 #include "hw/riscv/boot.h"
+#include "hw/riscv/iommu.h"
 #include "hw/riscv/qemu_to_iosystem.h"
+#include "hw/riscv/riscv-iommu-bits.h"
 #include "hw/riscv/riscv_hart.h"
 #include "io_dwc_dmac.h"
 #include "target/riscv/cpu.h"
@@ -47,6 +49,12 @@
 #define QTI_RTL_SYSTEM_MMIO_BASE 0x30000000ULL
 #define QTI_RTL_SYSTEM_MMIO_SIZE 0x47ff0000ULL
 #define QTI_RTL_SYSTEM_DMAC_COMPAT "bosc,io-system-rtl-mem2mem-dmac"
+#define QTI_IOMMU_DEFAULT_REFMODEL_DIR \
+    "/nfs/home/guoyaxing/xsv-qemu-flow-clean/scenario/iommu/lib/iommu-refmodel"
+#define QTI_IOMMU_DEFAULT_RTL_IP_DIR \
+    "/nfs/home/guoyaxing/xsv-qemu-flow-clean/ipcatalog/iommu/bosc-iommu-v2"
+#define QTI_DMAC_REQUESTER_ID 0x8
+#define QTI_MY_VIRTIO_BLK_REQUESTER_ID 0x10
 #define QTI_UART0_IRQ 10
 #define QTI_PCIE_MSI_IRQ 24
 #define QTI_PCIE_INTA_IRQ 25
@@ -63,6 +71,13 @@
 #define QTI_IO_SYSTEM_SERVICE_BUDGET 16
 
 static void qti_schedule_io_system_service(QemuToIoSystemState *s);
+static void qti_posted_msi_bh(void *opaque);
+
+typedef struct QtiPostedMsi {
+    hwaddr addr;
+    uint8_t data[4];
+    struct QtiPostedMsi *next;
+} QtiPostedMsi;
 
 enum {
     QTI_ROM,
@@ -85,6 +100,39 @@ static const MemMapEntry qti_memmap[] = {
     [QTI_IMSIC_S] = { 0x3b000000, 0x80000 },
     [QTI_DRAM]    = { 0x80000000, 0x0 },
 };
+
+static bool qti_range_contains(uint64_t base, uint64_t size,
+                               uint64_t addr, uint32_t len)
+{
+    uint64_t end = base + size;
+    uint64_t access_end = addr + len;
+
+    if (!size || !len || end < base || access_end < addr) {
+        return false;
+    }
+    return addr >= base && access_end <= end;
+}
+
+static bool qti_is_imsic_msi_store(QemuToIoSystemState *s, uint64_t gpa,
+                                   uint32_t len)
+{
+    uint64_t offset;
+
+    if (!s || s->io_system_iommu_kind != IO_SYSTEM_IOMMU_RTL || len != 4) {
+        return false;
+    }
+    if (qti_range_contains(qti_memmap[QTI_IMSIC_M].base,
+                           qti_memmap[QTI_IMSIC_M].size, gpa, len)) {
+        offset = gpa - qti_memmap[QTI_IMSIC_M].base;
+    } else if (qti_range_contains(qti_memmap[QTI_IMSIC_S].base,
+                                  qti_memmap[QTI_IMSIC_S].size, gpa, len)) {
+        offset = gpa - qti_memmap[QTI_IMSIC_S].base;
+    } else {
+        return false;
+    }
+
+    return (offset & (IMSIC_MMIO_PAGE_SZ - 1)) == 0;
+}
 
 static const IoManifestEntry *qti_manifest_entry(IoManifestDevice device)
 {
@@ -130,6 +178,149 @@ static const char *qti_backend_kind_name(IoSystemBackendKind kind)
     }
 }
 
+static const char *qti_iommu_kind_name(IoSystemIommuKind kind)
+{
+    switch (kind) {
+    case IO_SYSTEM_IOMMU_NONE:
+        return "none";
+    case IO_SYSTEM_IOMMU_CMODEL:
+        return "cmodel";
+    case IO_SYSTEM_IOMMU_RTL:
+        return "rtl";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *qti_iommu_placement_name(IoSystemIommuPlacement placement)
+{
+    switch (placement) {
+    case IO_SYSTEM_IOMMU_PLACEMENT_AUTO:
+        return "auto";
+    case IO_SYSTEM_IOMMU_PLACEMENT_EXTERNAL:
+        return "external";
+    case IO_SYSTEM_IOMMU_PLACEMENT_EMBEDDED:
+        return "embedded";
+    default:
+        return "unknown";
+    }
+}
+
+static bool qti_parse_iommu_kind(const char *name,
+                                 IoSystemIommuKind *kind,
+                                 Error **errp)
+{
+    const char *value = name && *name ? name : "none";
+
+    if (!g_strcmp0(value, "none")) {
+        *kind = IO_SYSTEM_IOMMU_NONE;
+        return true;
+    }
+    if (!g_strcmp0(value, "cmodel")) {
+        *kind = IO_SYSTEM_IOMMU_CMODEL;
+        return true;
+    }
+    if (!g_strcmp0(value, "rtl")) {
+        *kind = IO_SYSTEM_IOMMU_RTL;
+        return true;
+    }
+
+    error_setg(errp,
+               "io-system-iommu must be none, cmodel, or rtl, not '%s'",
+               value);
+    return false;
+}
+
+static bool qti_parse_iommu_placement(const char *name,
+                                      IoSystemIommuPlacement *placement,
+                                      Error **errp)
+{
+    const char *value = name && *name ? name : "auto";
+
+    if (!g_strcmp0(value, "auto")) {
+        *placement = IO_SYSTEM_IOMMU_PLACEMENT_AUTO;
+        return true;
+    }
+    if (!g_strcmp0(value, "external")) {
+        *placement = IO_SYSTEM_IOMMU_PLACEMENT_EXTERNAL;
+        return true;
+    }
+    if (!g_strcmp0(value, "embedded")) {
+        *placement = IO_SYSTEM_IOMMU_PLACEMENT_EMBEDDED;
+        return true;
+    }
+
+    error_setg(errp,
+               "io-system-iommu-placement must be auto, external, or "
+               "embedded, not '%s'",
+               value);
+    return false;
+}
+
+static IoSystemIommuPlacement qti_resolve_iommu_placement(
+    const QemuToIoSystemState *s)
+{
+    if (s->io_system_iommu_placement != IO_SYSTEM_IOMMU_PLACEMENT_AUTO ||
+        s->io_system_iommu_kind == IO_SYSTEM_IOMMU_NONE) {
+        return s->io_system_iommu_placement;
+    }
+    if (s->io_system_backend_kind == IO_SYSTEM_BACKEND_CMODEL) {
+        return IO_SYSTEM_IOMMU_PLACEMENT_EXTERNAL;
+    }
+    if (s->io_system_backend_kind == IO_SYSTEM_BACKEND_RTL_SYSTEM &&
+        s->io_system_iommu_kind == IO_SYSTEM_IOMMU_RTL) {
+        return IO_SYSTEM_IOMMU_PLACEMENT_EMBEDDED;
+    }
+    return IO_SYSTEM_IOMMU_PLACEMENT_AUTO;
+}
+
+static void qti_validate_io_system_iommu(QemuToIoSystemState *s)
+{
+    IoSystemIommuKind kind = s->io_system_iommu_kind;
+    IoSystemIommuPlacement requested = s->io_system_iommu_placement;
+    IoSystemIommuPlacement placement = qti_resolve_iommu_placement(s);
+
+    if (kind == IO_SYSTEM_IOMMU_NONE) {
+        if (requested != IO_SYSTEM_IOMMU_PLACEMENT_AUTO) {
+            error_report("io-system-iommu-placement=%s requires "
+                         "io-system-iommu=cmodel or rtl",
+                         qti_iommu_placement_name(requested));
+            exit(1);
+        }
+        return;
+    }
+
+    if (s->io_system_backend_kind == IO_SYSTEM_BACKEND_CMODEL) {
+        if (placement != IO_SYSTEM_IOMMU_PLACEMENT_EXTERNAL) {
+            error_report("io-system backend cmodel only supports external "
+                         "IOMMU placement for io-system-iommu=%s",
+                         qti_iommu_kind_name(kind));
+            exit(1);
+        }
+        return;
+    }
+
+    if (s->io_system_backend_kind == IO_SYSTEM_BACKEND_RTL_SYSTEM) {
+        if (kind == IO_SYSTEM_IOMMU_CMODEL) {
+            error_report("io-system backend rtl-system does not support "
+                         "io-system-iommu=cmodel in this version");
+            exit(1);
+        }
+        if (kind == IO_SYSTEM_IOMMU_RTL &&
+            placement == IO_SYSTEM_IOMMU_PLACEMENT_EMBEDDED) {
+            return;
+        }
+        error_report("io-system backend rtl-system only supports embedded "
+                     "placement for io-system-iommu=rtl");
+        exit(1);
+    }
+
+    error_report("io-system backend %s does not support io-system-iommu=%s",
+                 qti_backend_kind_name(s->io_system_backend_kind),
+                 qti_iommu_kind_name(kind));
+    exit(1);
+}
+
 static bool qti_backend_uses_cmodel_devices(IoSystemBackendKind kind)
 {
     return kind == IO_SYSTEM_BACKEND_CMODEL;
@@ -138,6 +329,11 @@ static bool qti_backend_uses_cmodel_devices(IoSystemBackendKind kind)
 static bool qti_backend_uses_rtl_system(IoSystemBackendKind kind)
 {
     return kind == IO_SYSTEM_BACKEND_RTL_SYSTEM;
+}
+
+static bool qti_iommu_enabled(const QemuToIoSystemState *s)
+{
+    return s && s->io_system_iommu_kind != IO_SYSTEM_IOMMU_NONE;
 }
 
 static const char *qti_axi_response_name(IoAxiResponse response)
@@ -392,12 +588,60 @@ static void qti_create_dmac(QemuToIoSystemState *s)
         .base = dmac->base,
         .size = dmac->size,
         .irq = dmac->irq,
-        .requester_id = 0x8,
+        .requester_id = QTI_DMAC_REQUESTER_ID,
     }, s->aplic_s);
     if (!s->dmac) {
         error_report("failed to create io-system DWC DMAC");
         exit(1);
     }
+}
+
+static void qti_posted_msi_bh(void *opaque)
+{
+    QemuToIoSystemState *s = opaque;
+    QtiPostedMsi *head;
+
+    qemu_mutex_lock(&s->io_system_posted_msi_lock);
+    head = (QtiPostedMsi *)s->io_system_posted_msi_head;
+    s->io_system_posted_msi_head = NULL;
+    s->io_system_posted_msi_tail = NULL;
+    qemu_mutex_unlock(&s->io_system_posted_msi_lock);
+
+    while (head) {
+        QtiPostedMsi *next = head->next;
+
+        address_space_rw(&address_space_memory, head->addr,
+                         MEMTXATTRS_UNSPECIFIED, head->data,
+                         sizeof(head->data), true);
+        g_free(head);
+        head = next;
+    }
+}
+
+static bool qti_post_msi(QemuToIoSystemState *s, uint64_t gpa,
+                         const void *src, uint32_t len)
+{
+    QtiPostedMsi *msi;
+
+    if (!qti_is_imsic_msi_store(s, gpa, len)) {
+        return false;
+    }
+
+    msi = g_new0(QtiPostedMsi, 1);
+    msi->addr = gpa;
+    memcpy(msi->data, src, sizeof(msi->data));
+
+    qemu_mutex_lock(&s->io_system_posted_msi_lock);
+    if (s->io_system_posted_msi_tail) {
+        s->io_system_posted_msi_tail->next = (struct QtiPostedMsi *)msi;
+    } else {
+        s->io_system_posted_msi_head = (struct QtiPostedMsi *)msi;
+    }
+    s->io_system_posted_msi_tail = (struct QtiPostedMsi *)msi;
+    qemu_mutex_unlock(&s->io_system_posted_msi_lock);
+
+    qemu_bh_schedule(s->io_system_posted_msi_bh);
+    return true;
 }
 
 static int qti_guest_memory_read(void *opaque, uint64_t gpa, void *dst,
@@ -413,7 +657,11 @@ static int qti_guest_memory_read(void *opaque, uint64_t gpa, void *dst,
 static int qti_guest_memory_write(void *opaque, uint64_t gpa, const void *src,
                                   uint32_t len)
 {
-    (void)opaque;
+    QemuToIoSystemState *s = opaque;
+
+    if (qti_post_msi(s, gpa, src, len)) {
+        return (int)len;
+    }
 
     return address_space_rw(&address_space_memory, gpa,
                             MEMTXATTRS_UNSPECIFIED, (void *)src, len, true) ==
@@ -547,6 +795,12 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         .backend_kind = s->io_system_backend_kind,
         .backend_library_path = s->io_system_backend_lib,
         .backend_vcs_libdir = s->io_system_vcs_libdir,
+        .iommu_kind = s->io_system_iommu_kind,
+        .iommu_placement = qti_resolve_iommu_placement(s),
+        .iommu_refmodel_dir = s->io_system_iommu_refmodel_dir,
+        .iommu_rtl_ip_dir = s->io_system_iommu_rtl_ip_dir,
+        .iommu_picker_out = s->io_system_iommu_picker_out,
+        .iommu_vcs_libdir = s->io_system_iommu_vcs_libdir,
         .my_virtio_blk_enabled = s->my_virtio_blk,
         .my_virtio_blk_image_path = s->my_virtio_blk_image,
         .io2q_max_beat_bytes = IO_AXI_MAX_BEAT_BYTES,
@@ -627,6 +881,7 @@ static void qti_create_my_virtio_blk(QemuToIoSystemState *s)
         .base = blk->base,
         .size = blk->size,
         .irq = blk->irq,
+        .requester_id = QTI_MY_VIRTIO_BLK_REQUESTER_ID,
         .image_path = s->my_virtio_blk_image,
     }, s->aplic_s);
     if (!s->my_virtio_blk_dev) {
@@ -727,6 +982,7 @@ static void qti_fdt_add_pcie_irq_map(void *fdt, const char *node_path,
 
 static void qti_fdt_add_dmac(QemuToIoSystemState *s,
                              uint32_t aplic_s_phandle,
+                             uint32_t iommu_phandle,
                              uint32_t *phandle)
 {
     MachineState *ms = MACHINE(s);
@@ -771,6 +1027,10 @@ static void qti_fdt_add_dmac(QemuToIoSystemState *s,
     qemu_fdt_setprop_string_array(fdt, name, "clock-names",
                                   (char **)&clock_names,
                                   ARRAY_SIZE(clock_names));
+    if (iommu_phandle) {
+        qemu_fdt_setprop_cells(fdt, name, "iommus",
+                               iommu_phandle, QTI_DMAC_REQUESTER_ID);
+    }
     qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
@@ -792,9 +1052,47 @@ static void qti_fdt_add_rtl_system_dmac(QemuToIoSystemState *s)
     qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
+static uint32_t qti_fdt_add_iommu(QemuToIoSystemState *s,
+                                  uint32_t aplic_s_phandle,
+                                  uint32_t imsic_s_phandle,
+                                  uint32_t *phandle)
+{
+    MachineState *ms = MACHINE(s);
+    void *fdt = ms->fdt;
+    const IoManifestEntry *iommu = qti_manifest_entry(
+        IO_MANIFEST_DEVICE_IOMMU);
+    uint32_t iommu_phandle = (*phandle)++;
+    uint32_t iommu_irqs[RISCV_IOMMU_INTR_COUNT] = {
+        iommu->irq + RISCV_IOMMU_INTR_CQ,
+        iommu->irq + RISCV_IOMMU_INTR_FQ,
+        iommu->irq + RISCV_IOMMU_INTR_PM,
+        iommu->irq + RISCV_IOMMU_INTR_PQ,
+    };
+    g_autofree char *name = g_strdup_printf("/soc/iommu@%"PRIx64,
+                                            iommu->base);
+
+    qemu_fdt_add_subnode(fdt, name);
+    qemu_fdt_setprop_string(fdt, name, "compatible", "riscv,iommu");
+    qemu_fdt_setprop_cell(fdt, name, "#iommu-cells", 1);
+    qemu_fdt_setprop_cell(fdt, name, "phandle", iommu_phandle);
+    qemu_fdt_setprop_sized_cells(fdt, name, "reg",
+                                 2, iommu->base, 2, iommu->size);
+    qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
+    qemu_fdt_setprop_cells(fdt, name, "interrupts",
+                           iommu_irqs[0], FDT_IRQ_TYPE_EDGE_LOW,
+                           iommu_irqs[1], FDT_IRQ_TYPE_EDGE_LOW,
+                           iommu_irqs[2], FDT_IRQ_TYPE_EDGE_LOW,
+                           iommu_irqs[3], FDT_IRQ_TYPE_EDGE_LOW);
+    qemu_fdt_setprop_cell(fdt, name, "msi-parent", imsic_s_phandle);
+    qemu_fdt_setprop_string(fdt, name, "status", "okay");
+
+    return iommu_phandle;
+}
+
 static void qti_fdt_add_pcie(QemuToIoSystemState *s,
                              uint32_t aplic_s_phandle,
-                             uint32_t imsic_s_phandle)
+                             uint32_t imsic_s_phandle,
+                             uint32_t iommu_phandle)
 {
     MachineState *ms = MACHINE(s);
     void *fdt = ms->fdt;
@@ -845,6 +1143,10 @@ static void qti_fdt_add_pcie(QemuToIoSystemState *s,
     qemu_fdt_setprop_cells(fdt, name, "interrupts",
                            QTI_PCIE_MSI_IRQ, FDT_IRQ_TYPE_LEVEL_HIGH,
                            QTI_PCIE_HP_IRQ, FDT_IRQ_TYPE_LEVEL_HIGH);
+    if (iommu_phandle && s->io_system_pcie_iommu_map) {
+        qemu_fdt_setprop_cells(fdt, name, "iommu-map",
+                               0, iommu_phandle, 0, 0x10000);
+    }
     qemu_fdt_setprop_string_array(fdt, name, "interrupt-names",
                                   (char **)&interrupt_names,
                                   ARRAY_SIZE(interrupt_names));
@@ -856,15 +1158,17 @@ static void qti_fdt_add_pcie(QemuToIoSystemState *s,
 static void qti_create_fdt(QemuToIoSystemState *s)
 {
     MachineState *ms = MACHINE(s);
+    bool has_io_system_iommu = qti_iommu_enabled(s);
     bool has_io_system_aplic =
         qti_backend_uses_cmodel_devices(s->io_system_backend_kind) ||
         (qti_backend_uses_rtl_system(s->io_system_backend_kind) &&
-         s->my_virtio_blk);
+         (s->my_virtio_blk || has_io_system_iommu));
     uint32_t phandle = 1;
     uint32_t imsic_m_phandle;
     uint32_t imsic_s_phandle;
     uint32_t aplic_m_phandle = 0;
     uint32_t aplic_s_phandle = 0;
+    uint32_t iommu_phandle = 0;
     g_autofree uint32_t *intc_phandles = g_new0(uint32_t, ms->smp.cpus);
     g_autofree uint32_t *clint_cells = g_new0(uint32_t, ms->smp.cpus * 4);
     g_autofree uint32_t *imsic_m_cells = g_new0(uint32_t, ms->smp.cpus * 2);
@@ -1061,8 +1365,13 @@ static void qti_create_fdt(QemuToIoSystemState *s)
         }
     }
 
+    if (has_io_system_iommu) {
+        iommu_phandle = qti_fdt_add_iommu(s, aplic_s_phandle,
+                                          imsic_s_phandle, &phandle);
+    }
+
     if (qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
-        qti_fdt_add_dmac(s, aplic_s_phandle, &phandle);
+        qti_fdt_add_dmac(s, aplic_s_phandle, iommu_phandle, &phandle);
     } else {
         qti_fdt_add_rtl_system_dmac(s);
     }
@@ -1089,7 +1398,8 @@ static void qti_create_fdt(QemuToIoSystemState *s)
 
     if (s->dw_pcie &&
         qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
-        qti_fdt_add_pcie(s, aplic_s_phandle, imsic_s_phandle);
+        qti_fdt_add_pcie(s, aplic_s_phandle, imsic_s_phandle,
+                         iommu_phandle);
     }
 }
 
@@ -1110,6 +1420,8 @@ static void qti_machine_init(MachineState *machine)
         error_report("qemu_to_iosystem currently supports TCG only");
         exit(1);
     }
+
+    qti_validate_io_system_iommu(s);
 
     if (!s->io_system) {
         qti_create_io_system(s);
@@ -1281,6 +1593,21 @@ static void qti_set_dw_pcie(Object *obj, bool value, Error **errp)
     s->dw_pcie = value;
 }
 
+static bool qti_get_io_system_pcie_iommu_map(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return s->io_system_pcie_iommu_map;
+}
+
+static void qti_set_io_system_pcie_iommu_map(Object *obj, bool value,
+                                             Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    s->io_system_pcie_iommu_map = value;
+}
+
 static char *qti_get_my_virtio_blk_image(Object *obj, Error **errp)
 {
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
@@ -1330,6 +1657,52 @@ static void qti_set_io_system_backend(Object *obj, const char *value,
     s->io_system_backend_kind = qti_parse_backend_kind(s->io_system_backend);
 }
 
+static char *qti_get_io_system_iommu(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return g_strdup(s->io_system_iommu ? s->io_system_iommu :
+                    qti_iommu_kind_name(s->io_system_iommu_kind));
+}
+
+static void qti_set_io_system_iommu(Object *obj, const char *value,
+                                    Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+    IoSystemIommuKind kind;
+
+    if (!qti_parse_iommu_kind(value, &kind, errp)) {
+        return;
+    }
+    g_free(s->io_system_iommu);
+    s->io_system_iommu = g_strdup(qti_iommu_kind_name(kind));
+    s->io_system_iommu_kind = kind;
+}
+
+static char *qti_get_io_system_iommu_placement(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return g_strdup(s->io_system_iommu_placement_str ?
+                    s->io_system_iommu_placement_str :
+                    qti_iommu_placement_name(s->io_system_iommu_placement));
+}
+
+static void qti_set_io_system_iommu_placement(Object *obj, const char *value,
+                                              Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+    IoSystemIommuPlacement placement;
+
+    if (!qti_parse_iommu_placement(value, &placement, errp)) {
+        return;
+    }
+    g_free(s->io_system_iommu_placement_str);
+    s->io_system_iommu_placement_str =
+        g_strdup(qti_iommu_placement_name(placement));
+    s->io_system_iommu_placement = placement;
+}
+
 static char *qti_get_io_system_backend_lib(Object *obj, Error **errp)
 {
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
@@ -1360,6 +1733,80 @@ static void qti_set_io_system_vcs_libdir(Object *obj, const char *value,
 
     g_free(s->io_system_vcs_libdir);
     s->io_system_vcs_libdir = g_strdup(value && *value ? value : "");
+}
+
+static char *qti_get_io_system_iommu_refmodel_dir(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return g_strdup(s->io_system_iommu_refmodel_dir ?
+                    s->io_system_iommu_refmodel_dir : "");
+}
+
+static void qti_set_io_system_iommu_refmodel_dir(Object *obj,
+                                                 const char *value,
+                                                 Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    g_free(s->io_system_iommu_refmodel_dir);
+    s->io_system_iommu_refmodel_dir =
+        g_strdup(value && *value ? value : QTI_IOMMU_DEFAULT_REFMODEL_DIR);
+}
+
+static char *qti_get_io_system_iommu_rtl_ip_dir(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return g_strdup(s->io_system_iommu_rtl_ip_dir ?
+                    s->io_system_iommu_rtl_ip_dir : "");
+}
+
+static void qti_set_io_system_iommu_rtl_ip_dir(Object *obj,
+                                               const char *value,
+                                               Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    g_free(s->io_system_iommu_rtl_ip_dir);
+    s->io_system_iommu_rtl_ip_dir =
+        g_strdup(value && *value ? value : QTI_IOMMU_DEFAULT_RTL_IP_DIR);
+}
+
+static char *qti_get_io_system_iommu_picker_out(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return g_strdup(s->io_system_iommu_picker_out ?
+                    s->io_system_iommu_picker_out : "");
+}
+
+static void qti_set_io_system_iommu_picker_out(Object *obj,
+                                               const char *value,
+                                               Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    g_free(s->io_system_iommu_picker_out);
+    s->io_system_iommu_picker_out = g_strdup(value && *value ? value : "");
+}
+
+static char *qti_get_io_system_iommu_vcs_libdir(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return g_strdup(s->io_system_iommu_vcs_libdir ?
+                    s->io_system_iommu_vcs_libdir : "");
+}
+
+static void qti_set_io_system_iommu_vcs_libdir(Object *obj,
+                                               const char *value,
+                                               Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    g_free(s->io_system_iommu_vcs_libdir);
+    s->io_system_iommu_vcs_libdir = g_strdup(value && *value ? value : "");
 }
 
 static bool qti_get_io2q_async(Object *obj, Error **errp)
@@ -1430,16 +1877,29 @@ static void qti_machine_instance_init(Object *obj)
     s->generated_dtb = ON_OFF_AUTO_AUTO;
     s->my_virtio_blk = false;
     s->dw_pcie = false;
+    s->io_system_pcie_iommu_map = true;
     s->io_system_backend_kind = IO_SYSTEM_BACKEND_CMODEL;
+    s->io_system_iommu_kind = IO_SYSTEM_IOMMU_NONE;
+    s->io_system_iommu_placement = IO_SYSTEM_IOMMU_PLACEMENT_AUTO;
     s->io_system_backend = g_strdup("cmodel");
+    s->io_system_iommu = g_strdup("none");
+    s->io_system_iommu_placement_str = g_strdup("auto");
     s->io_system_backend_lib = g_strdup("");
     s->io_system_vcs_libdir = g_strdup("");
+    s->io_system_iommu_refmodel_dir =
+        g_strdup(QTI_IOMMU_DEFAULT_REFMODEL_DIR);
+    s->io_system_iommu_rtl_ip_dir =
+        g_strdup(QTI_IOMMU_DEFAULT_RTL_IP_DIR);
+    s->io_system_iommu_picker_out = g_strdup("");
+    s->io_system_iommu_vcs_libdir = g_strdup("");
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->io_system_trace_file = g_strdup("");
     s->io2q_outstanding = 1;
     s->io2q_async = false;
     s->service_mode = IO_SYSTEM_SERVICE_INLINE;
     s->io_system_service_mode = g_strdup("inline");
+    qemu_mutex_init(&s->io_system_posted_msi_lock);
+    s->io_system_posted_msi_bh = qemu_bh_new(qti_posted_msi_bh, s);
     s->io_system_service_bh = qemu_bh_new(qti_io_system_service_bh, s);
     s->io_system_service_cpu = NULL;
     s->io_system_service_work_pending = 0;
@@ -1451,6 +1911,18 @@ static void qti_machine_instance_finalize(Object *obj)
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
 
     qti_trace_dump_new(s);
+    if (s->io_system_posted_msi_bh) {
+        qemu_bh_delete(s->io_system_posted_msi_bh);
+        s->io_system_posted_msi_bh = NULL;
+    }
+    while (s->io_system_posted_msi_head) {
+        QtiPostedMsi *msi = (QtiPostedMsi *)s->io_system_posted_msi_head;
+
+        s->io_system_posted_msi_head = msi->next;
+        g_free(msi);
+    }
+    s->io_system_posted_msi_tail = NULL;
+    qemu_mutex_destroy(&s->io_system_posted_msi_lock);
     if (s->io_system_service_bh) {
         qemu_bh_delete(s->io_system_service_bh);
         s->io_system_service_bh = NULL;
@@ -1472,8 +1944,14 @@ static void qti_machine_instance_finalize(Object *obj)
     }
     io_system_destroy(s->io_system);
     g_free(s->io_system_backend);
+    g_free(s->io_system_iommu);
+    g_free(s->io_system_iommu_placement_str);
     g_free(s->io_system_backend_lib);
     g_free(s->io_system_vcs_libdir);
+    g_free(s->io_system_iommu_refmodel_dir);
+    g_free(s->io_system_iommu_rtl_ip_dir);
+    g_free(s->io_system_iommu_picker_out);
+    g_free(s->io_system_iommu_vcs_libdir);
     g_free(s->io_system_trace_file);
     g_free(s->my_virtio_blk_image);
     g_free(s->io_system_service_mode);
@@ -1507,6 +1985,19 @@ static void qti_machine_class_init(ObjectClass *klass, const void *data)
     object_class_property_set_description(klass, "io-system-backend",
                                           "Select io-system backend: cmodel, rtl-template, or rtl-system");
 
+    object_class_property_add_str(klass, "io-system-iommu",
+                                  qti_get_io_system_iommu,
+                                  qti_set_io_system_iommu);
+    object_class_property_set_description(klass, "io-system-iommu",
+                                          "Select io-system IOMMU: none, cmodel, or rtl");
+
+    object_class_property_add_str(klass, "io-system-iommu-placement",
+                                  qti_get_io_system_iommu_placement,
+                                  qti_set_io_system_iommu_placement);
+    object_class_property_set_description(klass,
+                                          "io-system-iommu-placement",
+                                          "Place io-system IOMMU: auto, external, or embedded");
+
     object_class_property_add_str(klass, "io-system-backend-lib",
                                   qti_get_io_system_backend_lib,
                                   qti_set_io_system_backend_lib);
@@ -1519,6 +2010,33 @@ static void qti_machine_class_init(ObjectClass *klass, const void *data)
     object_class_property_set_description(klass, "io-system-vcs-libdir",
                                           "Directory containing VCS runtime libraries for the RTL backend");
 
+    object_class_property_add_str(klass, "io-system-iommu-refmodel-dir",
+                                  qti_get_io_system_iommu_refmodel_dir,
+                                  qti_set_io_system_iommu_refmodel_dir);
+    object_class_property_set_description(klass,
+                                          "io-system-iommu-refmodel-dir",
+                                          "Legacy C-model IOMMU refmodel source directory; built-in cmodel IOMMU does not dlopen it");
+
+    object_class_property_add_str(klass, "io-system-iommu-rtl-ip-dir",
+                                  qti_get_io_system_iommu_rtl_ip_dir,
+                                  qti_set_io_system_iommu_rtl_ip_dir);
+    object_class_property_set_description(klass, "io-system-iommu-rtl-ip-dir",
+                                          "RTL IOMMU IP source directory");
+
+    object_class_property_add_str(klass, "io-system-iommu-picker-out",
+                                  qti_get_io_system_iommu_picker_out,
+                                  qti_set_io_system_iommu_picker_out);
+    object_class_property_set_description(klass,
+                                          "io-system-iommu-picker-out",
+                                          "Picker output directory for the RTL IOMMU API library");
+
+    object_class_property_add_str(klass, "io-system-iommu-vcs-libdir",
+                                  qti_get_io_system_iommu_vcs_libdir,
+                                  qti_set_io_system_iommu_vcs_libdir);
+    object_class_property_set_description(klass,
+                                          "io-system-iommu-vcs-libdir",
+                                          "Directory containing VCS runtime libraries for the RTL IOMMU");
+
     object_class_property_add_bool(klass, "my-virtio-blk",
                                    qti_get_my_virtio_blk,
                                    qti_set_my_virtio_blk);
@@ -1530,6 +2048,13 @@ static void qti_machine_class_init(ObjectClass *klass, const void *data)
                                    qti_set_dw_pcie);
     object_class_property_set_description(klass, "dw-pcie",
                                           "Enable QEMU DesignWare PCIe host controller");
+
+    object_class_property_add_bool(klass, "io-system-pcie-iommu-map",
+                                   qti_get_io_system_pcie_iommu_map,
+                                   qti_set_io_system_pcie_iommu_map);
+    object_class_property_set_description(klass,
+                                          "io-system-pcie-iommu-map",
+                                          "Advertise io-system IOMMU to PCIe requesters through iommu-map");
 
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   qti_get_my_virtio_blk_image,

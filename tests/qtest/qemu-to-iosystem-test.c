@@ -496,6 +496,46 @@ static void test_machine_service_mode_bh(void)
     unlink(image_path);
 }
 
+static void test_machine_invalid_iommu_combo(void)
+{
+    const char *qemu = g_getenv("QTEST_QEMU_BINARY");
+    g_autofree gchar *errout = NULL;
+    g_autoptr(GError) error = NULL;
+    gint status = 0;
+    const gchar *argv[] = {
+        qemu,
+        "-M",
+        "qemu_to_iosystem,generated-dtb=off,io-system-backend=rtl-system,"
+        "io-system-iommu=cmodel",
+        "-m", "128M",
+        "-smp", "1",
+        "-bios", "none",
+        "-nodefaults",
+        "-serial", "none",
+        "-display", "none",
+        "-accel", "qtest",
+        NULL,
+    };
+
+    if (!qemu || !*qemu) {
+        g_test_skip("QTEST_QEMU_BINARY is not set");
+        return;
+    }
+
+    g_assert_true(g_spawn_sync(NULL, (gchar **)argv, NULL,
+                               G_SPAWN_SEARCH_PATH,
+                               NULL, NULL, NULL, &errout, &status, &error));
+    g_assert_no_error(error);
+#ifndef _WIN32
+    g_assert_true(WIFEXITED(status));
+    g_assert_cmpint(WEXITSTATUS(status), !=, 0);
+#else
+    g_assert_cmpint(status, !=, 0);
+#endif
+    g_assert_nonnull(strstr(errout,
+                            "does not support io-system-iommu=cmodel"));
+}
+
 static void test_machine_unimplemented_bridge(void)
 {
     char trace_path[] = "/tmp/qti-unmapped-trace.XXXXXX";
@@ -631,6 +671,8 @@ int main(int argc, char **argv)
                    test_machine_aplic_mmio);
     qtest_add_func("/qemu_to_iosystem/service-mode-bh",
                    test_machine_service_mode_bh);
+    qtest_add_func("/qemu_to_iosystem/invalid-iommu-combo",
+                   test_machine_invalid_iommu_combo);
     qtest_add_func("/qemu_to_iosystem/unimplemented-bridge",
                    test_machine_unimplemented_bridge);
     qtest_add_func("/qemu_to_iosystem/virtio-blk",
