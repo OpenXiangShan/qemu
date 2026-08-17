@@ -13,10 +13,6 @@
 #include "qemu/main-loop.h"
 #include "qemu/thread.h"
 #include "hw/riscv/riscv_hart.h"
-#include "io_dwc_dmac.h"
-#include "io_dwc_pcie.h"
-#include "io_aplic.h"
-#include "io_my_virtio_blk.h"
 #include "io_system.h"
 
 #define TYPE_QEMU_TO_IOSYSTEM_MACHINE MACHINE_TYPE_NAME("qemu_to_iosystem")
@@ -43,11 +39,6 @@ typedef struct QemuToIoSystemState {
     MemoryRegion flash;
 
     IoSystem *io_system;
-    IoAplic *aplic_m;
-    IoAplic *aplic_s;
-    IoDwcDmac *dmac;
-    IoDwcPcie *pcie;
-    IoMyVirtioBlk *my_virtio_blk_dev;
     QemuToIoSystemBridgeWindow io_windows[IO_MANIFEST_DEVICE__COUNT];
     QemuToIoSystemBridgeWindow rtl_system_window;
 

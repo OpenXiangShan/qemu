@@ -30,7 +30,6 @@
 #include "hw/riscv/qemu_to_iosystem.h"
 #include "hw/riscv/riscv-iommu-bits.h"
 #include "hw/riscv/riscv_hart.h"
-#include "io_dwc_dmac.h"
 #include "target/riscv/cpu.h"
 #include "target/riscv/cpu_bits.h"
 
@@ -45,6 +44,7 @@
 #define QTI_IMSIC_GUEST_BITS 3
 #define QTI_APLIC_NUM_SOURCES 96
 #define QTI_DMAC_CLOCK 50000000
+#define QTI_DMAC_NR_CHANS 2
 #define QTI_TRACE_CAPACITY_WITH_FILE 65536
 #define QTI_RTL_SYSTEM_MMIO_BASE 0x30000000ULL
 #define QTI_RTL_SYSTEM_MMIO_SIZE 0x47ff0000ULL
@@ -548,54 +548,6 @@ static void qti_create_io_bridge_windows(QemuToIoSystemState *s,
     }
 }
 
-static void qti_create_pcie(QemuToIoSystemState *s)
-{
-    const IoManifestEntry *dbi = qti_manifest_entry(IO_MANIFEST_DEVICE_DWC_DBI);
-    const IoManifestEntry *bar = qti_manifest_entry(IO_MANIFEST_DEVICE_PCIE_BAR);
-    const IoManifestEntry *ecam = qti_manifest_entry(IO_MANIFEST_DEVICE_PCIE_ECAM);
-
-    s->pcie = io_dwc_pcie_create(s->io_system, &(IoDwcPcieConfig) {
-        .name = "qti-pcie",
-        .dbi_base = dbi->base,
-        .dbi_size = dbi->size,
-        .ecam_base = ecam->base,
-        .ecam_size = ecam->size,
-        .bar_base = bar->base,
-        .bar_size = bar->size,
-        .msi_irq = QTI_PCIE_MSI_IRQ,
-        .inta_irq = QTI_PCIE_INTA_IRQ,
-        .intb_irq = QTI_PCIE_INTB_IRQ,
-        .intc_irq = QTI_PCIE_INTC_IRQ,
-        .intd_irq = QTI_PCIE_INTD_IRQ,
-        .root_bus_name = "qti-pcie-root",
-        .secondary_bus_name = "qti-pcie",
-        .root_bus_path = "0000:00",
-    }, s->aplic_s);
-
-    if (!s->pcie) {
-        error_report("failed to create io-system DWC PCIe");
-        exit(1);
-    }
-}
-
-static void qti_create_dmac(QemuToIoSystemState *s)
-{
-    const IoManifestEntry *dmac = qti_manifest_entry(
-        IO_MANIFEST_DEVICE_DWC_DMAC);
-
-    s->dmac = io_dwc_dmac_create(s->io_system, &(IoDwcDmacConfig) {
-        .name = dmac->name,
-        .base = dmac->base,
-        .size = dmac->size,
-        .irq = dmac->irq,
-        .requester_id = QTI_DMAC_REQUESTER_ID,
-    }, s->aplic_s);
-    if (!s->dmac) {
-        error_report("failed to create io-system DWC DMAC");
-        exit(1);
-    }
-}
-
 static void qti_posted_msi_bh(void *opaque)
 {
     QemuToIoSystemState *s = opaque;
@@ -801,7 +753,26 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         .iommu_rtl_ip_dir = s->io_system_iommu_rtl_ip_dir,
         .iommu_picker_out = s->io_system_iommu_picker_out,
         .iommu_vcs_libdir = s->io_system_iommu_vcs_libdir,
+        .aplic_enabled = qti_backend_uses_cmodel_devices(
+            s->io_system_backend_kind),
+        .aplic_num_sources = QTI_APLIC_NUM_SOURCES,
+        .aplic_num_harts = machine->smp.cpus,
+        .aplic_iprio_bits = 8,
+        .dmac_enabled = qti_backend_uses_cmodel_devices(
+            s->io_system_backend_kind),
+        .dmac_requester_id = QTI_DMAC_REQUESTER_ID,
+        .pcie_enabled = s->dw_pcie &&
+            qti_backend_uses_cmodel_devices(s->io_system_backend_kind),
+        .pcie_msi_irq = QTI_PCIE_MSI_IRQ,
+        .pcie_inta_irq = QTI_PCIE_INTA_IRQ,
+        .pcie_intb_irq = QTI_PCIE_INTB_IRQ,
+        .pcie_intc_irq = QTI_PCIE_INTC_IRQ,
+        .pcie_intd_irq = QTI_PCIE_INTD_IRQ,
+        .pcie_root_bus_name = "qti-pcie-root",
+        .pcie_secondary_bus_name = "qti-pcie",
+        .pcie_root_bus_path = "0000:00",
         .my_virtio_blk_enabled = s->my_virtio_blk,
+        .my_virtio_blk_requester_id = QTI_MY_VIRTIO_BLK_REQUESTER_ID,
         .my_virtio_blk_image_path = s->my_virtio_blk_image,
         .io2q_max_beat_bytes = IO_AXI_MAX_BEAT_BYTES,
         .io2q_async_enabled = s->io2q_async,
@@ -830,64 +801,6 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         exit(1);
     }
 
-    if (qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
-        const IoManifestEntry *aplic_m = qti_manifest_entry(
-            IO_MANIFEST_DEVICE_APLIC_M);
-        const IoManifestEntry *aplic_s = qti_manifest_entry(
-            IO_MANIFEST_DEVICE_APLIC_S);
-
-        s->aplic_m = io_aplic_create(s->io_system, &(IoAplicConfig) {
-            .name = aplic_m->name,
-            .base = aplic_m->base,
-            .size = aplic_m->size,
-            .num_sources = QTI_APLIC_NUM_SOURCES,
-            .num_harts = machine->smp.cpus,
-            .iprio_bits = 8,
-            .msimode = true,
-            .mmode = true,
-        }, NULL);
-        if (!s->aplic_m) {
-            error_report("failed to create io-system machine APLIC");
-            exit(1);
-        }
-
-        s->aplic_s = io_aplic_create(s->io_system, &(IoAplicConfig) {
-            .name = aplic_s->name,
-            .base = aplic_s->base,
-            .size = aplic_s->size,
-            .num_sources = QTI_APLIC_NUM_SOURCES,
-            .num_harts = machine->smp.cpus,
-            .iprio_bits = 8,
-            .msimode = true,
-            .mmode = false,
-        }, s->aplic_m);
-        if (!s->aplic_s) {
-            error_report("failed to create io-system supervisor APLIC");
-            exit(1);
-        }
-
-        qti_create_dmac(s);
-    }
-}
-
-static void qti_create_my_virtio_blk(QemuToIoSystemState *s)
-{
-    const IoManifestEntry *blk = qti_manifest_entry(
-        IO_MANIFEST_DEVICE_MY_VIRTIO_BLK);
-
-    s->my_virtio_blk_dev = io_my_virtio_blk_create(s->io_system,
-                                                   &(IoMyVirtioBlkConfig) {
-        .name = blk->name,
-        .base = blk->base,
-        .size = blk->size,
-        .irq = blk->irq,
-        .requester_id = QTI_MY_VIRTIO_BLK_REQUESTER_ID,
-        .image_path = s->my_virtio_blk_image,
-    }, s->aplic_s);
-    if (!s->my_virtio_blk_dev) {
-        error_report("failed to create io-system my-virtio-blk");
-        exit(1);
-    }
 }
 
 static void qti_create_imsics(uint32_t num_harts)
@@ -1011,7 +924,7 @@ static void qti_fdt_add_dmac(QemuToIoSystemState *s,
     qemu_fdt_setprop_string(fdt, name, "compatible", "snps,axi-dma-1.01a");
     qemu_fdt_setprop(fdt, name, "dma-controller", NULL, 0);
     qemu_fdt_setprop_cell(fdt, name, "#dma-cells", 1);
-    qemu_fdt_setprop_cell(fdt, name, "dma-channels", IO_DWC_DMAC_NR_CHANS);
+    qemu_fdt_setprop_cell(fdt, name, "dma-channels", QTI_DMAC_NR_CHANS);
     qemu_fdt_setprop_cell(fdt, name, "snps,dma-masters", 1);
     qemu_fdt_setprop_cell(fdt, name, "snps,data-width", 3);
     qemu_fdt_setprop_cells(fdt, name, "snps,block-size", 4096, 4096);
@@ -1447,14 +1360,6 @@ static void qti_machine_init(MachineState *machine)
         error_report("io-system backend %s does not support my-virtio-blk in qemu_to_iosystem",
                      qti_backend_kind_name(s->io_system_backend_kind));
         exit(1);
-    }
-
-    if (s->my_virtio_blk &&
-        qti_backend_uses_cmodel_devices(s->io_system_backend_kind)) {
-        qti_create_my_virtio_blk(s);
-    }
-    if (s->dw_pcie) {
-        qti_create_pcie(s);
     }
 
     serial_mm_init(system_memory, qti_memmap[QTI_UART0].base, 2, NULL,
@@ -1929,18 +1834,6 @@ static void qti_machine_instance_finalize(Object *obj)
     }
     if (s->io_system_trace_fp) {
         fclose(s->io_system_trace_fp);
-    }
-    if (s->dmac) {
-        io_dwc_dmac_destroy(s->dmac);
-    }
-    if (s->my_virtio_blk_dev) {
-        io_my_virtio_blk_destroy(s->my_virtio_blk_dev);
-    }
-    if (s->aplic_s) {
-        io_aplic_destroy(s->aplic_s);
-    }
-    if (s->aplic_m) {
-        io_aplic_destroy(s->aplic_m);
     }
     io_system_destroy(s->io_system);
     g_free(s->io_system_backend);
