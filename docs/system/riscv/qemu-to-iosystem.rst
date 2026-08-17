@@ -63,14 +63,26 @@ C-model IOMMU refmodel 源码已经 vendored 到
 ``libiommu_refmodel_api.so``。``io-system-iommu-refmodel-dir`` 作为兼容属性
 保留，但内置 cmodel 路径不依赖它。
 
-RTL IOMMU 仍通过 ``.so`` 动态加载。先在 ``io-system-lib`` 下执行
-``make iommu-rtl-api``，会把当前可用的 picker 产物 stage 到
-``output/iommu-rtl``。如果指定 ``io-system-iommu-picker-out=PATH``，
-会优先查找 ``PATH/lib/libiommu_api.so`` 和 ``PATH/libiommu_api.so``；
-本 workspace 的测试命令使用
-``io-system-iommu-picker-out=/nfs/home/guoyaxing/my-workspace/io-system-lib/output/iommu-rtl``。
-也可用
-``IO_SYSTEM_IOMMU_RTL_API_SO`` 直接指定 ``.so``。
+RTL IOMMU 仍通过 ``.so`` 动态加载。RTL IP、``iommu-api`` 源码和 picker
+支持文件放在 workspace sibling ``bosc-iommu-v2`` 下。先执行：
+
+.. code-block:: bash
+
+   cd ../bosc-iommu-v2
+   VCS_ENV=/path/to/vcs_env ./build-picker-iommu-vcs.sh
+
+也可以不设置 ``VCS_ENV``，直接由调用环境提供 ``VCS_HOME``、license 和
+``PATH``。picker、模板、xspcomm 和 ``iommu-api`` 源码默认都来自
+``bosc-iommu-v2/third_party``，不再依赖旧 XSV 源树。
+
+这会生成 ``bosc-iommu-v2/output/iommu-api/lib/libiommu_api.so`` 以及配套
+``libUTiommu_wrap.so``、``libDPIiommu_wrap.so`` 和 ``libxspcomm.so``。
+再在 ``io-system-lib`` 下执行 ``make IO_SYSTEM_IOMMU_RTL=1 iommu-rtl-api``，
+会把该本地产物 stage 到 ``output/iommu-rtl``。如果指定
+``io-system-iommu-picker-out=PATH``，会优先查找
+``PATH/lib/libiommu_api.so`` 和 ``PATH/libiommu_api.so``；默认测试脚本使用
+``bosc-iommu-v2/output/iommu-api``。也可用 ``IO_SYSTEM_IOMMU_RTL_API_SO``
+直接指定 ``.so``。
 ``io-system-iommu-rtl-ip-dir`` 和 ``io-system-iommu-vcs-libdir`` 保留给
 RTL IOMMU 构建/运行路径管理。
 

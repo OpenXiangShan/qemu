@@ -50,9 +50,11 @@
 #define QTI_RTL_SYSTEM_MMIO_SIZE 0x47ff0000ULL
 #define QTI_RTL_SYSTEM_DMAC_COMPAT "bosc,io-system-rtl-mem2mem-dmac"
 #define QTI_IOMMU_DEFAULT_REFMODEL_DIR \
-    "/nfs/home/guoyaxing/xsv-qemu-flow-clean/scenario/iommu/lib/iommu-refmodel"
+    "io-system-lib/src/cmodel/iommu_refmodel"
 #define QTI_IOMMU_DEFAULT_RTL_IP_DIR \
-    "/nfs/home/guoyaxing/xsv-qemu-flow-clean/ipcatalog/iommu/bosc-iommu-v2"
+    "bosc-iommu-v2"
+#define QTI_IOMMU_DEFAULT_PICKER_OUT \
+    "bosc-iommu-v2/output/iommu-api"
 #define QTI_DMAC_REQUESTER_ID 0x8
 #define QTI_MY_VIRTIO_BLK_REQUESTER_ID 0x10
 #define QTI_UART0_IRQ 10
@@ -1693,7 +1695,8 @@ static void qti_set_io_system_iommu_picker_out(Object *obj,
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
 
     g_free(s->io_system_iommu_picker_out);
-    s->io_system_iommu_picker_out = g_strdup(value && *value ? value : "");
+    s->io_system_iommu_picker_out =
+        g_strdup(value && *value ? value : QTI_IOMMU_DEFAULT_PICKER_OUT);
 }
 
 static char *qti_get_io_system_iommu_vcs_libdir(Object *obj, Error **errp)
@@ -1795,7 +1798,7 @@ static void qti_machine_instance_init(Object *obj)
         g_strdup(QTI_IOMMU_DEFAULT_REFMODEL_DIR);
     s->io_system_iommu_rtl_ip_dir =
         g_strdup(QTI_IOMMU_DEFAULT_RTL_IP_DIR);
-    s->io_system_iommu_picker_out = g_strdup("");
+    s->io_system_iommu_picker_out = g_strdup(QTI_IOMMU_DEFAULT_PICKER_OUT);
     s->io_system_iommu_vcs_libdir = g_strdup("");
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->io_system_trace_file = g_strdup("");
