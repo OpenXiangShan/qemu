@@ -3780,7 +3780,8 @@ endif
 
 io_system_backend = not_found
 if get_option('io_system').enabled()
-  io_system_lib_dir = join_paths(meson.project_source_root(), '..',
+  io_system_workspace_root = join_paths(meson.project_source_root(), '..')
+  io_system_lib_dir = join_paths(meson.project_source_root(), 'third_party',
                                  'io-system-lib')
   io_system_lib_build_dir = join_paths(meson.project_build_root(),
                                        'io-system-lib-build')
@@ -3806,6 +3807,7 @@ if get_option('io_system').enabled()
       '-C', io_system_lib_dir,
       'BUILD_DIR=' + io_system_lib_build_dir,
       'OUTPUT_DIR=' + io_system_lib_output_dir,
+      'WORKSPACE_ROOT=' + io_system_workspace_root,
       'IO_SYSTEM_QEMU_BACKEND=1',
       'QEMU_CFLAGS_LIST=' + '|'.join(io_system_qemu_cflags),
       'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
@@ -3815,7 +3817,7 @@ if get_option('io_system').enabled()
     build_always_stale: true,
   )
   io_system_backend = declare_dependency(
-    include_directories: include_directories('../io-system-lib/include'),
+    include_directories: include_directories('third_party/io-system-lib/include'),
     sources: io_system_libs,
     dependencies: io_system_dl)
 endif

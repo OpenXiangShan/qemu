@@ -1,0 +1,6 @@
+build/
+output/
+*.fsdb
+novas_dump.log
+ucli.key
+tags

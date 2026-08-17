@@ -50,7 +50,7 @@
 #define QTI_RTL_SYSTEM_MMIO_SIZE 0x47ff0000ULL
 #define QTI_RTL_SYSTEM_DMAC_COMPAT "bosc,io-system-rtl-mem2mem-dmac"
 #define QTI_IOMMU_DEFAULT_REFMODEL_DIR \
-    "io-system-lib/src/cmodel/iommu_refmodel"
+    "third_party/io-system-lib/src/cmodel/iommu_refmodel"
 #define QTI_IOMMU_DEFAULT_RTL_IP_DIR \
     "bosc-iommu-v2"
 #define QTI_IOMMU_DEFAULT_PICKER_OUT \

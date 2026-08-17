@@ -1,0 +1,15 @@
+src/rtl_model/io_system/rtl/aplic/vendor/axi_pkg.sv
+src/rtl_model/io_system/rtl/aplic/vendor/ariane_axi_pkg.sv
+src/rtl_model/io_system/rtl/aplic/vendor/reg_intf_pkg.sv
+src/rtl_model/io_system/rtl/aplic/common/axi4_lite_write_master.sv
+src/rtl_model/io_system/rtl/aplic/scalable/aplic_regmap.sv
+src/rtl_model/io_system/rtl/aplic/scalable/aplic_domain_gateway.sv
+src/rtl_model/io_system/rtl/aplic/scalable/aplic_domain_notifier.sv
+src/rtl_model/io_system/rtl/aplic/scalable/aplic_domain_regctl.sv
+src/rtl_model/io_system/rtl/aplic/scalable/aplic_domain_top.sv
+src/rtl_model/io_system/rtl/rtl_mem2mem_dmac.sv
+src/rtl_model/io_system/rtl/virtio_gbus_mmio_blk_top.sv
+src/rtl_model/io_system/rtl/io_system_rtl_aplic_msi.sv
+src/rtl_model/io_system/rtl/io_system_rtl_gbus_shadow.sv
+src/rtl_model/io_system/rtl/io_system_rtl_mmio_mux.sv
+src/rtl_model/io_system/rtl/io_system_rtl_wrapper.sv
