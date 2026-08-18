@@ -22,13 +22,34 @@ IOMMU_REFMODEL_SRCS := \
 IOMMU_REFMODEL_HEADERS := \
 	$(wildcard $(IOMMU_REFMODEL_DIR)/include/*.h) \
 	$(wildcard $(IOMMU_REFMODEL_DIR)/libiommu/include/*.h)
+IOMMU_RTL_API_DIR := src/iommu_api
+IOMMU_RTL_API_HEADERS := \
+	$(IOMMU_RTL_API_DIR)/include/iommu_api.h \
+	$(IOMMU_RTL_API_DIR)/include/iommu_sim.hpp
+IOMMU_RTL_API_SRCS := \
+	$(IOMMU_RTL_API_DIR)/src/iommu_sim.cpp \
+	$(IOMMU_RTL_API_DIR)/src/iommu_api.cpp \
+	$(IOMMU_RTL_API_DIR)/src/iommu_wrap_bridge.cpp
+IOMMU_RTL_API_OBJS := $(patsubst $(IOMMU_RTL_API_DIR)/src/%.cpp, \
+	$(BUILD_DIR)/iommu-api/%.o,$(IOMMU_RTL_API_SRCS))
+IOMMU_RTL_API_SO := $(BUILD_DIR)/iommu-api/libiommu_api.so
 IOMMU_RTL_STAGE_DIR := $(OUTPUT_DIR)/iommu-rtl
 IOMMU_RTL_STAGE_STAMP := $(IOMMU_RTL_STAGE_DIR)/.iommu-rtl-api.ready.stamp
-IOMMU_RTL_API_SO_SOURCE := $(IOMMU_RTL_API_DIR)/lib/libiommu_api.so
 IOMMU_RTL_PICKER_LIBS := \
 	$(IOMMU_RTL_PICKER_OUT)/libUTiommu_wrap.so \
-	$(IOMMU_RTL_PICKER_OUT)/libDPIiommu_wrap.so \
-	$(IOMMU_RTL_PICKER_OUT)/libxspcomm.so
+	$(IOMMU_RTL_PICKER_OUT)/libDPIiommu_wrap.so
+IOMMU_RTL_RUNTIME_LIBS := \
+	$(IOMMU_RTL_PICKER_LIBS) \
+	$(PICKER_XSPCOMM_LIB)
+IOMMU_RTL_PICKER_DAIDIR := \
+	$(IOMMU_RTL_PICKER_OUT)/libDPIiommu_wrap.so.daidir
+IOMMU_RTL_PICKER_GENERATED := \
+	$(IOMMU_RTL_PICKER_OUT)/UT_iommu_wrap.cpp \
+	$(IOMMU_RTL_PICKER_OUT)/UT_iommu_wrap.hpp \
+	$(IOMMU_RTL_PICKER_OUT)/UT_iommu_wrap_dpi.hpp \
+	$(IOMMU_RTL_PICKER_OUT)/dut_base.hpp \
+	$(IOMMU_RTL_PICKER_OUT)/dut_type.hpp \
+	$(IOMMU_RTL_PICKER_OUT)/vc_hdrs.h
 MY_VIRTIO_SOURCE_BUILD_DIR := $(abspath $(MY_VIRTIO_LIB_DIR)/build)
 MY_VIRTIO_SOURCE_OUTPUT_DIR := $(abspath $(MY_VIRTIO_LIB_DIR)/output)
 MY_VIRTIO_OUTPUT_DIR := $(abspath $(BUILD_DIR)/my-virtio-lib/output)
@@ -178,14 +199,34 @@ $(BUILD_DIR)/%.o: %.c $(wildcard include/*.h) $(wildcard src/core/*.h) \
 $(BUILD_DIR)/src/cmodel/iommu_refmodel/%.o: CFLAGS += \
 	-Wno-unused-parameter -Wno-implicit-fallthrough -Wno-uninitialized
 
-$(IOMMU_RTL_STAGE_STAMP): $(IOMMU_RTL_API_SO_SOURCE) \
-		$(IOMMU_RTL_PICKER_LIBS) $(BUILD_PATHS_FILE) Makefile
+$(BUILD_DIR)/iommu-api/%.o: $(IOMMU_RTL_API_DIR)/src/%.cpp \
+		$(IOMMU_RTL_API_HEADERS) $(IOMMU_RTL_PICKER_GENERATED) \
+		$(IOMMU_RTL_PICKER_LIBS) Makefile
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -std=c++20 -fcoroutines -ftls-model=global-dynamic \
+		-DUSE_VCS -DENABLE_XCOROUTINE=true \
+		-I$(IOMMU_RTL_API_DIR)/include \
+		-I$(IOMMU_RTL_PICKER_OUT) \
+		-I$(PICKER_XSPCOMM_INCLUDE) \
+		-I$(VCS_INCLUDE) \
+		-c $< -o $@
+
+$(IOMMU_RTL_API_SO): $(IOMMU_RTL_API_OBJS) $(IOMMU_RTL_RUNTIME_LIBS)
+	@mkdir -p $(dir $@)
+	$(CXX) -shared -o $@ $(IOMMU_RTL_API_OBJS) \
+		-Wl,-rpath,'$$ORIGIN' -Wl,--no-as-needed -rdynamic \
+		-L$(IOMMU_RTL_PICKER_OUT) -L$(dir $(PICKER_XSPCOMM_LIB)) \
+		-lUTiommu_wrap -lDPIiommu_wrap -lxspcomm \
+		-lm -lc -lpthread -lnuma -ldl
+
+$(IOMMU_RTL_STAGE_STAMP): $(IOMMU_RTL_API_SO) \
+		$(IOMMU_RTL_RUNTIME_LIBS) $(IOMMU_RTL_PICKER_DAIDIR) \
+		$(BUILD_PATHS_FILE) Makefile
+	@rm -rf $(IOMMU_RTL_STAGE_DIR)
 	@mkdir -p $(IOMMU_RTL_STAGE_DIR)
-	cp -f $(IOMMU_RTL_API_SO_SOURCE) $(IOMMU_RTL_STAGE_DIR)/
-	cp -f $(IOMMU_RTL_PICKER_LIBS) $(IOMMU_RTL_STAGE_DIR)/
-	@if ls $(IOMMU_RTL_PICKER_OUT)/*.so.daidir >/dev/null 2>&1; then \
-		cp -a $(IOMMU_RTL_PICKER_OUT)/*.so.daidir $(IOMMU_RTL_STAGE_DIR)/; \
-	fi
+	cp -f $(IOMMU_RTL_API_SO) $(IOMMU_RTL_STAGE_DIR)/
+	cp -f $(IOMMU_RTL_RUNTIME_LIBS) $(IOMMU_RTL_STAGE_DIR)/
+	cp -a $(IOMMU_RTL_PICKER_DAIDIR) $(IOMMU_RTL_STAGE_DIR)/
 	@touch $@
 
 $(RTL_SYSTEM_FILELIST): $(RTL_SYSTEM_FILELIST_SOURCE) Makefile

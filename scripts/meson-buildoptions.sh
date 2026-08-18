@@ -17,6 +17,8 @@ meson_options_help() {
   printf "%s\n" '                           use idef-parser to automatically generate TCG'
   printf "%s\n" '                           code for the Hexagon frontend'
   printf "%s\n" '  --disable-install-blobs  install provided firmware blobs'
+  printf "%s\n" '  --disable-io-system-iommu-rtl'
+  printf "%s\n" '                           build picker-backed RTL IOMMU API'
   printf "%s\n" '  --disable-qom-cast-debug cast debugging support'
   printf "%s\n" '  --disable-relocatable    toggle relocatable install'
   printf "%s\n" '  --docdir=VALUE           Base directory for documentation installation'
@@ -62,6 +64,8 @@ meson_options_help() {
   printf "%s\n" '  --includedir=VALUE       Header file directory [include]'
   printf "%s\n" '  --interp-prefix=VALUE    where to find shared libraries etc., use %M for'
   printf "%s\n" '                           cpu name [/usr/gnemul/qemu-%M]'
+  printf "%s\n" '  --io-system-iommu-picker-out=VALUE'
+  printf "%s\n" '                           picker output used by the RTL IOMMU API build'
   printf "%s\n" '  --libdir=VALUE           Library directory [system default]'
   printf "%s\n" '  --libexecdir=VALUE       Library executable directory [libexec]'
   printf "%s\n" '  --localedir=VALUE        Locale data directory [share/locale]'
@@ -357,12 +361,15 @@ _meson_option_parse() {
     --disable-iconv) printf "%s" -Diconv=disabled ;;
     --enable-igvm) printf "%s" -Digvm=enabled ;;
     --disable-igvm) printf "%s" -Digvm=disabled ;;
-    --enable-io-system) printf "%s" -Dio_system=enabled ;;
-    --disable-io-system) printf "%s" -Dio_system=disabled ;;
     --includedir=*) quote_sh "-Dincludedir=$2" ;;
     --enable-install-blobs) printf "%s" -Dinstall_blobs=true ;;
     --disable-install-blobs) printf "%s" -Dinstall_blobs=false ;;
     --interp-prefix=*) quote_sh "-Dinterp_prefix=$2" ;;
+    --enable-io-system) printf "%s" -Dio_system=enabled ;;
+    --disable-io-system) printf "%s" -Dio_system=disabled ;;
+    --io-system-iommu-picker-out=*) quote_sh "-Dio_system_iommu_picker_out=$2" ;;
+    --enable-io-system-iommu-rtl) printf "%s" -Dio_system_iommu_rtl=true ;;
+    --disable-io-system-iommu-rtl) printf "%s" -Dio_system_iommu_rtl=false ;;
     --enable-jack) printf "%s" -Djack=enabled ;;
     --disable-jack) printf "%s" -Djack=disabled ;;
     --enable-keyring) printf "%s" -Dkeyring=enabled ;;

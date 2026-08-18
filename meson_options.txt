@@ -55,6 +55,10 @@ option('my_virtio', type : 'feature', value : 'disabled',
        description: 'my-virtio devices and backend library')
 option('io_system', type : 'feature', value : 'disabled',
        description: 'io-system C-model library')
+option('io_system_iommu_rtl', type : 'boolean', value : false,
+       description: 'build picker-backed RTL IOMMU API')
+option('io_system_iommu_picker_out', type : 'string', value : '',
+       description: 'picker output used by the RTL IOMMU API build')
 option('kvm_m_mode', type : 'feature', value : 'disabled',
        description: 'RISC-V KVM software M-mode support')
 option('kvm_nested', type : 'feature', value : 'disabled',

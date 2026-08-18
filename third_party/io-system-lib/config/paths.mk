@@ -22,5 +22,4 @@ PICKER_TEMPLATE ?= $(UNITYCHIP_ROOT)/share/picker/template
 PICKER_XSPCOMM_INCLUDE ?= $(UNITYCHIP_ROOT)/share/picker/include
 PICKER_XSPCOMM_LIB ?= $(UNITYCHIP_ROOT)/share/picker/lib/libxspcomm.so
 
-IOMMU_RTL_API_DIR ?= $(abspath $(BOSC_IOMMU_DIR)/output/iommu-api)
-IOMMU_RTL_PICKER_OUT ?= $(abspath $(IOMMU_RTL_API_DIR)/lib)
+IOMMU_RTL_PICKER_OUT ?= $(abspath $(BOSC_IOMMU_DIR)/picker/picker_out_iommu)

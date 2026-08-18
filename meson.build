@@ -3786,6 +3786,17 @@ if get_option('io_system').enabled()
   io_system_lib_build_dir = join_paths(meson.project_build_root(),
                                        'io-system-lib-build')
   io_system_lib_output_dir = meson.current_build_dir()
+  io_system_iommu_rtl = get_option('io_system_iommu_rtl')
+  io_system_iommu_picker_out = get_option('io_system_iommu_picker_out')
+  io_system_iommu_rtl_arg = '0'
+  if io_system_iommu_rtl
+    if io_system_iommu_picker_out == ''
+      error('io_system_iommu_picker_out is required with io_system_iommu_rtl')
+    endif
+    io_system_iommu_rtl_arg = '1'
+  endif
+  io_system_unitychip_dir = join_paths(meson.project_build_root(), '..',
+                                       'unitychip', 'share', 'picker')
   io_system_glib_cflags = run_command('pkg-config', '--cflags', 'glib-2.0',
                                       check: true).stdout().strip().split()
   io_system_qemu_cflags = [
@@ -3809,6 +3820,12 @@ if get_option('io_system').enabled()
       'OUTPUT_DIR=' + io_system_lib_output_dir,
       'WORKSPACE_ROOT=' + io_system_workspace_root,
       'IO_SYSTEM_QEMU_BACKEND=1',
+      'IO_SYSTEM_IOMMU_RTL=' + io_system_iommu_rtl_arg,
+      'IOMMU_RTL_PICKER_OUT=' + io_system_iommu_picker_out,
+      'PICKER_XSPCOMM_INCLUDE=' + join_paths(io_system_unitychip_dir,
+                                              'include'),
+      'PICKER_XSPCOMM_LIB=' + join_paths(io_system_unitychip_dir, 'lib',
+                                         'libxspcomm.so'),
       'QEMU_CFLAGS_LIST=' + '|'.join(io_system_qemu_cflags),
       'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
       'all',
