@@ -11,6 +11,7 @@
 #include "hw/boards.h"
 #include "hw/irq.h"
 #include "qemu/main-loop.h"
+#include "qemu/notify.h"
 #include "qemu/thread.h"
 #include "hw/riscv/riscv_hart.h"
 #include "io_system.h"
@@ -39,6 +40,8 @@ typedef struct QemuToIoSystemState {
     MemoryRegion flash;
 
     IoSystem *io_system;
+    Notifier io_system_exit_notifier;
+    bool io_system_exit_notifier_registered;
     QemuToIoSystemBridgeWindow io_windows[IO_MANIFEST_DEVICE__COUNT];
     QemuToIoSystemBridgeWindow rtl_system_window;
 

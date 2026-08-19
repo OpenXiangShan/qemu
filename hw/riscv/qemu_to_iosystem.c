@@ -75,6 +75,25 @@
 static void qti_schedule_io_system_service(QemuToIoSystemState *s);
 static void qti_posted_msi_bh(void *opaque);
 
+static void qti_destroy_io_system(QemuToIoSystemState *s)
+{
+    if (!s->io_system) {
+        return;
+    }
+
+    io_system_destroy(s->io_system);
+    s->io_system = NULL;
+}
+
+static void qti_io_system_exit_notify(Notifier *notifier, void *data)
+{
+    QemuToIoSystemState *s = container_of(notifier, QemuToIoSystemState,
+                                          io_system_exit_notifier);
+
+    (void)data;
+    qti_destroy_io_system(s);
+}
+
 typedef struct QtiPostedMsi {
     hwaddr addr;
     uint8_t data[4];
@@ -803,6 +822,9 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         exit(1);
     }
 
+    s->io_system_exit_notifier.notify = qti_io_system_exit_notify;
+    qemu_add_exit_notifier(&s->io_system_exit_notifier);
+    s->io_system_exit_notifier_registered = true;
 }
 
 static void qti_create_imsics(uint32_t num_harts)
@@ -1818,6 +1840,10 @@ static void qti_machine_instance_finalize(Object *obj)
 {
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
 
+    if (s->io_system_exit_notifier_registered) {
+        qemu_remove_exit_notifier(&s->io_system_exit_notifier);
+        s->io_system_exit_notifier_registered = false;
+    }
     qti_trace_dump_new(s);
     if (s->io_system_posted_msi_bh) {
         qemu_bh_delete(s->io_system_posted_msi_bh);
@@ -1838,7 +1864,7 @@ static void qti_machine_instance_finalize(Object *obj)
     if (s->io_system_trace_fp) {
         fclose(s->io_system_trace_fp);
     }
-    io_system_destroy(s->io_system);
+    qti_destroy_io_system(s);
     g_free(s->io_system_backend);
     g_free(s->io_system_iommu);
     g_free(s->io_system_iommu_placement_str);
