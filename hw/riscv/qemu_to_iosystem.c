@@ -11,12 +11,15 @@
 #include "qapi/qapi-visit-common.h"
 #include "qemu/error-report.h"
 #include "qemu/log.h"
+#include "qemu/main-loop.h"
 #include "qemu/module.h"
+#include "qemu/notify.h"
 #include "qemu/timer.h"
 #include "qemu/units.h"
 #include "system/address-spaces.h"
 #include "system/device_tree.h"
 #include "system/kvm.h"
+#include "system/runstate.h"
 #include "system/system.h"
 #include "hw/boards.h"
 #include "hw/char/serial-mm.h"
@@ -74,6 +77,7 @@
 
 static void qti_schedule_io_system_service(QemuToIoSystemState *s);
 static void qti_posted_msi_bh(void *opaque);
+static void qti_trace_dump_new(QemuToIoSystemState *s);
 
 static void qti_destroy_io_system(QemuToIoSystemState *s)
 {
@@ -85,13 +89,35 @@ static void qti_destroy_io_system(QemuToIoSystemState *s)
     s->io_system = NULL;
 }
 
-static void qti_io_system_exit_notify(Notifier *notifier, void *data)
+static void qti_remove_io_system_shutdown_notifier(QemuToIoSystemState *s)
+{
+    if (!s->io_system_shutdown_notifier_registered) {
+        return;
+    }
+
+    notifier_remove(&s->io_system_shutdown_notifier);
+    s->io_system_shutdown_notifier_registered = false;
+}
+
+static void qti_io_system_shutdown_notify(Notifier *notifier, void *data)
 {
     QemuToIoSystemState *s = container_of(notifier, QemuToIoSystemState,
-                                          io_system_exit_notifier);
+                                          io_system_shutdown_notifier);
+    bool dropped_bql = false;
 
     (void)data;
+
+    qti_trace_dump_new(s);
+    if (bql_locked()) {
+        bql_unlock();
+        dropped_bql = true;
+    }
+
     qti_destroy_io_system(s);
+
+    if (dropped_bql) {
+        bql_lock();
+    }
 }
 
 typedef struct QtiPostedMsi {
@@ -822,9 +848,9 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         exit(1);
     }
 
-    s->io_system_exit_notifier.notify = qti_io_system_exit_notify;
-    qemu_add_exit_notifier(&s->io_system_exit_notifier);
-    s->io_system_exit_notifier_registered = true;
+    s->io_system_shutdown_notifier.notify = qti_io_system_shutdown_notify;
+    qemu_register_shutdown_notifier(&s->io_system_shutdown_notifier);
+    s->io_system_shutdown_notifier_registered = true;
 }
 
 static void qti_create_imsics(uint32_t num_harts)
@@ -1840,10 +1866,7 @@ static void qti_machine_instance_finalize(Object *obj)
 {
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
 
-    if (s->io_system_exit_notifier_registered) {
-        qemu_remove_exit_notifier(&s->io_system_exit_notifier);
-        s->io_system_exit_notifier_registered = false;
-    }
+    qti_remove_io_system_shutdown_notifier(s);
     qti_trace_dump_new(s);
     if (s->io_system_posted_msi_bh) {
         qemu_bh_delete(s->io_system_posted_msi_bh);

@@ -40,8 +40,8 @@ typedef struct QemuToIoSystemState {
     MemoryRegion flash;
 
     IoSystem *io_system;
-    Notifier io_system_exit_notifier;
-    bool io_system_exit_notifier_registered;
+    Notifier io_system_shutdown_notifier;
+    bool io_system_shutdown_notifier_registered;
     QemuToIoSystemBridgeWindow io_windows[IO_MANIFEST_DEVICE__COUNT];
     QemuToIoSystemBridgeWindow rtl_system_window;
 
