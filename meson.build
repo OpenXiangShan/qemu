@@ -3779,6 +3779,25 @@ if get_option('devproxy').enabled()
 endif
 
 io_system_backend = not_found
+
+# accel modules
+qtest_module_ss = ss.source_set()
+
+modules = {}
+target_modules = {}
+plugin_modules = []
+hw_arch = {}
+target_arch = {}
+target_system_arch = {}
+target_user_arch = {}
+hw_common_arch = {}
+target_common_arch = {}
+target_common_system_arch = {}
+
+# NOTE: the trace/ subdirectory needs the qapi_trace_events variable
+# that is filled in by qapi/.
+subdir('qapi')
+
 if get_option('io_system').enabled()
   io_system_workspace_root = join_paths(meson.project_source_root(), '..')
   io_system_lib_dir = join_paths(meson.project_source_root(), 'third_party',
@@ -3830,6 +3849,7 @@ if get_option('io_system').enabled()
       'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
       'all',
     ],
+    depends: qapi_files,
     build_by_default: true,
     build_always_stale: true,
   )
@@ -3838,24 +3858,6 @@ if get_option('io_system').enabled()
     sources: io_system_libs,
     dependencies: io_system_dl)
 endif
-
-# accel modules
-qtest_module_ss = ss.source_set()
-
-modules = {}
-target_modules = {}
-plugin_modules = []
-hw_arch = {}
-target_arch = {}
-target_system_arch = {}
-target_user_arch = {}
-hw_common_arch = {}
-target_common_arch = {}
-target_common_system_arch = {}
-
-# NOTE: the trace/ subdirectory needs the qapi_trace_events variable
-# that is filled in by qapi/.
-subdir('qapi')
 subdir('qobject')
 subdir('stubs')
 subdir('trace')
