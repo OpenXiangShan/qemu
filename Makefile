@@ -45,20 +45,58 @@ LIBVNCSERVER_CMAKE_FLAGS := \
 	-DWITH_EXAMPLES=OFF \
 	-DWITH_TESTS=OFF
 VIRTIO_CFLAGS := -Ivirtio
-BACKEND_CFLAGS := -Ibackend
+
+# Backend module switches. Set any of these to n/0/false to omit that
+# backend implementation from libMyVirtio_backend.a.
+BACKEND_BLK ?= y
+BACKEND_NET ?= n
+BACKEND_CONSOLE ?= n
+BACKEND_GPU ?= n
+BACKEND_INPUT ?= n
+BACKEND_UI_VNC ?= n
+
+backend_enabled = $(filter 1 y yes true,$(strip $(1)))
+BACKEND_DEFS := \
+	-DVIRTIO_BACKEND_HAS_BLK=$(if $(call backend_enabled,$(BACKEND_BLK)),1,0) \
+	-DVIRTIO_BACKEND_HAS_NET=$(if $(call backend_enabled,$(BACKEND_NET)),1,0) \
+	-DVIRTIO_BACKEND_HAS_CONSOLE=$(if $(call backend_enabled,$(BACKEND_CONSOLE)),1,0) \
+	-DVIRTIO_BACKEND_HAS_GPU=$(if $(call backend_enabled,$(BACKEND_GPU)),1,0) \
+	-DVIRTIO_BACKEND_HAS_INPUT=$(if $(call backend_enabled,$(BACKEND_INPUT)),1,0) \
+	-DVIRTIO_BACKEND_HAS_UI_VNC=$(if $(call backend_enabled,$(BACKEND_UI_VNC)),1,0)
+BACKEND_CFLAGS := -Ibackend $(BACKEND_DEFS)
 
 VIRTIO_SRCS := virtio/fifo.c virtio/utils.c virtio/virtio.c \
 	virtio/virtio_blk.c virtio/virtio_console.c virtio/virtio_mmio.c \
+	virtio/virtio_gbus.c \
 	virtio/virtio_net.c virtio/virtio_gpu.c virtio/virtio_input.c \
 	virtio/virtio_pci.c \
 	virtio/virtio_wrapper.c
 VIRTIO_HEADERS := $(wildcard virtio/*.h)
 VIRTIO_OBJS := $(patsubst virtio/%.c,$(BUILD_DIR)/virtio/%.o,$(VIRTIO_SRCS))
 BACKEND_SRCS := backend/virtio_backend.c backend/virtio_backend_queue.c \
-	backend/virtio_backend_blk.c backend/virtio_backend_console.c \
-	backend/virtio_backend_net.c backend/virtio_backend_gpu.c \
-	backend/virtio_backend_input.c backend/virtio_backend_ui.c \
-	backend/virtio_backend_ui_vnc.c
+	backend/virtio_backend_ui.c
+BACKEND_ARCHIVES :=
+ifneq ($(call backend_enabled,$(BACKEND_BLK)),)
+BACKEND_SRCS += backend/virtio_backend_blk.c
+endif
+ifneq ($(call backend_enabled,$(BACKEND_NET)),)
+BACKEND_SRCS += backend/virtio_backend_net.c
+BACKEND_ARCHIVES += $(LIBSLIRP_ARCHIVE)
+endif
+ifneq ($(call backend_enabled,$(BACKEND_CONSOLE)),)
+BACKEND_SRCS += backend/virtio_backend_console.c
+endif
+ifneq ($(call backend_enabled,$(BACKEND_GPU)),)
+BACKEND_SRCS += backend/virtio_backend_gpu.c
+endif
+ifneq ($(call backend_enabled,$(BACKEND_INPUT)),)
+BACKEND_SRCS += backend/virtio_backend_input.c
+endif
+ifneq ($(call backend_enabled,$(BACKEND_UI_VNC)),)
+BACKEND_SRCS += backend/virtio_backend_ui_vnc.c
+BACKEND_ARCHIVES += $(LIBVNCSERVER_ARCHIVE)
+endif
+BACKEND_ADDLIB_CMDS := $(foreach lib,$(abspath $(BACKEND_ARCHIVES)),echo "ADDLIB $(lib)";)
 BACKEND_HEADERS := $(wildcard backend/*.h)
 BACKEND_OBJS := $(patsubst backend/%.c,$(BUILD_DIR)/backend/%.backend.o,$(BACKEND_SRCS))
 TARGET := $(OUTPUT_DIR)/libMyVirtio.a
@@ -81,14 +119,13 @@ $(LIBSLIRP_ARCHIVE):
 	$(MAKE) -C $(LIBSLIRP_DIR) BUILD_DIR=$(abspath $(LIBSLIRP_BUILD_DIR)) \
 		CC="$(CC)" AR="$(AR)" PKG_CONFIG=pkg-config
 
-$(BACKEND_TARGET): $(BACKEND_OBJS) $(LIBVNCSERVER_ARCHIVE) $(LIBSLIRP_ARCHIVE)
+$(BACKEND_TARGET): $(BACKEND_OBJS) $(BACKEND_ARCHIVES)
 	@mkdir -p $(OUTPUT_DIR) $(BUILD_DIR)
 	rm -f $@ $(BACKEND_MRI)
 	@{ \
 		echo "CREATE $@"; \
 		for obj in $(BACKEND_OBJS); do echo "ADDMOD $$obj"; done; \
-		echo "ADDLIB $(abspath $(LIBVNCSERVER_ARCHIVE))"; \
-		echo "ADDLIB $(abspath $(LIBSLIRP_ARCHIVE))"; \
+		$(BACKEND_ADDLIB_CMDS) \
 		echo "SAVE"; \
 		echo "END"; \
 	} > $(BACKEND_MRI)

@@ -5,6 +5,25 @@
 
 #include <pthread.h>
 
+#ifndef VIRTIO_BACKEND_HAS_BLK
+#define VIRTIO_BACKEND_HAS_BLK 1
+#endif
+#ifndef VIRTIO_BACKEND_HAS_NET
+#define VIRTIO_BACKEND_HAS_NET 1
+#endif
+#ifndef VIRTIO_BACKEND_HAS_CONSOLE
+#define VIRTIO_BACKEND_HAS_CONSOLE 1
+#endif
+#ifndef VIRTIO_BACKEND_HAS_GPU
+#define VIRTIO_BACKEND_HAS_GPU 1
+#endif
+#ifndef VIRTIO_BACKEND_HAS_INPUT
+#define VIRTIO_BACKEND_HAS_INPUT 1
+#endif
+#ifndef VIRTIO_BACKEND_HAS_UI_VNC
+#define VIRTIO_BACKEND_HAS_UI_VNC 1
+#endif
+
 struct virtio_backend_packet {
 	struct virtio_backend_packet *next;
 	uint64_t token;

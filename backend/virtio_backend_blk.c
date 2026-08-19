@@ -7,6 +7,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <linux/fs.h>
+#include <sys/ioctl.h>
+#endif
 
 #define VIRTIO_BACKEND_BLK_SECTOR_SIZE 512ULL
 
@@ -111,6 +115,7 @@ int virtio_backend_blk_create(struct virtio_backend *backend,
 	const char *path = config->u.blk.image_path;
 	struct virtio_backend_blk *blk;
 	struct stat st;
+	uint64_t size;
 	int ret;
 
 	if (!path || !*path)
@@ -132,12 +137,20 @@ int virtio_backend_blk_create(struct virtio_backend *backend,
 		goto fail;
 	}
 
+	size = st.st_size;
+#ifdef __linux__
+	if (S_ISBLK(st.st_mode) && ioctl(blk->fd, BLKGETSIZE64, &size) < 0) {
+		ret = -errno;
+		goto fail;
+	}
+#endif
+
 	blk->image_path = virtio_backend_strdup(path);
 	if (!blk->image_path) {
 		ret = -ENOMEM;
 		goto fail;
 	}
-	blk->capacity = st.st_size / VIRTIO_BACKEND_BLK_SECTOR_SIZE;
+	blk->capacity = size / VIRTIO_BACKEND_BLK_SECTOR_SIZE;
 
 	backend->dev = blk;
 	backend->ops = &virtio_backend_blk_ops;
