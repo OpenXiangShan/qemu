@@ -9,7 +9,10 @@ WORKSPACE_ROOT ?= $(abspath $(IO_SYSTEM_ROOT)/../../..)
 else
 WORKSPACE_ROOT ?= $(abspath $(IO_SYSTEM_ROOT)/..)
 endif
-MY_VIRTIO_LIB_DIR ?= $(abspath $(WORKSPACE_ROOT)/my-virtio-lib)
+# XSV vendors libvirtio beside contrib/qemu.  Keep the standalone workspace
+# layout working until it is migrated to the same directory name.
+MY_VIRTIO_LIB_DIR ?= $(abspath $(if $(wildcard $(WORKSPACE_ROOT)/libvirtio), \
+	$(WORKSPACE_ROOT)/libvirtio,$(WORKSPACE_ROOT)/my-virtio-lib))
 BOSC_IOMMU_DIR ?= $(abspath $(WORKSPACE_ROOT)/bosc-iommu-v2)
 UNITYCHIP_ROOT ?= $(abspath $(BOSC_IOMMU_DIR)/third_party/unitychip)
 

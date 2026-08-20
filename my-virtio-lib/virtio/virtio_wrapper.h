@@ -16,6 +16,38 @@
 typedef void *virtio_handle_t;
 
 enum {
+	VIRTIO_GBUS_CSR_MAGIC = 0x0000,
+	VIRTIO_GBUS_CSR_VERSION = 0x0004,
+	VIRTIO_GBUS_CSR_UPDATE_SEQ = 0x0008,
+	VIRTIO_GBUS_CSR_STATUS = 0x0010,
+	VIRTIO_GBUS_CSR_DRIVER_FEATURES_0 = 0x0014,
+	VIRTIO_GBUS_CSR_DRIVER_FEATURES_1 = 0x0018,
+	VIRTIO_GBUS_CSR_GUEST_PAGE_SIZE = 0x001c,
+	VIRTIO_GBUS_CSR_RESET_SEQ = 0x0020,
+	VIRTIO_GBUS_CSR_BLK_CAPACITY_LOW = 0x0040,
+	VIRTIO_GBUS_CSR_BLK_CAPACITY_HIGH = 0x0044,
+	VIRTIO_GBUS_CSR_BLK_SEG_MAX = 0x0048,
+	VIRTIO_GBUS_CSR_BLK_SIZE = 0x004c,
+	VIRTIO_GBUS_CSR_NET_MAC_LOW = 0x0060,
+	VIRTIO_GBUS_CSR_NET_MAC_HIGH = 0x0064,
+	VIRTIO_GBUS_CSR_NET_STATUS = 0x0068,
+	VIRTIO_GBUS_CSR_NET_MAX_QUEUE_PAIRS = 0x006c,
+	VIRTIO_GBUS_CSR_QUEUE_BASE = 0x0100,
+	VIRTIO_GBUS_CSR_QUEUE_STRIDE = 0x0020,
+	VIRTIO_GBUS_CSR_QUEUE_NUM = 0x0000,
+	VIRTIO_GBUS_CSR_QUEUE_ALIGN = 0x0004,
+	VIRTIO_GBUS_CSR_QUEUE_PFN = 0x0008,
+	VIRTIO_GBUS_CSR_QUEUE_READY = 0x000c,
+	VIRTIO_GBUS_CSR_QUEUE_NOTIFY_SEQ = 0x0010,
+	VIRTIO_GBUS_CSR_HOST_IRQ_SET = 0x0200,
+};
+
+#define VIRTIO_GBUS_MAGIC	0x73756267U /* "gbus" little-endian */
+#define VIRTIO_GBUS_VERSION	1U
+#define VIRTIO_GBUS_HOST_IRQ_VRING	(1U << 0)
+#define VIRTIO_GBUS_HOST_IRQ_CONFIG	(1U << 1)
+
+enum {
 	MY_BLK_REQ_READ = 0,
 	MY_BLK_REQ_WRITE,
 	MY_BLK_REQ_FLUSH
@@ -66,6 +98,11 @@ struct libvirtio_ops {
 	struct   libvirtio_input_ops input_ops;
 };
 
+struct virtio_gbus_ops {
+	int (*read)(void *opaque, uint32_t addr, uint32_t *val);
+	int (*write)(void *opaque, uint32_t addr, uint32_t val);
+};
+
 int virtio_receive(virtio_handle_t handle, void *buf, int len);
 
 void virtio_process_req(virtio_handle_t handle);
@@ -77,6 +114,11 @@ int virtio_mmio_write(virtio_handle_t handle, uint64_t addr, uint32_t val,
 		      int len, int *is_doorbell);
 virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
 				   struct libvirtio_ops *ops, void *priv);
+virtio_handle_t virtio_gbus_create(const char *name, uint64_t start, int len,
+				   struct libvirtio_ops *ops, void *priv,
+				   const struct virtio_gbus_ops *gbus_ops,
+				   void *gbus_opaque);
+int virtio_gbus_poll(virtio_handle_t handle);
 
 /* PCIe ECAM access interface */
 #define VIRTIO_PCI_BDF(bus, dev, func)	(((bus) << 8) | ((dev) << 3) | (func))

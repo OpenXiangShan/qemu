@@ -61,22 +61,46 @@ virtio_backend_create(const struct virtio_backend_config *config)
 
 	switch (config->type) {
 	case VIRTIO_BACKEND_BLK:
+#if VIRTIO_BACKEND_HAS_BLK
 		ret = virtio_backend_blk_create(backend, config);
+#else
+		ret = -ENOTSUP;
+#endif
 		break;
 	case VIRTIO_BACKEND_NET:
+#if VIRTIO_BACKEND_HAS_NET
 		ret = virtio_backend_net_create(backend, config);
+#else
+		ret = -ENOTSUP;
+#endif
 		break;
 	case VIRTIO_BACKEND_CONSOLE:
+#if VIRTIO_BACKEND_HAS_CONSOLE
 		ret = virtio_backend_console_create(backend, config);
+#else
+		ret = -ENOTSUP;
+#endif
 		break;
 	case VIRTIO_BACKEND_GPU:
+#if VIRTIO_BACKEND_HAS_GPU
 		ret = virtio_backend_gpu_create(backend, config);
+#else
+		ret = -ENOTSUP;
+#endif
 		break;
 	case VIRTIO_BACKEND_INPUT:
+#if VIRTIO_BACKEND_HAS_INPUT
 		ret = virtio_backend_input_create(backend, config);
+#else
+		ret = -ENOTSUP;
+#endif
 		break;
 	case VIRTIO_BACKEND_UI:
+#if VIRTIO_BACKEND_HAS_UI_VNC
 		ret = virtio_backend_ui_create(backend, config);
+#else
+		ret = -ENOTSUP;
+#endif
 		break;
 	default:
 		ret = -EINVAL;
