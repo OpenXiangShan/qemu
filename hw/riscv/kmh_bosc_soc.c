@@ -108,7 +108,8 @@
     "console=ttyS0,115200 earlycon loglevel=8 " \
     "drm.debug=0x2 amdgpu.cik=1 amdgpu.si=1 amdgpu.dpm=0 " \
     "pcie_aspm=off pcie_port_pm=off amdgpu.vm_update_mode=3 " \
-    "root=/dev/sda1 rw task=0x0000000000000000"
+    "root=/dev/sda1 rw task=0x0000000000000000 " \
+    "guest_task=0x0000000000000000"
 
 enum {
     KMH_BOSC_MCU_BOOTROM,
