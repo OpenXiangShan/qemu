@@ -22,7 +22,7 @@ The ``xiangshan-kunminghu`` machine supports the following devices:
 * 1 UART
 * PCIe host bridge
 * Optional system IOMMU platform device
-* Optional my-virtio MMIO blk/net/console/gpu/input devices
+* Optional my-virtio MMIO blk/net/console/gpu/input/genirq devices
 
 Boot options
 ------------
@@ -183,6 +183,13 @@ Machine options
    ``/soc/my_virtio_tablet@310f0000``。这个设备上报 ``ABS_X``、``ABS_Y``
    和鼠标按键，更适合 Linux 桌面这类绝对光标场景。
 
+``my-virtio-genirq=on|off``
+   是否创建 virtio genirq MSI 压力测试设备，默认 ``off``。如果 QEMU 当前
+   使用生成的设备树，打开后会加入 ``/soc/my_virtio_genirq@31110000``。
+   TCG 路径中该设备由 QEMU userspace my-virtio wrapper 执行 MSI 写；KVM
+   路径中 QEMU 创建 in-kernel genirq bridge，由 host KVM 把 L2 IMSIC GPA
+   转换成真实 VS interrupt file PA 后写入外层 genirq 寄存器。
+
 ``my-virtio-keyboard-backend=vnc|evdev|ui``、``my-virtio-mouse-backend=vnc|evdev|ui``、``my-virtio-tablet-backend=vnc|evdev|ui``
    my-virtio input 的宿主输入来源，默认都是 ``vnc``。``vnc`` 和 ``ui``
    都表示从 my-virtio GPU backend VNC server 读取输入事件；``evdev``
@@ -317,6 +324,11 @@ KVM。
        -append "console=ttyS0,115200 earlycon=sbi root=/dev/vda rootfstype=ext4 rw loglevel=7" \
        -nographic \
        -no-reboot
+
+在 KVM 中使用 ``my-virtio-genirq=on`` 时，测试 MSI 必须走 AIA hwaccel
+IMSIC：命令行需要使用 ``-accel kvm,riscv-aia=hwaccel``。genirq 的测试 MSI
+路径不会调用 KVM 的软件 IMSIC 注入接口；软件注入只保留给 virtio transport
+完成中断这类普通设备 IRQ。
 
 使用带有内置 initramfs 的 ``Image`` 时，可以省略 ``my-virtio-blk``、
 ``my-virtio-blk-image`` 和 ``root=/dev/vda``。也可以通过 ``-initrd`` 加载
@@ -597,6 +609,16 @@ Use my-virtio MMIO devices
      - ``/soc/my_virtio_tablet@310f0000``
      - ``0x310f0000``
      - ``21``
+   * - genirq
+     - ``/soc/my_virtio_genirq@31110000``
+     - ``0x31110000``
+     - ``25``
+
+``my-virtio-genirq=on`` 创建的设备用于向 IMSIC MSI 目标发送可编程 pattern。
+Linux 驱动通过 debugfs 配置目标数量、pattern、repeat、seed 等参数，并检查
+实际收到的 MSI 数量。外层 TCG Linux 使用 QEMU userspace 设备直接写 IMSIC；
+内层 KVM Linux 使用 in-kernel genirq bridge，经 AIA hwaccel IMSIC 的真实 VS
+interrupt file 完成中断触发。
 
 blk 设备需要通过 ``my-virtio-blk-image`` 指定 raw image 文件：
 
