@@ -93,6 +93,7 @@ static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD] = { 0x310D0000,      0x1000 },
     [XIANGSHAN_KMH_MY_VIRTIO_MOUSE] = { 0x310E0000,         0x1000 },
     [XIANGSHAN_KMH_MY_VIRTIO_TABLET] = { 0x310F0000,        0x1000 },
+    [XIANGSHAN_KMH_MY_VIRTIO_GENIRQ] = { 0x31110000,        0x1000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
     [XIANGSHAN_KMH_PCIE1_DBI] =       { 0x40000000,      0x400000 },
@@ -152,7 +153,7 @@ static bool xiangshan_kmh_my_virtio_requested(const XiangshanKmhState *s)
 {
     return s->my_virtio_blk || s->my_virtio_net || s->my_virtio_console ||
            s->my_virtio_gpu || s->my_virtio_keyboard || s->my_virtio_mouse ||
-           s->my_virtio_tablet;
+           s->my_virtio_tablet || s->my_virtio_genirq;
 }
 #endif
 
@@ -431,6 +432,23 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             s->my_virtio_tablet_backend,
             s->my_virtio_tablet_evdev_path,
             s->my_virtio_ui);
+    }
+
+    if (s->my_virtio_genirq) {
+        if (kvm_enabled()) {
+            kvm_riscv_my_virtio_genirq_create(
+                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].base,
+                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].size,
+                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].base,
+                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].size,
+                XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ);
+        } else {
+            my_virtio_genirq_create(
+                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].base,
+                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].size,
+                qdev_get_gpio_in(DEVICE(s->irqchip),
+                                 XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ));
+        }
     }
 #endif
 }
@@ -1125,6 +1143,13 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
                                         aplic_s_phandle);
     }
 
+    if (s->my_virtio_genirq) {
+        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_genirq",
+                                        XIANGSHAN_KMH_MY_VIRTIO_GENIRQ,
+                                        XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ,
+                                        aplic_s_phandle);
+    }
+
     if (kmh_is_iommu_sys_enabled(s)) {
         iommu_sys_phandle = xiangshan_kmh_fdt_add_iommu_sys(
             s, aplic_s_phandle, imsic_s_phandle, &phandle);
@@ -1261,6 +1286,7 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_keyboard = s->my_virtio_keyboard;
     s->soc.my_virtio_mouse = s->my_virtio_mouse;
     s->soc.my_virtio_tablet = s->my_virtio_tablet;
+    s->soc.my_virtio_genirq = s->my_virtio_genirq;
 #ifdef CONFIG_KVM_M_MODE
     s->soc.kvm_m_mode = kvm_m_mode;
 #endif
@@ -1621,6 +1647,21 @@ static void xiangshan_kmh_set_my_virtio_tablet(Object *obj, bool value,
     s->my_virtio_tablet = value;
 }
 
+static bool xiangshan_kmh_get_my_virtio_genirq(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_genirq;
+}
+
+static void xiangshan_kmh_set_my_virtio_genirq(Object *obj, bool value,
+                                               Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_genirq = value;
+}
+
 static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1820,6 +1861,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_keyboard = false;
     s->my_virtio_mouse = false;
     s->my_virtio_tablet = false;
+    s->my_virtio_genirq = false;
 #ifdef CONFIG_KVM_M_MODE
     s->kvm_m_mode = false;
 #endif
@@ -1961,6 +2003,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_tablet);
     object_class_property_set_description(klass, "my-virtio-tablet",
                                           "Enable my-virtio absolute tablet input device");
+
+    object_class_property_add_bool(klass, "my-virtio-genirq",
+                                   xiangshan_kmh_get_my_virtio_genirq,
+                                   xiangshan_kmh_set_my_virtio_genirq);
+    object_class_property_set_description(klass, "my-virtio-genirq",
+                                          "Enable my-virtio generic IRQ test device");
 
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   xiangshan_kmh_get_my_virtio_blk_image,

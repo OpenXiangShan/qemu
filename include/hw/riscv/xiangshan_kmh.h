@@ -41,6 +41,7 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_keyboard;
     bool my_virtio_mouse;
     bool my_virtio_tablet;
+    bool my_virtio_genirq;
     void *my_virtio_ui;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
@@ -83,6 +84,7 @@ typedef struct XiangshanKmhState {
     bool my_virtio_keyboard;
     bool my_virtio_mouse;
     bool my_virtio_tablet;
+    bool my_virtio_genirq;
 #ifdef CONFIG_KVM_M_MODE
     bool kvm_m_mode;
 #endif
@@ -135,6 +137,7 @@ enum {
     XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD,
     XIANGSHAN_KMH_MY_VIRTIO_MOUSE,
     XIANGSHAN_KMH_MY_VIRTIO_TABLET,
+    XIANGSHAN_KMH_MY_VIRTIO_GENIRQ,
     XIANGSHAN_KMH_CLINT,
     XIANGSHAN_KMH_APLIC_M,
     XIANGSHAN_KMH_APLIC_S,
@@ -164,6 +167,7 @@ enum {
     XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ = 21,
     XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ = 22,
     XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ = 23,
+    XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ = 25,
     XIANGSHAN_KMH_IOMMU_SYS_IRQ = 0x24,
 };
 

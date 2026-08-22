@@ -43,6 +43,7 @@ static const MemMapEntry xiangshan_kmh_acpi_memmap[] = {
     [XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD] = { 0x310D0000,      0x1000 },
     [XIANGSHAN_KMH_MY_VIRTIO_MOUSE] = { 0x310E0000,         0x1000 },
     [XIANGSHAN_KMH_MY_VIRTIO_TABLET] = { 0x310F0000,        0x1000 },
+    [XIANGSHAN_KMH_MY_VIRTIO_GENIRQ] = { 0x31110000,        0x1000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
     [XIANGSHAN_KMH_PCIE1_DBI] =       { 0x40000000,      0x400000 },
@@ -247,6 +248,11 @@ static void xiangshan_kmh_acpi_dsdt_add_my_virtio(Aml *scope,
             s->my_virtio_tablet,
             XIANGSHAN_KMH_MY_VIRTIO_TABLET,
             XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ,
+        },
+        {
+            s->my_virtio_genirq,
+            XIANGSHAN_KMH_MY_VIRTIO_GENIRQ,
+            XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ,
         },
     };
 
