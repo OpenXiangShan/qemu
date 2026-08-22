@@ -2063,6 +2063,71 @@ void kvm_riscv_aia_create(MachineState *machine, uint64_t group_shift,
     kvm_msi_via_irqfd_allowed = true;
 }
 
+void kvm_riscv_my_virtio_genirq_create(uint64_t dev_addr, uint64_t dev_size,
+                                       uint64_t backing_addr,
+                                       uint64_t backing_size,
+                                       uint32_t irq)
+{
+    int ret;
+    int genirq_fd;
+    uint64_t irq64 = irq;
+
+    genirq_fd = kvm_create_device(kvm_state, KVM_DEV_TYPE_MY_VIRTIO_GENIRQ,
+                                  false);
+    if (genirq_fd < 0) {
+        error_report("KVM genirq: unable to create in-kernel device");
+        exit(1);
+    }
+
+    ret = kvm_device_access(genirq_fd, KVM_DEV_RISCV_GENIRQ_GRP_DEVICE,
+                            KVM_DEV_RISCV_GENIRQ_DEV_ADDR,
+                            &dev_addr, true, NULL);
+    if (ret < 0) {
+        error_report("KVM genirq: failed to set device MMIO address");
+        exit(1);
+    }
+
+    ret = kvm_device_access(genirq_fd, KVM_DEV_RISCV_GENIRQ_GRP_DEVICE,
+                            KVM_DEV_RISCV_GENIRQ_DEV_SIZE,
+                            &dev_size, true, NULL);
+    if (ret < 0) {
+        error_report("KVM genirq: failed to set device MMIO size");
+        exit(1);
+    }
+
+    ret = kvm_device_access(genirq_fd, KVM_DEV_RISCV_GENIRQ_GRP_DEVICE,
+                            KVM_DEV_RISCV_GENIRQ_DEV_IRQ,
+                            &irq64, true, NULL);
+    if (ret < 0) {
+        error_report("KVM genirq: failed to set device IRQ");
+        exit(1);
+    }
+
+    ret = kvm_device_access(genirq_fd, KVM_DEV_RISCV_GENIRQ_GRP_BACKING,
+                            KVM_DEV_RISCV_GENIRQ_BACKING_ADDR,
+                            &backing_addr, true, NULL);
+    if (ret < 0) {
+        error_report("KVM genirq: failed to set backing MMIO address");
+        exit(1);
+    }
+
+    ret = kvm_device_access(genirq_fd, KVM_DEV_RISCV_GENIRQ_GRP_BACKING,
+                            KVM_DEV_RISCV_GENIRQ_BACKING_SIZE,
+                            &backing_size, true, NULL);
+    if (ret < 0) {
+        error_report("KVM genirq: failed to set backing MMIO size");
+        exit(1);
+    }
+
+    ret = kvm_device_access(genirq_fd, KVM_DEV_RISCV_GENIRQ_GRP_CTRL,
+                            KVM_DEV_RISCV_GENIRQ_CTRL_INIT,
+                            NULL, true, NULL);
+    if (ret < 0) {
+        error_report("KVM genirq: failed to initialize in-kernel device");
+        exit(1);
+    }
+}
+
 static void kvm_cpu_instance_init(CPUState *cs)
 {
     Object *obj = OBJECT(RISCV_CPU(cs));
