@@ -211,4 +211,6 @@ if get_option('my_virtio').enabled()
                 if_true: files('my_virtio_gpu.c'))
   system_ss.add(when: 'CONFIG_MY_VIRTIO_INPUT',
                 if_true: files('my_virtio_input.c'))
+  system_ss.add(when: 'CONFIG_MY_VIRTIO_GENIRQ',
+                if_true: files('my_virtio_genirq.c'))
 endif
