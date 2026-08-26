@@ -43,7 +43,7 @@
 #include "system/system.h"
 
 #include "hw/misc/unimp.h"
-#include "hw/char/xilinx_uartlite.h"
+#include "hw/char/serial-mm.h"
 #include "hw/intc/riscv_aclint.h"
 #include "hw/intc/sifive_plic.h"
 #include <libfdt.h>
@@ -54,7 +54,6 @@
 #include "checkpoint/checkpoint.h"
 
 enum {
-    UART0_IRQ = 10,
     RTC_IRQ = 11,
     VIRTIO_IRQ = 1, /* From IRQ to (IRQ + COUNT - 1) */
     VIRTIO_COUNT = 1,
@@ -64,18 +63,14 @@ enum {
     NEMU_MROM,
     NEMU_PLIC,
     NEMU_CLINT,
-    NEMU_UARTLITE,
+    NEMU_UART0,
     NEMU_VIRTIO,
     NEMU_GCPT,
     NEMU_DRAM,
 };
 
-/*
- * Freedom E310 G002 and G003 supports 52 interrupt sources while
- * Freedom E310 G000 supports 51 interrupt sources. We use the value
- * of G002 and G003, so it is 53 (including interrupt source 0).
- */
-#define PLIC_NUM_SOURCES 53
+/* DTS riscv,ndev is the highest usable source ID; source zero is reserved. */
+#define PLIC_NUM_SOURCES 67
 #define PLIC_NUM_PRIORITIES 7
 #define PLIC_PRIORITY_BASE 0x00
 #define PLIC_PENDING_BASE 0x1000
@@ -83,13 +78,16 @@ enum {
 #define PLIC_ENABLE_STRIDE 0x80
 #define PLIC_CONTEXT_BASE 0x200000
 #define PLIC_CONTEXT_STRIDE 0x1000
+#define NEMU_CLINT_TIMEBASE_FREQ 1000000
+#define NEMU_UART0_CLOCK 50000000
+#define NEMU_UART0_BAUD_BASE (NEMU_UART0_CLOCK / 16)
 
 static const MemMapEntry nemu_memmap[] = {
     [NEMU_MROM] = { 0x1000, 0xf000 },
     [NEMU_VIRTIO] = { 0x10001000, 0x1000 },
     [NEMU_PLIC] = { 0x3c000000, 0x4000000 },
     [NEMU_CLINT] = { 0x38000000, 0x10000 },
-    [NEMU_UARTLITE] = { 0x40600000, 0x1000 },
+    [NEMU_UART0] = { 0x310b0000, 0x10000 },
     [NEMU_GCPT] = { 0x50000000, 0x8000000 },
     [NEMU_DRAM] = { 0x80000000, 0x0 },
 };
@@ -503,7 +501,7 @@ static void nemu_machine_init(MachineState *machine)
     MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
     MemoryRegion *nemu_memory = g_new(MemoryRegion, 1);
     MemoryRegion *nemu_gcpt = g_new(MemoryRegion, 1);
-    DeviceState *dev;
+    MemoryRegion *nemu_uart = g_new(MemoryRegion, 1);
     char *soc_name;
     int i, base_hartid, hart_count;
 
@@ -543,13 +541,12 @@ static void nemu_machine_init(MachineState *machine)
                                     i * memmap[NEMU_CLINT].size,
                                 base_hartid, hart_count, false);
 
-        // mtime = swi
         riscv_aclint_mtimer_create(
             memmap[NEMU_CLINT].base + i * memmap[NEMU_CLINT].size +
                 RISCV_ACLINT_SWI_SIZE,
-            memmap[NEMU_CLINT].size, base_hartid, hart_count,
+            RISCV_ACLINT_DEFAULT_MTIMER_SIZE, base_hartid, hart_count,
             RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
-            RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
+            NEMU_CLINT_TIMEBASE_FREQ, false);
 
         /* Per-socket interrupt controller */
         s->irqchip[i] = nemu_create_plic(memmap, i, base_hartid, hart_count);
@@ -581,14 +578,13 @@ static void nemu_machine_init(MachineState *machine)
     //    memory_region_add_subregion(system_memory, memmap[NEMU_DRAM].base,
     //        machine->ram);
 
-    // uartlite
-    dev = qdev_new(TYPE_XILINX_UARTLITE);
-    qdev_prop_set_enum(dev, "endianness", ENDIAN_MODE_LITTLE);
-    qdev_prop_set_chr(dev, "chardev", serial_hd(0));
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    memory_region_add_subregion(system_memory, memmap[NEMU_UARTLITE].base,
-                                sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
+    /* 16550A UART matching the XiangShan FPGA DTS. */
+    memory_region_init(nemu_uart, NULL, "riscv.nemu.uart",
+                       memmap[NEMU_UART0].size);
+    serial_mm_init(nemu_uart, 0, 2, NULL,
+                   NEMU_UART0_BAUD_BASE, serial_hd(0), DEVICE_LITTLE_ENDIAN);
+    memory_region_add_subregion(system_memory, memmap[NEMU_UART0].base,
+                                nemu_uart);
 
     /* VirtIO MMIO devices */
     for (i = 0; i < VIRTIO_COUNT; i++) {
