@@ -21,6 +21,7 @@
 
 #include "qemu/osdep.h"
 #include "qom/object.h"
+#include "system/memory.h"
 
 #define TYPE_RISCV_IOMMU "riscv-iommu"
 OBJECT_DECLARE_SIMPLE_TYPE(RISCVIOMMUState, RISCV_IOMMU)
@@ -38,5 +39,10 @@ OBJECT_DECLARE_SIMPLE_TYPE(RISCVIOMMUStateSys, RISCV_IOMMU_SYS)
 typedef struct RISCVIOMMUStateSys RISCVIOMMUStateSys;
 
 #define FDT_IRQ_TYPE_EDGE_LOW 1
+
+AddressSpace *riscv_iommu_get_platform_requester_as(RISCVIOMMUState *iommu,
+                                                    uint32_t devid,
+                                                    uint32_t process_id,
+                                                    bool process_id_valid);
 
 #endif

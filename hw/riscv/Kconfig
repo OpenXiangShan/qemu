@@ -181,6 +181,7 @@ config KMH_BOSC_SOC
     select RISCV_APLIC
     select RISCV_IMSIC
     select RISCV_IOMMU
+    select BOSC_AXI4_TRAFFIC
     select DW_AXI_DMAC
     select SERIAL_MM
     select UNIMP

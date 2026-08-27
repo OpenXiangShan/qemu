@@ -49,6 +49,10 @@ struct RISCVIOMMUSpace {
     RISCVIOMMUState *iommu;     /* Managing IOMMU device state */
     PCIBus *bus;                /* PCI bus of the requester */
     uint8_t devfn;              /* PCI devfn of the requester */
+    uint32_t devid;             /* Explicit platform requester device id */
+    uint32_t process_id;        /* Explicit platform requester process id */
+    bool platform;              /* Non-PCI requester with explicit DID/PID */
+    bool process_id_valid;      /* Whether process_id is part of the request */
     bool notifier;              /* IOMMU unmap notifier enabled */
     QLIST_ENTRY(RISCVIOMMUSpace) list;
 };
@@ -75,6 +79,10 @@ struct RISCVIOMMUEntry {
 
 static uint32_t riscv_iommu_space_devid(RISCVIOMMUSpace *as)
 {
+    if (as->platform) {
+        return as->devid & 0xffffff;
+    }
+
     uint32_t devid = PCI_BUILD_BDF(pci_bus_num(as->bus), as->devfn);
 
     /* FIXME: PCIe bus remapping for attached endpoints. */
@@ -1382,6 +1390,47 @@ static AddressSpace *riscv_iommu_space(RISCVIOMMUState *s, PCIBus *bus,
     return &as->iova_as;
 }
 
+AddressSpace *riscv_iommu_get_platform_requester_as(RISCVIOMMUState *iommu,
+                                                    uint32_t devid,
+                                                    uint32_t process_id,
+                                                    bool process_id_valid)
+{
+    RISCVIOMMUSpace *as;
+
+    devid &= 0xffffff;
+    process_id &= 0xfffff;
+
+    QLIST_FOREACH(as, &iommu->spaces, list) {
+        if (as->platform &&
+            as->devid == devid &&
+            as->process_id == process_id &&
+            as->process_id_valid == process_id_valid) {
+            return &as->iova_as;
+        }
+    }
+
+    as = g_new0(RISCVIOMMUSpace, 1);
+    as->iommu = iommu;
+    as->platform = true;
+    as->devid = devid;
+    as->process_id = process_id;
+    as->process_id_valid = process_id_valid;
+
+    g_autofree char *name = g_strdup_printf("riscv-iommu-platform-%06x-%s%05x-iova",
+                                            devid,
+                                            process_id_valid ? "pid" : "nopid",
+                                            process_id_valid ? process_id : 0);
+
+    memory_region_init_iommu(&as->iova_mr, sizeof(as->iova_mr),
+                             TYPE_RISCV_IOMMU_MEMORY_REGION,
+                             OBJECT(as), "riscv_iommu", UINT64_MAX);
+    address_space_init(&as->iova_as, MEMORY_REGION(&as->iova_mr), name);
+
+    QLIST_INSERT_HEAD(&iommu->spaces, as, list);
+
+    return &as->iova_as;
+}
+
 /* Translation Object cache support */
 static gboolean riscv_iommu_iot_equal(gconstpointer v1, gconstpointer v2)
 {
@@ -2459,9 +2508,13 @@ static void riscv_iommu_instance_init(Object *obj)
     s->cap = set_field(s->cap, RISCV_IOMMU_CAP_PAS,
                        TARGET_PHYS_ADDR_SPACE_BITS);
 
-    /* TODO: method to report supported PID bits */
-    s->pid_bits = 8; /* restricted to size of MemTxAttrs.pid */
-    s->cap |= RISCV_IOMMU_CAP_PD8;
+    /*
+     * PCI request attributes carry 8 PID bits, while explicit platform
+     * requester address spaces can carry the full 20-bit process id.
+     */
+    s->pid_bits = 20;
+    s->cap |= RISCV_IOMMU_CAP_PD8 | RISCV_IOMMU_CAP_PD17 |
+              RISCV_IOMMU_CAP_PD20;
 
     /* register storage */
     s->regs_rw = g_new0(uint8_t, RISCV_IOMMU_REG_SIZE);
@@ -2794,12 +2847,23 @@ void riscv_iommu_pci_setup_iommu(RISCVIOMMUState *iommu, PCIBus *bus,
 static int riscv_iommu_memory_region_index(IOMMUMemoryRegion *iommu_mr,
     MemTxAttrs attrs)
 {
+    RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
+
+    if (as->platform) {
+        return as->process_id_valid ? as->process_id : RISCV_IOMMU_NOPROCID;
+    }
+
     return attrs.unspecified ? RISCV_IOMMU_NOPROCID : (int)attrs.pid;
 }
 
 static int riscv_iommu_memory_region_index_len(IOMMUMemoryRegion *iommu_mr)
 {
     RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
+
+    if (!as->platform) {
+        return 1 << 8;
+    }
+
     return 1 << as->iommu->pid_bits;
 }
 

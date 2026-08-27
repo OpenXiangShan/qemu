@@ -284,6 +284,8 @@ qtests_riscv32 = \
 qtests_riscv64 = ['riscv-csr-test'] + \
   (config_all_devices.has_key('CONFIG_QEMU_TO_IOSYSTEM') ? \
    ['qemu-to-iosystem-test'] : []) + \
+  (config_all_devices.has_key('CONFIG_BOSC_AXI4_TRAFFIC') ? \
+   ['bosc-axi4-traffic-test'] : []) + \
   (unpack_edk2_blobs ? ['bios-tables-test'] : [])
 
 qos_test_ss = ss.source_set()

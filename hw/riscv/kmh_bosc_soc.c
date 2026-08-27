@@ -25,6 +25,7 @@
 #include "hw/intc/riscv_aclint.h"
 #include "hw/intc/riscv_aplic.h"
 #include "hw/intc/riscv_imsic.h"
+#include "hw/misc/bosc-axi4-traffic.h"
 #include "hw/misc/unimp.h"
 #include "hw/pci-host/designware.h"
 #include "hw/pci/pci.h"
@@ -34,6 +35,7 @@
 #include "hw/riscv/kmh_bosc_acpi.h"
 #endif
 #include "hw/riscv/iommu.h"
+#include "hw/riscv/riscv-iommu.h"
 #include "hw/riscv/riscv_hart.h"
 #include "system/address-spaces.h"
 #include "system/device_tree.h"
@@ -92,6 +94,7 @@
 #define KMH_BOSC_PCIE_ROOT_BUS_STRIDE     0x0000000004000000ULL
 #define KMH_BOSC_PCIE_WINDOW_SIZE         0x0000000002000000ULL
 #define KMH_BOSC_IOMMU_MMIO_SIZE          0x1000
+#define KMH_BOSC_AXI4_TRAFFIC_COUNT       3
 
 #define KMH_BOSC_AUTO_TEST_TRIGGER_ADDR_DEFAULT \
                                              0x0000000090000000ULL
@@ -171,6 +174,12 @@ static const MemMapEntry kmh_bosc_memmap[] = {
                                   KMH_BOSC_IOMMU_MMIO_SIZE },
     [KMH_BOSC_IOMMU1] =         { 0x0000004f80210000ULL, 0x10000 },
     [KMH_BOSC_IOMMU2] =         { 0x0000004f80220000ULL, 0x10000 },
+};
+
+static const hwaddr kmh_bosc_axi4_traffic_base[KMH_BOSC_AXI4_TRAFFIC_COUNT] = {
+    0x0000004f80201000ULL,
+    0x0000004f80211000ULL,
+    0x0000004f80221000ULL,
 };
 
 typedef struct KmhBoscPciePortMemMap {
@@ -1231,6 +1240,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     g_autofree uint32_t *aclint_mswi_cells = NULL;
     g_autofree uint32_t *aclint_mtimer_cells = NULL;
     uint32_t imsic_m_phandle, imsic_s_phandle;
+    uint32_t iommu_phandle = 0;
     const uint64_t node_size = kmh_bosc_die_ram_size(machine);
     const int boot_hartid = kmh_bosc_first_selected_hartid(s);
     const int selected_dies = kmh_bosc_selected_die_count(s);
@@ -1568,10 +1578,13 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         hwaddr iommu_base = memmap[KMH_BOSC_IOMMU].base;
         g_autofree char *iommu_name = g_strdup_printf("/soc/iommu@%" HWADDR_PRIx,
                                                       iommu_base);
+        int traffic;
 
+        iommu_phandle = qemu_fdt_alloc_phandle(fdt);
         qemu_fdt_add_subnode(fdt, iommu_name);
         qemu_fdt_setprop_string(fdt, iommu_name, "compatible", "riscv,iommu");
         qemu_fdt_setprop_cell(fdt, iommu_name, "#iommu-cells", 1);
+        qemu_fdt_setprop_cell(fdt, iommu_name, "phandle", iommu_phandle);
         qemu_fdt_setprop_sized_cells(fdt, iommu_name, "reg",
                                      2, memmap[KMH_BOSC_IOMMU].base,
                                      2, memmap[KMH_BOSC_IOMMU].size);
@@ -1584,6 +1597,21 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                KMH_BOSC_IOMMU_IRQ_BASE + 3, FDT_IRQ_TYPE_EDGE_LOW);
         qemu_fdt_setprop_cell(fdt, iommu_name, "msi-parent", imsic_s_phandle);
         qemu_fdt_setprop_string(fdt, iommu_name, "status", "okay");
+
+        for (traffic = 0; traffic < KMH_BOSC_AXI4_TRAFFIC_COUNT; traffic++) {
+            hwaddr traffic_base = kmh_bosc_axi4_traffic_base[traffic];
+            g_autofree char *traffic_name =
+                g_strdup_printf("/soc/axi4-traffic@%" HWADDR_PRIx,
+                                traffic_base);
+
+            qemu_fdt_add_subnode(fdt, traffic_name);
+            qemu_fdt_setprop_string(fdt, traffic_name, "compatible",
+                                    "bosc,axi4-traffic");
+            qemu_fdt_setprop_sized_cells(fdt, traffic_name, "reg",
+                                         2, traffic_base,
+                                         2, BOSC_AXI4_TRAFFIC_MMIO_SIZE);
+            qemu_fdt_setprop_string(fdt, traffic_name, "status", "okay");
+        }
     }
 
     for (die = 0; die < KMH_BOSC_DIES; die++) {
@@ -1671,6 +1699,10 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH,
                                        kmh_bosc_pcie_hp_irq(port),
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH);
+                if (iommu_phandle) {
+                    qemu_fdt_setprop_cells(fdt, pcie_name, "iommu-map",
+                                           0, iommu_phandle, 0, 0x10000);
+                }
                 {
                     static const char *const interrupt_names[] = { "msi", "hp" };
                     qemu_fdt_setprop_string_array(fdt, pcie_name,
@@ -2051,7 +2083,13 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             sysbus_connect_irq(pcie, 4,
                                qdev_get_gpio_in(s->irqchip[die],
                                                 kmh_bosc_pcie_msi_irq(port)));
-            host->pci.address_space.root = get_system_memory();
+            /*
+             * DWC installs an inbound-iATU address space as PCI's default
+             * IOMMU. This machine uses direct system-memory DMA unless the
+             * RISC-V IOMMU below replaces it.
+             */
+            PCI_HOST_BRIDGE(host)->bus->iommu_ops = NULL;
+            PCI_HOST_BRIDGE(host)->bus->iommu_opaque = NULL;
             pcie_host_mmcfg_map(PCIE_HOST_BRIDGE(host), ecam_base,
                                 pcie_map->ecam.size);
 
@@ -2078,15 +2116,58 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
 static void kmh_bosc_init_iommu(KmhBoscState *s)
 {
     const MemMapEntry *memmap = kmh_bosc_memmap;
-    DeviceState *iommu = qdev_new(TYPE_RISCV_IOMMU_SYS);
+    DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
+    Object *iommu_obj;
+    RISCVIOMMUState *iommu;
+    int die, port, traffic;
 
-    object_property_set_uint(OBJECT(iommu), "addr", memmap[KMH_BOSC_IOMMU].base,
+    object_property_set_uint(OBJECT(iommu_sys), "addr",
+                             memmap[KMH_BOSC_IOMMU].base,
                              &error_fatal);
-    object_property_set_uint(OBJECT(iommu), "base-irq", KMH_BOSC_IOMMU_IRQ_BASE,
+    object_property_set_uint(OBJECT(iommu_sys), "base-irq",
+                             KMH_BOSC_IOMMU_IRQ_BASE,
                              &error_fatal);
-    object_property_set_link(OBJECT(iommu), "irqchip", OBJECT(s->irqchip[0]),
+    object_property_set_link(OBJECT(iommu_sys), "irqchip",
+                             OBJECT(s->irqchip[0]),
                              &error_fatal);
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu), &error_fatal);
+
+    iommu_obj = object_resolve_path_component(OBJECT(iommu_sys), "iommu");
+    if (!iommu_obj) {
+        error_report("failed to resolve KMH BOSC system IOMMU child object");
+        exit(1);
+    }
+    iommu = RISCV_IOMMU(iommu_obj);
+
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
+
+    for (traffic = 0; traffic < KMH_BOSC_AXI4_TRAFFIC_COUNT; traffic++) {
+        DeviceState *dev = qdev_new(TYPE_BOSC_AXI4_TRAFFIC);
+
+        object_property_set_link(OBJECT(dev), "iommu", OBJECT(iommu),
+                                 &error_fatal);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
+                        kmh_bosc_axi4_traffic_base[traffic]);
+    }
+
+    if (s->dw_pcie) {
+        for (die = 0; die < KMH_BOSC_DIES; die++) {
+            if (!kmh_bosc_die_selected(s, die)) {
+                continue;
+            }
+
+            for (port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
+                PCIBus *bus = PCI_HOST_BRIDGE(&s->pcie[die][port])->bus;
+
+                if (!bus || bus->iommu_ops || bus->iommu_opaque) {
+                    error_report("cannot attach system IOMMU to PCIe "
+                                 "die %d port %d", die, port);
+                    exit(1);
+                }
+                riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
+            }
+        }
+    }
 
     create_unimplemented_device("kmh-bosc-iommu-cfg1",
                                 memmap[KMH_BOSC_IOMMU_CFG1].base,

@@ -30,6 +30,9 @@ config EDU
     default y if TEST_DEVICES
     depends on PCI && MSI_NONBROKEN
 
+config BOSC_AXI4_TRAFFIC
+    bool
+
 config I2C_ECHO
     bool
     default y if TEST_DEVICES

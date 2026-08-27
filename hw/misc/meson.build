@@ -4,6 +4,7 @@ system_ss.add(when: 'CONFIG_FW_CFG_DMA', if_true: files('vmcoreinfo.c'))
 system_ss.add(when: 'CONFIG_ISA_DEBUG', if_true: files('debugexit.c'))
 system_ss.add(when: 'CONFIG_ISA_TESTDEV', if_true: files('pc-testdev.c'))
 system_ss.add(when: 'CONFIG_PCI_TESTDEV', if_true: files('pci-testdev.c'))
+system_ss.add(when: 'CONFIG_BOSC_AXI4_TRAFFIC', if_true: files('bosc-axi4-traffic.c'))
 system_ss.add(when: 'CONFIG_UNIMP', if_true: files('unimp.c'))
 system_ss.add(when: 'CONFIG_EMPTY_SLOT', if_true: files('empty_slot.c'))
 if get_option('devproxy').enabled()
@@ -188,6 +189,7 @@ if get_option('my_virtio').enabled()
       'BUILD_DIR=' + join_paths(my_virtio_lib_build_dir, 'build'),
       'OUTPUT_DIR=' + my_virtio_lib_output_dir,
       'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
+      'BACKEND_NET=y',
       'all',
     ],
     build_by_default: true,
