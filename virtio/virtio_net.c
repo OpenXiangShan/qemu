@@ -43,6 +43,29 @@ struct virtio_net_dev {
 	char name[64];
 };
 
+static uint32_t virtio_net_copy_from_iov(struct virtio_device *dev,
+						 struct virtio_iovec *iov,
+						 uint32_t iov_cnt,
+						 uint32_t skip,
+						 void *buf,
+						 uint32_t len);
+static uint32_t virtio_net_copy_to_iov(struct virtio_device *dev,
+				       struct virtio_iovec *iov,
+				       uint32_t iov_cnt,
+				       uint32_t skip,
+				       void *buf,
+				       uint32_t len);
+
+static uint32_t virtio_net_hdr_len(struct virtio_device *dev)
+{
+	if (virtio_device_has_feature(dev, VMM_VIRTIO_NET_F_MRG_RXBUF) ||
+	    virtio_device_has_feature(dev, VMM_VIRTIO_F_VERSION_1)) {
+		return sizeof(struct virtio_net_hdr_mrg_rxbuf);
+	}
+
+	return sizeof(struct virtio_net_hdr);
+}
+
 static void __virtio_net_tx_poke(struct virtio_net_dev *ndev, int budget, uint32_t qnum)
 {
 	struct virtio_net_queue *q = &ndev->vqs[qnum];
@@ -52,6 +75,7 @@ static void __virtio_net_tx_poke(struct virtio_net_dev *ndev, int budget, uint32
 	int rc;
 	uint16_t head = 0;
 	uint32_t iov_cnt = 0, pkt_len = 0, total_len = 0;
+	uint32_t hdr_len = virtio_net_hdr_len(dev);
 	void *data;
 
 	while ((budget > 0) && virtio_queue_available(vq)) {
@@ -63,12 +87,26 @@ static void __virtio_net_tx_poke(struct virtio_net_dev *ndev, int budget, uint32
 			continue;
 		}
 
-		/* iov[0] is offload info */
-		pkt_len = total_len - iov[0].len;
+		if (!iov_cnt || total_len < hdr_len) {
+			my_print(dev, "%s: TX buffer too small, total=%u\n",
+				 __FUNCTION__, total_len);
+			continue;
+		}
 
+		pkt_len = total_len - hdr_len;
 		data = (void *)my_alloc(dev, pkt_len);
-		virtio_iovec_to_buf_read(dev, &iov[1], iov_cnt - 1,
-					 data, pkt_len);
+		if (!data) {
+			my_print(dev, "%s: alloc failed len=%u\n",
+				 __FUNCTION__, pkt_len);
+			continue;
+		}
+		if (pkt_len != virtio_net_copy_from_iov(dev, iov, iov_cnt,
+							hdr_len, data, pkt_len)) {
+			my_print(dev, "%s: failed to copy tx payload len=%u\n",
+				 __FUNCTION__, pkt_len);
+			my_free(dev, (uint64_t)data, pkt_len);
+			continue;
+		}
 		if (pkt_len != my_net_write_tap(dev, 0, data, pkt_len)) {
 			my_print(dev, "%s write tap failed\n", __FUNCTION__);
 			my_free(dev, (uint64_t)data, pkt_len);
@@ -98,18 +136,102 @@ static void virtio_net_tx_poke(struct virtio_net_dev *ndev, uint32_t qnum)
 	}
 }
 
+static uint32_t virtio_net_copy_from_iov(struct virtio_device *dev,
+						 struct virtio_iovec *iov,
+						 uint32_t iov_cnt,
+						 uint32_t skip,
+						 void *buf,
+						 uint32_t len)
+{
+	uint32_t copied = 0;
+
+	for (uint32_t i = 0; i < iov_cnt && copied < len; i++) {
+		uint32_t off = 0;
+
+		if (skip >= iov[i].len) {
+			skip -= iov[i].len;
+			continue;
+		}
+
+		off = skip;
+		skip = 0;
+
+		while (off < iov[i].len && copied < len) {
+			uint32_t chunk = len - copied;
+
+			if (chunk > iov[i].len - off) {
+				chunk = iov[i].len - off;
+			}
+
+			chunk = my_guest_physical_read(dev, iov[i].addr + off,
+						       (uint8_t *)buf + copied,
+						       chunk);
+			if (!chunk) {
+				return copied;
+			}
+
+			copied += chunk;
+			off += chunk;
+		}
+	}
+
+	return copied;
+}
+
+static uint32_t virtio_net_copy_to_iov(struct virtio_device *dev,
+				       struct virtio_iovec *iov,
+				       uint32_t iov_cnt,
+				       uint32_t skip,
+				       void *buf,
+				       uint32_t len)
+{
+	uint32_t copied = 0;
+
+	for (uint32_t i = 0; i < iov_cnt && copied < len; i++) {
+		uint32_t off = 0;
+
+		if (skip >= iov[i].len) {
+			skip -= iov[i].len;
+			continue;
+		}
+
+		off = skip;
+		skip = 0;
+
+		while (off < iov[i].len && copied < len) {
+			uint32_t chunk = len - copied;
+
+			if (chunk > iov[i].len - off) {
+				chunk = iov[i].len - off;
+			}
+
+			chunk = my_guest_physical_write(dev, iov[i].addr + off,
+						       (uint8_t *)buf + copied,
+						       chunk);
+			if (!chunk) {
+				return copied;
+			}
+
+			copied += chunk;
+			off += chunk;
+		}
+	}
+
+	return copied;
+}
+
 static int virtio_net_receive(void *buf, int len, void *priv)
 {
 	int rc;
 	uint16_t head = 0;
-	uint64_t iov0_addr;
-	uint32_t iov_cnt = 0, iov0_len, total_len = 0, pkt_len = 0;
+	uint32_t iov_cnt = 0, total_len = 0, pkt_len = 0;
+	uint32_t hdr_len;
 	struct virtio_net_dev *ndev = priv;
 	struct virtio_net_queue *q;
 	struct virtio_queue *vq;
 	struct virtio_iovec *iov;
 	struct virtio_device *dev;
-	struct virtio_net_hdr hdr;
+	struct virtio_net_hdr_mrg_rxbuf hdr;
 
 	if (!ndev || len <= 0)
 		return VIRTIO_EINVALID;
@@ -118,6 +240,7 @@ static int virtio_net_receive(void *buf, int len, void *priv)
 	vq = &q->vq;
 	iov = q->iov;
 	dev = ndev->vdev;
+	hdr_len = virtio_net_hdr_len(dev);
 
 	if (!ndev->can_receive || !q->valid)
 		return VIRTIO_EAGAIN;
@@ -135,8 +258,7 @@ static int virtio_net_receive(void *buf, int len, void *priv)
 		return rc;
 	}
 
-	if (!iov_cnt || total_len < sizeof(hdr) + pkt_len ||
-	    iov[0].len < sizeof(hdr)) {
+	if (!iov_cnt || total_len < hdr_len + pkt_len) {
 		my_print(dev, "%s: RX buffer too small, total=%u pkt=%u\n",
 			 __FUNCTION__, total_len, pkt_len);
 		virtio_queue_set_used_elem(vq, head, 0);
@@ -148,26 +270,21 @@ static int virtio_net_receive(void *buf, int len, void *priv)
 	}
 
 	memset(&hdr, 0, sizeof(hdr));
-	if (iov_cnt == 1) {
-		virtio_buf_to_iovec_write(dev, &iov[0], 1,
-					  &hdr, sizeof(hdr));
-		iov0_addr = iov[0].addr;
-		iov0_len = iov[0].len;
-		iov[0].addr += sizeof(hdr);
-		iov[0].len -= sizeof(hdr);
-		virtio_buf_to_iovec_write(dev, &iov[0], 1,
-					  buf, pkt_len);
-		virtio_queue_set_used_elem(vq, head,
-					   sizeof(hdr) + pkt_len);
-		iov[0].addr = iov0_addr;
-		iov[0].len = iov0_len;
-	} else if (iov_cnt > 1) {
-		virtio_buf_to_iovec_write(dev, &iov[0], 1,
-					  &hdr, sizeof(hdr));
-		virtio_buf_to_iovec_write(dev, &iov[1], iov_cnt - 1,
-					  buf, pkt_len);
-		virtio_queue_set_used_elem(vq, head, iov[0].len + pkt_len);
+	if (hdr_len != virtio_net_copy_to_iov(dev, iov, iov_cnt, 0,
+						    &hdr, hdr_len) ||
+	    pkt_len != virtio_net_copy_to_iov(dev, iov, iov_cnt, hdr_len,
+						    buf, pkt_len)) {
+		my_print(dev, "%s: failed to copy rx packet len=%u\n",
+			 __FUNCTION__, pkt_len);
+		virtio_queue_set_used_elem(vq, head, 0);
+		if (virtio_queue_should_signal(vq)) {
+			if (dev->vn && dev->vn->notify)
+				dev->vn->notify(dev, q->num);
+		}
+		return VIRTIO_ENOSPC;
 	}
+
+	virtio_queue_set_used_elem(vq, head, hdr_len + pkt_len);
 
 	if (virtio_queue_should_signal(vq)) {
 		if (dev->vn && dev->vn->notify)
@@ -279,6 +396,25 @@ static int virtio_net_init_vq(struct virtio_device *dev, uint32_t vq,
 
 	rc = virtio_queue_setup(dev, &ndev->vqs[vq].vq, pfn, page_size,
 				VIRTIO_NET_QUEUE_SIZE, align);
+	if (!rc) {
+		ndev->vqs[vq].valid = 1;
+	}
+
+	return rc;
+}
+
+static int virtio_net_init_vq_addr(struct virtio_device *dev, uint32_t vq,
+				   uint64_t desc_addr, uint64_t avail_addr,
+				   uint64_t used_addr, uint32_t size)
+{
+	int rc;
+	struct virtio_net_dev *ndev = dev->emu_data;
+
+	if (!ndev || vq >= ndev->max_queues)
+		return -1;
+
+	rc = virtio_queue_setup_addr(dev, &ndev->vqs[vq].vq, desc_addr,
+					  avail_addr, used_addr, size);
 	if (!rc) {
 		ndev->vqs[vq].valid = 1;
 	}
@@ -508,6 +644,7 @@ static struct virtio_emulator virtio_net = {
 	.get_host_features      = virtio_net_get_host_features,
 	.set_guest_features     = virtio_net_set_guest_features,
 	.init_vq                = virtio_net_init_vq,
+	.init_vq_addr           = virtio_net_init_vq_addr,
 	.reset_vq               = virtio_net_reset_vq,
 	.get_pfn_vq             = virtio_net_get_pfn_vq,
 	.get_size_vq            = virtio_net_get_size_vq,

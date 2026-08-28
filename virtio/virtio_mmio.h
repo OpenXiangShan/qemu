@@ -141,6 +141,16 @@
 #define VMM_VIRTIO_MMIO_MAX_CONFIG		1
 #define VMM_VIRTIO_MMIO_IO_SIZE			0x200
 
+struct virtio_mmio_queue_state {
+	u32 num;
+	u32 align;
+	u32 pfn;
+	u32 ready;
+	u64 desc;
+	u64 avail;
+	u64 used;
+};
+
 struct virtio_mmio_config {
 	char    magic[4];
 	u32     version;
@@ -179,6 +189,9 @@ struct virtio_mmio_dev {
 	struct virtio_mmio_config config;
 	struct libvirtio_callback cb;
 	struct libvirtio_ops *ops;
+	struct virtio_mmio_queue_state queues[VMM_VIRTIO_MMIO_MAX_VQ];
+	bool modern;
+	bool packed_supported;
 	uint64_t start;
 	uint64_t end;
 	void *priv;
@@ -194,5 +207,8 @@ void virtio_mmio_dev_connect(const char *name, struct virtio_mmio_dev *mmio_dev,
 			     struct virtio_emulator *emu);
 struct virtio_mmio_dev *virtio_dev_mmio_create(uint64_t start, uint64_t end,
 					       struct libvirtio_ops *ops);
+struct virtio_mmio_dev *virtio_dev_mmio_create_ex(uint64_t start, uint64_t end,
+						  struct libvirtio_ops *ops,
+						  const struct virtio_mmio_options *opts);
 
 #endif /* __VMM_VIRTIO_MMIO_H__ */

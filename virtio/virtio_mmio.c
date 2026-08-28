@@ -3,6 +3,7 @@
 #include <string.h>
 #include "virtio_wrapper.h"
 #include "virtio_mmio.h"
+#include "virtio_config.h"
 #include "utils.h"
 
 /**
@@ -60,15 +61,67 @@ static void virtio_mmio_reset_queue(struct virtio_mmio_dev *mdev, uint32_t vq)
 	if (mdev->dev.emu && mdev->dev.emu->reset_vq) {
 		mdev->dev.emu->reset_vq(&mdev->dev, vq);
 	}
+
+	if (vq < VMM_VIRTIO_MMIO_MAX_VQ) {
+		memset(&mdev->queues[vq], 0, sizeof(mdev->queues[vq]));
+	}
+}
+
+static struct virtio_mmio_queue_state *virtio_mmio_selected_queue(
+							struct virtio_mmio_dev *mdev)
+{
+	if (!mdev || mdev->config.queue_sel >= VMM_VIRTIO_MMIO_MAX_VQ) {
+		return NULL;
+	}
+
+	return &mdev->queues[mdev->config.queue_sel];
+}
+
+static int virtio_mmio_init_selected_queue(struct virtio_mmio_dev *mdev)
+{
+	struct virtio_mmio_queue_state *queue;
+
+	queue = virtio_mmio_selected_queue(mdev);
+	if (!queue || !queue->ready) {
+		return 0;
+	}
+
+	if (!mdev->dev.emu || !mdev->dev.emu->init_vq_addr) {
+		return -1;
+	}
+
+	if (!queue->num || !queue->desc || !queue->avail || !queue->used) {
+		return -1;
+	}
+
+	return mdev->dev.emu->init_vq_addr(&mdev->dev,
+					    mdev->config.queue_sel,
+					    queue->desc,
+					    queue->avail,
+					    queue->used,
+					    queue->num);
+}
+
+static void virtio_mmio_set_addr_low(uint64_t *addr, uint32_t val)
+{
+	*addr = (*addr & 0xffffffff00000000ULL) | val;
+}
+
+static void virtio_mmio_set_addr_high(uint64_t *addr, uint32_t val)
+{
+	*addr = (*addr & 0xffffffffULL) | ((uint64_t)val << 32);
 }
 
 static void virtio_mmio_reset_transport(struct virtio_mmio_dev *mdev)
 {
+	uint32_t i;
+
 	if (mdev->dev.emu && mdev->dev.emu->reset) {
 		mdev->dev.emu->reset(&mdev->dev);
 	}
 
 	virtio_clear_addr_trans_tables(&mdev->dev);
+	mdev->dev.guest_features = 0;
 
 	mdev->config.host_features = 0;
 	mdev->config.host_features_sel = 0;
@@ -82,6 +135,10 @@ static void virtio_mmio_reset_transport(struct virtio_mmio_dev *mdev)
 	mdev->config.interrupt_state = 0;
 	mdev->config.interrupt_ack = 0;
 	mdev->config.status = 0;
+
+	for (i = 0; i < VMM_VIRTIO_MMIO_MAX_VQ; i++) {
+		memset(&mdev->queues[i], 0, sizeof(mdev->queues[i]));
+	}
 }
 
 static int virtio_mmio_config_read(struct virtio_mmio_dev *mdev,
@@ -109,12 +166,14 @@ static int virtio_mmio_config_read(struct virtio_mmio_dev *mdev,
 		*(u32 *)dst = *((u32 *)((void *)&mdev->config.interrupt_state));
 		break;
 	case VMM_VIRTIO_MMIO_HOST_FEATURES:
-		if (mdev->config.host_features_sel == 0)
+		if (mdev->config.host_features_sel == 0) {
+			*(u32 *)dst = (u32)virtio_device_get_host_features(&mdev->dev);
+		} else if (mdev->config.host_features_sel == 1) {
 			*(u32 *)dst =
-			(u32)mdev->dev.emu->get_host_features(&mdev->dev);
-		else
-			*(u32 *)dst =
-			(u32)(mdev->dev.emu->get_host_features(&mdev->dev) >> 32);
+			(u32)(virtio_device_get_host_features(&mdev->dev) >> 32);
+		} else {
+			*(u32 *)dst = 0;
+		}
 		break;
 	case VMM_VIRTIO_MMIO_QUEUE_PFN:
 		*(u32 *)dst = mdev->dev.emu->get_pfn_vq(&mdev->dev,
@@ -124,6 +183,70 @@ static int virtio_mmio_config_read(struct virtio_mmio_dev *mdev,
 		*(u32 *)dst = mdev->dev.emu->get_size_vq(&mdev->dev,
 					      mdev->config.queue_sel);
 		break;
+	case VMM_VIRTIO_MMIO_QUEUE_NUM:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? queue->num : 0;
+		break;
+	}
+	case VMM_VIRTIO_MMIO_QUEUE_READY:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? queue->ready : 0;
+		break;
+	}
+	case VMM_VIRTIO_MMIO_QUEUE_DESC_LOW:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? (u32)queue->desc : 0;
+		break;
+	}
+	case VMM_VIRTIO_MMIO_QUEUE_DESC_HIGH:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? (u32)(queue->desc >> 32) : 0;
+		break;
+	}
+	case VMM_VIRTIO_MMIO_QUEUE_AVAIL_LOW:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? (u32)queue->avail : 0;
+		break;
+	}
+	case VMM_VIRTIO_MMIO_QUEUE_AVAIL_HIGH:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? (u32)(queue->avail >> 32) : 0;
+		break;
+	}
+	case VMM_VIRTIO_MMIO_QUEUE_USED_LOW:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? (u32)queue->used : 0;
+		break;
+	}
+	case VMM_VIRTIO_MMIO_QUEUE_USED_HIGH:
+	{
+		struct virtio_mmio_queue_state *queue;
+
+		queue = virtio_mmio_selected_queue(mdev);
+		*(u32 *)dst = queue ? (u32)(queue->used >> 32) : 0;
+		break;
+	}
 	case VMM_VIRTIO_MMIO_SHM_LEN_LOW:
 	case VMM_VIRTIO_MMIO_SHM_LEN_HIGH:
 		*(u32 *)dst = UINT_MAX;
@@ -134,6 +257,9 @@ static int virtio_mmio_config_read(struct virtio_mmio_dev *mdev,
 		break;
 	case VMM_VIRTIO_MMIO_STATUS:
 		*(u32 *)dst = *((u32 *)((void *)&mdev->config.status));
+		break;
+	case VMM_VIRTIO_MMIO_CONFIG_GENERATION:
+		*(u32 *)dst = 0;
 		break;
 	default:
 		my_print(&mdev->dev, "%s: %s invalid offset=0x%x\n",
@@ -150,6 +276,7 @@ static int virtio_mmio_config_write(struct virtio_mmio_dev *mdev,
 {
 	int ret = 0;
 	u32 val = *(u32 *)(src);
+	struct virtio_mmio_queue_state *queue;
 
 	if (src_len != 4) {
 		my_print(&mdev->dev, "%s: guest=%s invalid length=%d\n",
@@ -167,8 +294,10 @@ static int virtio_mmio_config_write(struct virtio_mmio_dev *mdev,
 	case VMM_VIRTIO_MMIO_GUEST_FEATURES:
 		virtio_device_set_guest_features(&mdev->dev,
 					mdev->config.guest_features_sel, val);
-		mdev->dev.emu->set_guest_features(&mdev->dev,
+		if (mdev->dev.emu && mdev->dev.emu->set_guest_features) {
+			mdev->dev.emu->set_guest_features(&mdev->dev,
 					mdev->config.guest_features_sel, val);
+		}
 		break;
 	case VMM_VIRTIO_MMIO_GUEST_PAGE_SIZE:
 		mdev->config.guest_page_size = val;
@@ -178,28 +307,103 @@ static int virtio_mmio_config_write(struct virtio_mmio_dev *mdev,
 		break;
 	case VMM_VIRTIO_MMIO_QUEUE_NUM:
 		mdev->config.queue_num = val;
-		mdev->dev.emu->set_size_vq(&mdev->dev,
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			queue->num = val;
+		}
+		if (mdev->dev.emu && mdev->dev.emu->set_size_vq) {
+			mdev->dev.emu->set_size_vq(&mdev->dev,
 					mdev->config.queue_sel,
 					mdev->config.queue_num);
+		}
 		break;
 	case VMM_VIRTIO_MMIO_QUEUE_ALIGN:
 		mdev->config.queue_align = val;
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			queue->align = val;
+		}
 		break;
 	case VMM_VIRTIO_MMIO_QUEUE_PFN:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (!queue) {
+			ret = -1;
+			break;
+		}
 		if (!val) {
 			virtio_mmio_reset_queue(mdev, mdev->config.queue_sel);
 			mdev->config.queue_pfn = 0;
 			break;
 		}
 		mdev->config.queue_pfn = val;
-		ret = mdev->dev.emu->init_vq(&mdev->dev,
+		queue->pfn = val;
+		if (!queue->num && mdev->dev.emu && mdev->dev.emu->get_size_vq) {
+			queue->num = mdev->dev.emu->get_size_vq(&mdev->dev,
+							mdev->config.queue_sel);
+		}
+		queue->align = mdev->config.queue_align;
+		if (mdev->dev.emu && mdev->dev.emu->init_vq) {
+			ret = mdev->dev.emu->init_vq(&mdev->dev,
 				    mdev->config.queue_sel,
 				    mdev->config.guest_page_size,
 				    mdev->config.queue_align,
 				    val);
+		} else {
+			ret = -1;
+		}
+		break;
+	case VMM_VIRTIO_MMIO_QUEUE_DESC_LOW:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			virtio_mmio_set_addr_low(&queue->desc, val);
+		}
+		break;
+	case VMM_VIRTIO_MMIO_QUEUE_DESC_HIGH:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			virtio_mmio_set_addr_high(&queue->desc, val);
+		}
+		break;
+	case VMM_VIRTIO_MMIO_QUEUE_AVAIL_LOW:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			virtio_mmio_set_addr_low(&queue->avail, val);
+		}
+		break;
+	case VMM_VIRTIO_MMIO_QUEUE_AVAIL_HIGH:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			virtio_mmio_set_addr_high(&queue->avail, val);
+		}
+		break;
+	case VMM_VIRTIO_MMIO_QUEUE_USED_LOW:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			virtio_mmio_set_addr_low(&queue->used, val);
+		}
+		break;
+	case VMM_VIRTIO_MMIO_QUEUE_USED_HIGH:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (queue) {
+			virtio_mmio_set_addr_high(&queue->used, val);
+		}
+		break;
+	case VMM_VIRTIO_MMIO_QUEUE_READY:
+		queue = virtio_mmio_selected_queue(mdev);
+		if (!queue) {
+			ret = -1;
+			break;
+		}
+		if (!val) {
+			virtio_mmio_reset_queue(mdev, mdev->config.queue_sel);
+			break;
+		}
+		queue->ready = val;
+		ret = virtio_mmio_init_selected_queue(mdev);
 		break;
 	case VMM_VIRTIO_MMIO_QUEUE_NOTIFY:
-		if (!mdev->dev.emu->notify_vq(&mdev->dev, val))
+		if (mdev->dev.emu && mdev->dev.emu->notify_vq &&
+		    !mdev->dev.emu->notify_vq(&mdev->dev, val))
 			*is_doorbell = 1;
 		break;
 	case VMM_VIRTIO_MMIO_SHM_SEL:
@@ -213,7 +417,13 @@ static int virtio_mmio_config_write(struct virtio_mmio_dev *mdev,
 			virtio_mmio_reset_transport(mdev);
 			break;
 		}
-		if (val != mdev->config.status) {
+		if ((val & VMM_VIRTIO_CONFIG_S_FEATURES_OK) &&
+		    (mdev->dev.guest_features &
+		     ~virtio_device_get_host_features(&mdev->dev))) {
+			val &= ~VMM_VIRTIO_CONFIG_S_FEATURES_OK;
+		}
+		if (val != mdev->config.status && mdev->dev.emu &&
+		    mdev->dev.emu->status_changed) {
 			mdev->dev.emu->status_changed(&mdev->dev, val);
 		}
 		mdev->config.status = val;
@@ -316,10 +526,13 @@ void virtio_mmio_dev_show_all(void)
 	}
 }
 
-struct virtio_mmio_dev *virtio_dev_mmio_create(uint64_t start, uint64_t end,
-					       struct libvirtio_ops *ops)
+struct virtio_mmio_dev *virtio_dev_mmio_create_ex(uint64_t start, uint64_t end,
+						  struct libvirtio_ops *ops,
+						  const struct virtio_mmio_options *opts)
 {
 	struct virtio_mmio_dev *mdev;
+	uint64_t transport_features = 0;
+	bool packed = opts && opts->packed;
 
 	list_for_each_entry(mdev, &virtio_mmio_dev_list, list) {
 		if (memory_region_is_overlay(mdev->start, mdev->end,
@@ -332,18 +545,28 @@ struct virtio_mmio_dev *virtio_dev_mmio_create(uint64_t start, uint64_t end,
 	mdev = (struct virtio_mmio_dev *)ops->mm_alloc(sizeof(*mdev));
 	if (!mdev)
 		return NULL;
+	memset(mdev, 0, sizeof(*mdev));
 
 	mdev->start = start;
 	mdev->end = end;
 
 	mdev->ops = ops;
+	mdev->modern = packed;
+	mdev->packed_supported = packed;
 
 	mdev->dev.vn = &mmio_notify;
 	mdev->dev.vn_data = (void *)mdev;
+	if (mdev->modern) {
+		transport_features |= (1ULL << VMM_VIRTIO_F_VERSION_1);
+	}
+	if (mdev->packed_supported) {
+		transport_features |= (1ULL << VMM_VIRTIO_F_RING_PACKED);
+	}
+	virtio_device_set_transport_features(&mdev->dev, transport_features);
 
 	mdev->config = (struct virtio_mmio_config) {
 		.magic          = {'v', 'i', 'r', 't'},
-		.version        = 1,
+		.version        = mdev->modern ? 2 : 1,
 		.vendor_id      = 0x52535658, /* XVSR */
 		.queue_num_max  = 256,
 	};
@@ -353,4 +576,10 @@ struct virtio_mmio_dev *virtio_dev_mmio_create(uint64_t start, uint64_t end,
 	list_add_tail(&mdev->list, &virtio_mmio_dev_list);
 
 	return mdev;
+}
+
+struct virtio_mmio_dev *virtio_dev_mmio_create(uint64_t start, uint64_t end,
+					       struct libvirtio_ops *ops)
+{
+	return virtio_dev_mmio_create_ex(start, end, ops, NULL);
 }

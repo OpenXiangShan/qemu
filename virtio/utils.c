@@ -227,6 +227,17 @@ int libvirtio_get_blk_capacity(struct virtio_device *dev)
 	return mdev->ops->blk_ops.get_blk_capacity(mdev->priv);
 }
 
+int libvirtio_genirq_send_msi(struct virtio_device *dev, uint64_t addr,
+				     uint32_t data)
+{
+	struct virtio_mmio_dev *mdev = container_of(dev, struct virtio_mmio_dev, dev);
+
+	if (!mdev || !mdev->ops || !mdev->ops->genirq_ops.send_msi)
+		return -1;
+
+	return mdev->ops->genirq_ops.send_msi(addr, data, mdev->priv);
+}
+
 int libvirtio_submit_blk_io(struct virtio_device *dev,
 			    uint64_t sector, void *buf,
 			    int len, uint8_t flags)

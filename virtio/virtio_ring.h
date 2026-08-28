@@ -40,6 +40,18 @@
 /* This means the buffer contains a list of buffer descriptors. */
 #define VMM_VRING_DESC_F_INDIRECT	4
 
+/* Packed ring descriptor availability bits. These are bit shifts. */
+#define VMM_VRING_PACKED_DESC_F_AVAIL	7
+#define VMM_VRING_PACKED_DESC_F_USED	15
+
+/* Packed ring event suppression flags. */
+#define VMM_VRING_PACKED_EVENT_FLAG_ENABLE	0x0
+#define VMM_VRING_PACKED_EVENT_FLAG_DISABLE	0x1
+#define VMM_VRING_PACKED_EVENT_FLAG_DESC	0x2
+
+/* Packed ring event suppression wrap counter bit shift. */
+#define VMM_VRING_PACKED_EVENT_F_WRAP_CTR	15
+
 /* The Host uses this in used->flags to advise the Guest: don't kick me when
  * you add a buffer.  It's unreliable, so it's simply an optimization.  Guest
  * will still kick if it's out of buffers. */
@@ -90,6 +102,22 @@ struct vring_used {
 	uint16_t flags;
 	uint16_t idx;
 	struct vring_used_elem ring[];
+};
+
+struct vring_packed_desc_event {
+	uint16_t off_wrap;
+	uint16_t flags;
+};
+
+struct vring_packed_desc {
+	/* Address (guest-physical). */
+	uint64_t addr;
+	/* Length. */
+	uint32_t len;
+	/* Buffer ID. */
+	uint16_t id;
+	/* Descriptor flags. */
+	uint16_t flags;
 };
 
 struct vring {

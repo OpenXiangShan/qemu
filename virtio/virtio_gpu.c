@@ -81,7 +81,7 @@ static int virtio_gpu_init_vq_addr(struct virtio_device *dev, uint32_t vq,
 	if (!virtio_gpu_queue_size(vq))
 		return -1;
 
-	return virtio_queue_setup_split(dev, &gdev->vqs[vq].vq, desc_addr,
+	return virtio_queue_setup_addr(dev, &gdev->vqs[vq].vq, desc_addr,
 					avail_addr, used_addr, size);
 }
 

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "virtio.h"
+#include "virtio_config.h"
 #include "virtio_mmio.h"
 #include "virtio_wrapper.h"
 #include "utils.h"
@@ -20,6 +21,9 @@ struct virtio_gbus_queue_shadow {
 	uint32_t pfn;
 	uint32_t ready;
 	uint32_t notify_seq;
+	uint64_t desc;
+	uint64_t avail;
+	uint64_t used;
 };
 
 struct virtio_gbus_dev {
@@ -69,6 +73,23 @@ static int virtio_gbus_write_csr(struct virtio_gbus_dev *gdev,
 	}
 
 	return gdev->ops->write(gdev->opaque, addr, val);
+}
+
+static bool virtio_gbus_feature_selected(uint32_t features0, uint32_t features1,
+					 uint32_t feature)
+{
+	if (feature < 32) {
+		return !!(features0 & (1U << feature));
+	}
+	if (feature < 64) {
+		return !!(features1 & (1U << (feature - 32)));
+	}
+	return false;
+}
+
+static uint64_t virtio_gbus_make_addr(uint32_t low, uint32_t high)
+{
+	return ((uint64_t)high << 32) | low;
 }
 
 static int virtio_gbus_mmio_write(struct virtio_gbus_dev *gdev,
@@ -128,33 +149,64 @@ static void virtio_gbus_sync_status(struct virtio_gbus_dev *gdev,
 }
 
 static void virtio_gbus_sync_queue(struct virtio_gbus_dev *gdev,
-				   uint32_t qid, uint32_t num,
-				   uint32_t align, uint32_t pfn,
+				   uint32_t qid, bool modern,
+				   uint32_t num, uint32_t align, uint32_t pfn,
+				   uint64_t desc, uint64_t avail, uint64_t used,
 				   uint32_t ready, uint32_t notify_seq,
 				   bool page_size_changed)
 {
 	struct virtio_gbus_queue_shadow *shadow = &gdev->queues[qid];
 	bool queue_cfg_changed;
 	bool pfn_changed;
+	bool addr_changed;
+	bool ready_changed;
 	int doorbell = 0;
 
 	queue_cfg_changed = !gdev->valid || shadow->num != num ||
 			    shadow->align != align;
 	pfn_changed = !gdev->valid || shadow->pfn != pfn ||
 		      page_size_changed || queue_cfg_changed;
+	addr_changed = !gdev->valid || shadow->desc != desc ||
+		       shadow->avail != avail || shadow->used != used ||
+		       queue_cfg_changed;
+	ready_changed = !gdev->valid || shadow->ready != ready;
 
 	virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_SEL, qid, &doorbell);
 
 	if (queue_cfg_changed) {
 		virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_NUM, num,
 				       &doorbell);
-		virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_ALIGN, align,
-				       &doorbell);
 	}
 
-	if (pfn_changed) {
-		virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_PFN, pfn,
-				       &doorbell);
+	if (modern) {
+		if (addr_changed) {
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_DESC_LOW,
+					       (uint32_t)desc, &doorbell);
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_DESC_HIGH,
+					       (uint32_t)(desc >> 32), &doorbell);
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_AVAIL_LOW,
+					       (uint32_t)avail, &doorbell);
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_AVAIL_HIGH,
+					       (uint32_t)(avail >> 32), &doorbell);
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_USED_LOW,
+					       (uint32_t)used, &doorbell);
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_USED_HIGH,
+					       (uint32_t)(used >> 32), &doorbell);
+		}
+		if (ready_changed || (ready && addr_changed)) {
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_READY,
+					       ready & 1U, &doorbell);
+		}
+	} else {
+		if (queue_cfg_changed) {
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_ALIGN, align,
+					       &doorbell);
+		}
+
+		if (pfn_changed) {
+			virtio_gbus_mmio_write(gdev, VMM_VIRTIO_MMIO_QUEUE_PFN, pfn,
+					       &doorbell);
+		}
 	}
 
 	if (shadow->notify_seq != notify_seq) {
@@ -170,6 +222,9 @@ static void virtio_gbus_sync_queue(struct virtio_gbus_dev *gdev,
 	shadow->pfn = pfn;
 	shadow->ready = ready;
 	shadow->notify_seq = notify_seq;
+	shadow->desc = desc;
+	shadow->avail = avail;
+	shadow->used = used;
 }
 
 static int virtio_gbus_dev_notify(struct virtio_device *dev, uint32_t vq)
@@ -192,10 +247,11 @@ static struct virtio_notify gbus_notify = {
 	.notify = virtio_gbus_dev_notify,
 };
 
-virtio_handle_t virtio_gbus_create(const char *name, uint64_t start, int len,
-				   struct libvirtio_ops *ops, void *priv,
-				   const struct virtio_gbus_ops *gbus_ops,
-				   void *gbus_opaque)
+virtio_handle_t virtio_gbus_create_ex(const char *name, uint64_t start, int len,
+				      struct libvirtio_ops *ops, void *priv,
+				      const struct virtio_gbus_ops *gbus_ops,
+				      void *gbus_opaque,
+				      const struct virtio_mmio_options *opts)
 {
 	struct virtio_gbus_dev *gdev;
 	virtio_handle_t handle;
@@ -211,7 +267,7 @@ virtio_handle_t virtio_gbus_create(const char *name, uint64_t start, int len,
 	}
 	memset(gdev, 0, sizeof(*gdev));
 
-	handle = virtio_mmio_create(name, start, len, ops, priv);
+	handle = virtio_mmio_create_ex(name, start, len, ops, priv, opts);
 	if (!handle) {
 		ops->mm_free((uint64_t)(uintptr_t)gdev, sizeof(*gdev));
 		return NULL;
@@ -228,6 +284,15 @@ virtio_handle_t virtio_gbus_create(const char *name, uint64_t start, int len,
 	return handle;
 }
 
+virtio_handle_t virtio_gbus_create(const char *name, uint64_t start, int len,
+				   struct libvirtio_ops *ops, void *priv,
+				   const struct virtio_gbus_ops *gbus_ops,
+				   void *gbus_opaque)
+{
+	return virtio_gbus_create_ex(name, start, len, ops, priv, gbus_ops,
+				     gbus_opaque, NULL);
+}
+
 int virtio_gbus_poll(virtio_handle_t handle)
 {
 	struct virtio_gbus_dev *gdev = virtio_gbus_find(handle);
@@ -239,6 +304,7 @@ int virtio_gbus_poll(virtio_handle_t handle)
 	uint32_t update_seq = 0;
 	bool force_reset = false;
 	bool page_size_changed = false;
+	bool modern;
 	int doorbell;
 
 	if (!gdev) {
@@ -268,8 +334,11 @@ int virtio_gbus_poll(virtio_handle_t handle)
 	force_reset = gdev->valid && gdev->reset_seq != reset_seq;
 	gdev->reset_seq = reset_seq;
 
-	virtio_gbus_sync_status(gdev, status, force_reset);
+	if (force_reset) {
+		virtio_gbus_sync_status(gdev, 0, true);
+	}
 	virtio_gbus_sync_features(gdev, features0, features1);
+	virtio_gbus_sync_status(gdev, status, false);
 
 	page_size_changed = !gdev->valid || gdev->guest_page_size != page_size;
 	if (page_size_changed) {
@@ -286,6 +355,12 @@ int virtio_gbus_poll(virtio_handle_t handle)
 		uint32_t pfn = 0;
 		uint32_t ready = 0;
 		uint32_t notify_seq = 0;
+		uint32_t desc_low = 0;
+		uint32_t desc_high = 0;
+		uint32_t avail_low = 0;
+		uint32_t avail_high = 0;
+		uint32_t used_low = 0;
+		uint32_t used_high = 0;
 
 		if (virtio_gbus_read_csr(gdev, base + VIRTIO_GBUS_CSR_QUEUE_NUM,
 					 &num) < 0 ||
@@ -297,12 +372,35 @@ int virtio_gbus_poll(virtio_handle_t handle)
 					 &ready) < 0 ||
 		    virtio_gbus_read_csr(gdev,
 					 base + VIRTIO_GBUS_CSR_QUEUE_NOTIFY_SEQ,
-					 &notify_seq) < 0) {
+					 &notify_seq) < 0 ||
+		    virtio_gbus_read_csr(gdev,
+					 base + VIRTIO_GBUS_CSR_QUEUE_DESC_LOW,
+					 &desc_low) < 0 ||
+		    virtio_gbus_read_csr(gdev,
+					 base + VIRTIO_GBUS_CSR_QUEUE_DESC_HIGH,
+					 &desc_high) < 0 ||
+		    virtio_gbus_read_csr(gdev,
+					 base + VIRTIO_GBUS_CSR_QUEUE_AVAIL_LOW,
+					 &avail_low) < 0 ||
+		    virtio_gbus_read_csr(gdev,
+					 base + VIRTIO_GBUS_CSR_QUEUE_AVAIL_HIGH,
+					 &avail_high) < 0 ||
+		    virtio_gbus_read_csr(gdev,
+					 base + VIRTIO_GBUS_CSR_QUEUE_USED_LOW,
+					 &used_low) < 0 ||
+		    virtio_gbus_read_csr(gdev,
+					 base + VIRTIO_GBUS_CSR_QUEUE_USED_HIGH,
+					 &used_high) < 0) {
 			return -1;
 		}
 
-		virtio_gbus_sync_queue(gdev, qid, num, align, pfn, ready,
-				       notify_seq, page_size_changed);
+		modern = virtio_gbus_feature_selected(features0, features1,
+						      VMM_VIRTIO_F_VERSION_1);
+		virtio_gbus_sync_queue(gdev, qid, modern, num, align, pfn,
+				       virtio_gbus_make_addr(desc_low, desc_high),
+				       virtio_gbus_make_addr(avail_low, avail_high),
+				       virtio_gbus_make_addr(used_low, used_high),
+				       ready, notify_seq, page_size_changed);
 	}
 
 	gdev->update_seq = update_seq;

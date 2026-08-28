@@ -37,12 +37,11 @@
 /* We've given up on this device. */
 #define VMM_VIRTIO_CONFIG_S_FAILED		0x80
 
-/* Some virtio feature bits (currently bits 28 through 32) are reserved
- * for the transport being used (eg. virtio_ring), the rest are per-device
- * feature bits.
+/* Some virtio feature bits are reserved for the transport being used
+ * (eg. virtio_ring), the rest are per-device feature bits.
  */
 #define VMM_VIRTIO_TRANSPORT_F_START		28
-#define VMM_VIRTIO_TRANSPORT_F_END		34
+#define VMM_VIRTIO_TRANSPORT_F_END		42
 
 #ifndef VMM_VIRTIO_CONFIG_NO_LEGACY
 /* Do we get callbacks when the ring is completely used, even if we've
@@ -64,5 +63,8 @@
  * this is for compatibility with legacy systems.
  */
 #define VMM_VIRTIO_F_IOMMU_PLATFORM		33
+
+/* This feature indicates support for the packed virtqueue layout. */
+#define VMM_VIRTIO_F_RING_PACKED		34
 
 #endif /* __VMM_VIRTIO_CONFIG_H__ */

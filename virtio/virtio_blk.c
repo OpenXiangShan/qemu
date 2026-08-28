@@ -119,7 +119,7 @@ static void virtio_blk_req_complete(struct virtio_device *dev,
 static void virtio_blk_req_process(void *data)
 {
 	int rc;
-	uint16_t head, thead;
+	uint16_t head;
 	uint32_t i, iov_cnt, len;
 	struct virtio_blk_dev *vbdev = (struct virtio_blk_dev *)data;
 	struct virtio_device *dev = vbdev->vdev;
@@ -128,15 +128,22 @@ static void virtio_blk_req_process(void *data)
 	struct virtio_blk_outhdr hdr;
 
 	while (virtio_queue_available(vq)) {
-		thead = virtio_queue_pop(vq);
-		req = &vbdev->reqs[thead];
-		rc = virtio_queue_get_head_iovec(vq, thead, vbdev->iov,
-						 &iov_cnt, &len, &head);
+		rc = virtio_queue_get_iovec(vq, vbdev->iov,
+					    &iov_cnt, &len, &head);
 		if (rc) {
 			my_print(dev, "%s: failed to get iovec (error %d)\n",
 				 __FUNCTION__, rc);
 			continue;
 		}
+
+		if (head >= VIRTIO_BLK_QUEUE_SIZE) {
+			my_print(dev, "%s: invalid request head=%u\n",
+				 __FUNCTION__, head);
+			virtio_queue_set_used_elem(vq, head, 0);
+			continue;
+		}
+
+		req = &vbdev->reqs[head];
 
 		req->vq = vq;
 		req->head = head;
@@ -289,8 +296,8 @@ static int virtio_blk_init_vq_addr(struct virtio_device *dev, uint32_t vq,
 
 	switch (vq) {
 	case VIRTIO_BLK_IO_QUEUE:
-		ret = virtio_queue_setup_split(dev, &vbdev->vqs[vq], desc_addr,
-					       avail_addr, used_addr, size);
+		ret = virtio_queue_setup_addr(dev, &vbdev->vqs[vq], desc_addr,
+					  avail_addr, used_addr, size);
 		break;
 	default:
 		ret = -1;
