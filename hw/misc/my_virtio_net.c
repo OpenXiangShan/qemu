@@ -181,6 +181,16 @@ static void my_virtio_net_backend_event(void *opaque,
     }
 }
 
+static void my_virtio_net_backend_log(void *opaque, int level,
+                                      const char *fmt, va_list ap)
+    G_GNUC_PRINTF(3, 0);
+
+static void my_virtio_net_backend_log(void *opaque, int level,
+                                      const char *fmt, va_list ap)
+{
+    error_vreport(fmt, ap);
+}
+
 static struct libvirtio_ops ops = {
     .vprint = vprintf,
     .mm_alloc = my_alloc,
@@ -225,6 +235,7 @@ static void my_virtio_net_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     struct virtio_backend_callbacks backend_callbacks = {
         .event = my_virtio_net_backend_event,
+        .log = my_virtio_net_backend_log,
     };
     struct virtio_backend_config backend_config = {
         .type = VIRTIO_BACKEND_NET,
