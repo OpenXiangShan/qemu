@@ -18,6 +18,7 @@ typedef struct MyVirtioStateGenirq {
     QEMUBH *bh;
     hwaddr base;
     hwaddr size;
+    bool packed;
 } MyVirtioStateGenirq;
 
 #define TYPE_MY_VIRTIO_GENIRQ "my-virtio-genirq"
@@ -123,12 +124,14 @@ static void my_virtio_genirq_bh(void *opaque)
     virtio_process_req(s->handle);
 }
 
-void my_virtio_genirq_create(hwaddr start, hwaddr size, qemu_irq irq)
+void my_virtio_genirq_create(hwaddr start, hwaddr size, qemu_irq irq,
+                             bool packed)
 {
     MyVirtioStateGenirq *s = MY_VIRTIO_GENIRQ(qdev_new(TYPE_MY_VIRTIO_GENIRQ));
 
     s->base = start;
     s->size = size;
+    s->packed = packed;
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, start);
     sysbus_connect_irq(SYS_BUS_DEVICE(s), 0, irq);
@@ -138,6 +141,9 @@ static void my_virtio_genirq_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateGenirq *s = MY_VIRTIO_GENIRQ(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_mmio_options opts = {
+        .packed = s->packed,
+    };
 
     memory_region_init_io(&s->iomem, OBJECT(dev), &my_virtio_genirq_mmio_ops,
                           s, "my-virtio-genirq-regs", s->size);
@@ -145,8 +151,8 @@ static void my_virtio_genirq_realize(DeviceState *dev, Error **errp)
     sysbus_init_irq(sbd, &s->irq);
 
     s->bh = qemu_bh_new(my_virtio_genirq_bh, s);
-    s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_GENIRQ, s->base, s->size,
-                                   &ops, s);
+    s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_GENIRQ, s->base, s->size,
+                                      &ops, s, &opts);
     if (!s->handle) {
         error_setg(errp, "failed to create my-virtio-genirq protocol device");
     }

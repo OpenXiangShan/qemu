@@ -42,6 +42,7 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_mouse;
     bool my_virtio_tablet;
     bool my_virtio_genirq;
+    bool my_virtio_packed;
     void *my_virtio_ui;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
@@ -85,6 +86,7 @@ typedef struct XiangshanKmhState {
     bool my_virtio_mouse;
     bool my_virtio_tablet;
     bool my_virtio_genirq;
+    bool my_virtio_packed;
 #ifdef CONFIG_KVM_M_MODE
     bool kvm_m_mode;
 #endif

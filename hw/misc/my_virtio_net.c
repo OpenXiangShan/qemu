@@ -30,6 +30,7 @@ struct MyVirtioStateNet {
     char *dhcp_start;
     char *dns_ip;
     uint8_t mac[6];
+    bool packed;
 };
 
 #define TYPE_MY_VIRTIO_NET "my-virtio-net"
@@ -209,7 +210,8 @@ static struct libvirtio_ops ops = {
 void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq,
                           const char *hostfwd, const char *network,
                           const char *netmask, const char *host_ip,
-                          const char *dhcp_start, const char *dns_ip)
+                          const char *dhcp_start, const char *dns_ip,
+                          bool packed)
 {
     MyVirtioStateNet *s = MY_VIRTIO_NET(qdev_new("my-virtio-net"));
 
@@ -221,6 +223,7 @@ void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq,
     s->host_ip = g_strdup(host_ip ? host_ip : "");
     s->dhcp_start = g_strdup(dhcp_start ? dhcp_start : "");
     s->dns_ip = g_strdup(dns_ip ? dns_ip : "");
+    s->packed = packed;
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, base);
@@ -233,6 +236,9 @@ static void my_virtio_net_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateNet *s = MY_VIRTIO_NET(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_mmio_options opts = {
+        .packed = s->packed,
+    };
     struct virtio_backend_callbacks backend_callbacks = {
         .event = my_virtio_net_backend_event,
         .log = my_virtio_net_backend_log,
@@ -271,7 +277,8 @@ static void my_virtio_net_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_NET, base, len, &ops, (void *)s);
+    s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_NET, base, len, &ops,
+                                      (void *)s, &opts);
     if (!s->handle) {
         error_setg(errp, "failed to create my-virtio-net protocol device");
         return;

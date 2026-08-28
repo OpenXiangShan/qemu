@@ -37,6 +37,7 @@ struct MyVirtioStateConsole {
     char *output_path;
     int backend_input_fd;
     int backend_output_fd;
+    bool packed;
 };
 
 #define TYPE_MY_VIRTIO_CONSOLE "my-virtio-console"
@@ -217,12 +218,13 @@ static struct libvirtio_ops ops = {
 
 void my_virtio_console_create(hwaddr start, hwaddr size, qemu_irq irq,
                               const char *backend, const char *input_path,
-                              const char *output_path)
+                              const char *output_path, bool packed)
 {
     MyVirtioStateConsole *s = MY_VIRTIO_CONSOLE(qdev_new(TYPE_MY_VIRTIO_CONSOLE));
 
     base = start;
     len = size;
+    s->packed = packed;
 
     qdev_prop_set_string(DEVICE(s), "backend", backend ? backend : "external");
     if (input_path && *input_path) {
@@ -247,6 +249,9 @@ static void my_virtio_console_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateConsole *s = MY_VIRTIO_CONSOLE(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_mmio_options opts = {
+        .packed = s->packed,
+    };
     enum virtio_backend_console_backend backend_type =
         VIRTIO_BACKEND_CONSOLE_EXTERNAL;
     struct virtio_backend_callbacks backend_callbacks = {
@@ -322,7 +327,8 @@ static void my_virtio_console_realize(DeviceState *dev, Error **errp)
     sysbus_init_irq(sbd, &s->irq);
 
     s->rx_bh = qemu_bh_new(my_virtio_console_rx_bh, s);
-    s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_CONSOLE, base, len, &ops, (void *)s);
+    s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_CONSOLE, base, len, &ops,
+                                      (void *)s, &opts);
     if (!s->handle) {
         error_setg(errp, "failed to create my-virtio-console protocol device");
         goto fail_open;

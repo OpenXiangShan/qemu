@@ -108,6 +108,13 @@ Machine options
 ``my-virtio-blk-image=<path>``
    my-virtio blk 后端镜像路径，默认 ``disk.img``。建议运行时使用绝对路径。
 
+``my-virtio-packed=on|off``
+   是否让 my-virtio MMIO 设备报告 packed virtqueue transport 能力，默认
+   ``off``，保持旧的 virtio-mmio v1 legacy split ring 行为。打开后 transport
+   使用 virtio-mmio v2，并报告 ``VIRTIO_F_VERSION_1`` 和
+   ``VIRTIO_F_RING_PACKED``；实际使用 packed 还是 modern split 由 guest
+   driver 最终协商的 feature 决定。
+
 ``my-virtio-net=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio net 设备，默认 ``off``。
    如果 QEMU 当前使用生成的设备树，打开后会加入

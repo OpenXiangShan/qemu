@@ -23,6 +23,7 @@ struct MyVirtioStateGpu {
     uint32_t height;
     virtio_backend_handle_t ui;
     char *vnc_listen;
+    bool packed;
 };
 
 #define TYPE_MY_VIRTIO_GPU "my-virtio-gpu"
@@ -144,12 +145,13 @@ static struct libvirtio_ops ops = {
 };
 
 void *my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq,
-                           const char *vnc_listen)
+                           const char *vnc_listen, bool packed)
 {
     MyVirtioStateGpu *s = MY_VIRTIO_GPU(qdev_new(TYPE_MY_VIRTIO_GPU));
 
     s->base = start;
     s->size = size;
+    s->packed = packed;
     if (vnc_listen && *vnc_listen) {
         qdev_prop_set_string(DEVICE(s), "vnc-listen", vnc_listen);
     }
@@ -163,6 +165,9 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateGpu *s = MY_VIRTIO_GPU(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_mmio_options opts = {
+        .packed = s->packed,
+    };
     struct virtio_backend_config ui_config = {
         .type = VIRTIO_BACKEND_UI,
         .u.ui = {
@@ -212,8 +217,8 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_GPU, s->base, s->size,
-                                   &ops, s);
+    s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_GPU, s->base, s->size,
+                                      &ops, s, &opts);
     if (!s->handle) {
         error_setg(errp, "failed to create my-virtio-gpu protocol device");
         virtio_backend_destroy(s->backend);

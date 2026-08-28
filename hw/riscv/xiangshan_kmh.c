@@ -364,7 +364,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].size,
                              qdev_get_gpio_in(DEVICE(s->irqchip),
                                               XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ),
-                             s->my_virtio_blk_image);
+                             s->my_virtio_blk_image,
+                             s->my_virtio_packed);
     }
 
     if (s->my_virtio_net) {
@@ -377,7 +378,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              s->my_virtio_net_netmask,
                              s->my_virtio_net_host_ip,
                              s->my_virtio_net_dhcp_start,
-                             s->my_virtio_net_dns_ip);
+                             s->my_virtio_net_dns_ip,
+                             s->my_virtio_packed);
     }
 
     if (s->my_virtio_console) {
@@ -388,7 +390,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ),
             s->my_virtio_console_backend,
             s->my_virtio_console_input_path,
-            s->my_virtio_console_output_path);
+            s->my_virtio_console_output_path,
+            s->my_virtio_packed);
     }
 
     if (s->my_virtio_gpu) {
@@ -398,7 +401,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                                  qdev_get_gpio_in(
                                      DEVICE(s->irqchip),
                                      XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ),
-                                 s->my_virtio_vnc_listen);
+                                 s->my_virtio_vnc_listen,
+                                 s->my_virtio_packed);
     }
 
     if (s->my_virtio_keyboard) {
@@ -409,7 +413,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD_IRQ),
             s->my_virtio_keyboard_backend,
             s->my_virtio_keyboard_evdev_path,
-            s->my_virtio_ui);
+            s->my_virtio_ui,
+            s->my_virtio_packed);
     }
 
     if (s->my_virtio_mouse) {
@@ -420,7 +425,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              XIANGSHAN_KMH_MY_VIRTIO_MOUSE_IRQ),
             s->my_virtio_mouse_backend,
             s->my_virtio_mouse_evdev_path,
-            s->my_virtio_ui);
+            s->my_virtio_ui,
+            s->my_virtio_packed);
     }
 
     if (s->my_virtio_tablet) {
@@ -431,7 +437,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ),
             s->my_virtio_tablet_backend,
             s->my_virtio_tablet_evdev_path,
-            s->my_virtio_ui);
+            s->my_virtio_ui,
+            s->my_virtio_packed);
     }
 
     if (s->my_virtio_genirq) {
@@ -447,7 +454,8 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                 memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].base,
                 memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].size,
                 qdev_get_gpio_in(DEVICE(s->irqchip),
-                                 XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ));
+                                 XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ),
+                s->my_virtio_packed);
         }
     }
 #endif
@@ -1287,6 +1295,7 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_mouse = s->my_virtio_mouse;
     s->soc.my_virtio_tablet = s->my_virtio_tablet;
     s->soc.my_virtio_genirq = s->my_virtio_genirq;
+    s->soc.my_virtio_packed = s->my_virtio_packed;
 #ifdef CONFIG_KVM_M_MODE
     s->soc.kvm_m_mode = kvm_m_mode;
 #endif
@@ -1662,6 +1671,21 @@ static void xiangshan_kmh_set_my_virtio_genirq(Object *obj, bool value,
     s->my_virtio_genirq = value;
 }
 
+static bool xiangshan_kmh_get_my_virtio_packed(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_packed;
+}
+
+static void xiangshan_kmh_set_my_virtio_packed(Object *obj, bool value,
+                                               Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_packed = value;
+}
+
 static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1862,6 +1886,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_mouse = false;
     s->my_virtio_tablet = false;
     s->my_virtio_genirq = false;
+    s->my_virtio_packed = false;
 #ifdef CONFIG_KVM_M_MODE
     s->kvm_m_mode = false;
 #endif
@@ -2009,6 +2034,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_genirq);
     object_class_property_set_description(klass, "my-virtio-genirq",
                                           "Enable my-virtio generic IRQ test device");
+
+    object_class_property_add_bool(klass, "my-virtio-packed",
+                                   xiangshan_kmh_get_my_virtio_packed,
+                                   xiangshan_kmh_set_my_virtio_packed);
+    object_class_property_set_description(klass, "my-virtio-packed",
+                                          "Expose packed virtqueue support for my-virtio MMIO devices");
 
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   xiangshan_kmh_get_my_virtio_blk_image,

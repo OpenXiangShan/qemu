@@ -30,6 +30,7 @@ struct MyVirtioStateBlk {
     virtio_backend_handle_t backend;
     QEMUBH *rw_bh;
     char *image_path;
+    bool packed;
 };
 
 #define TYPE_MY_VIRTIO_BLK "my-virtio-blk"
@@ -168,13 +169,14 @@ static struct libvirtio_ops ops = {
 };
 
 void my_virtio_blk_create(hwaddr start, hwaddr size, qemu_irq irq,
-                          const char *image_path)
+                          const char *image_path, bool packed)
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(qdev_new("my-virtio-blk"));
 
     base = start;
     len = size;
     s->image_path = g_strdup(image_path && *image_path ? image_path : "disk.img");
+    s->packed = packed;
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, base);
@@ -187,6 +189,9 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_mmio_options opts = {
+        .packed = s->packed,
+    };
     struct virtio_backend_config backend_config = {
         .type = VIRTIO_BACKEND_BLK,
     };
@@ -208,7 +213,8 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    s->handle = virtio_mmio_create(VIRTIO_EMU_NAME_BLK, base, len, &ops, (void *)s);
+    s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_BLK, base, len, &ops,
+                                      (void *)s, &opts);
     if (s->handle) {
         return;
     }

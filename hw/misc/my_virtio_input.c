@@ -25,6 +25,7 @@ typedef struct MyVirtioStateInput {
     char *backend_name;
     char *evdev_path;
     virtio_backend_handle_t ui;
+    bool packed;
 } MyVirtioStateInput;
 
 #define TYPE_MY_VIRTIO_INPUT "my-virtio-input"
@@ -183,13 +184,15 @@ static struct libvirtio_ops ops = {
 
 static void my_virtio_input_create(hwaddr start, hwaddr size, qemu_irq irq,
                                    const char *type, const char *backend,
-                                   const char *evdev_path, void *ui)
+                                   const char *evdev_path, void *ui,
+                                   bool packed)
 {
     MyVirtioStateInput *s = MY_VIRTIO_INPUT(qdev_new(type));
 
     s->base = start;
     s->size = size;
     s->ui = ui;
+    s->packed = packed;
     qdev_prop_set_string(DEVICE(s), "backend", backend ? backend : "vnc");
     if (evdev_path && *evdev_path) {
         qdev_prop_set_string(DEVICE(s), "evdev-path", evdev_path);
@@ -201,32 +204,35 @@ static void my_virtio_input_create(hwaddr start, hwaddr size, qemu_irq irq,
 
 void my_virtio_keyboard_create(hwaddr start, hwaddr size, qemu_irq irq,
                                const char *backend, const char *evdev_path,
-                               void *ui)
+                               void *ui, bool packed)
 {
     my_virtio_input_create(start, size, irq, TYPE_MY_VIRTIO_KEYBOARD,
-                           backend, evdev_path, ui);
+                           backend, evdev_path, ui, packed);
 }
 
 void my_virtio_mouse_create(hwaddr start, hwaddr size, qemu_irq irq,
                             const char *backend, const char *evdev_path,
-                            void *ui)
+                            void *ui, bool packed)
 {
     my_virtio_input_create(start, size, irq, TYPE_MY_VIRTIO_MOUSE,
-                           backend, evdev_path, ui);
+                           backend, evdev_path, ui, packed);
 }
 
 void my_virtio_tablet_create(hwaddr start, hwaddr size, qemu_irq irq,
                              const char *backend, const char *evdev_path,
-                             void *ui)
+                             void *ui, bool packed)
 {
     my_virtio_input_create(start, size, irq, TYPE_MY_VIRTIO_TABLET,
-                           backend, evdev_path, ui);
+                           backend, evdev_path, ui, packed);
 }
 
 static void my_virtio_input_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateInput *s = MY_VIRTIO_INPUT(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
+    struct virtio_mmio_options opts = {
+        .packed = s->packed,
+    };
     struct virtio_backend_callbacks callbacks = {
         .event = my_virtio_input_backend_event,
     };
@@ -292,7 +298,8 @@ static void my_virtio_input_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    s->handle = virtio_mmio_create(emu_name, s->base, s->size, &ops, s);
+    s->handle = virtio_mmio_create_ex(emu_name, s->base, s->size, &ops, s,
+                                      &opts);
     if (!s->handle) {
         error_setg(errp, "failed to create %s protocol device",
                    device_name);
