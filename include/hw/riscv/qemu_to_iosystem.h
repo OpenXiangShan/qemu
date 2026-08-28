@@ -47,6 +47,7 @@ typedef struct QemuToIoSystemState {
 
     OnOffAuto generated_dtb;
     bool my_virtio_blk;
+    bool my_virtio_packed;
     bool dw_pcie;
     bool io_system_pcie_iommu_map;
     IoSystemBackendKind io_system_backend_kind;

@@ -819,6 +819,7 @@ static void qti_create_io_system(QemuToIoSystemState *s)
         .pcie_secondary_bus_name = "qti-pcie",
         .pcie_root_bus_path = "0000:00",
         .my_virtio_blk_enabled = s->my_virtio_blk,
+        .my_virtio_blk_packed = s->my_virtio_packed,
         .my_virtio_blk_requester_id = QTI_MY_VIRTIO_BLK_REQUESTER_ID,
         .my_virtio_blk_image_path = s->my_virtio_blk_image,
         .io2q_max_beat_bytes = IO_AXI_MAX_BEAT_BYTES,
@@ -1534,6 +1535,20 @@ static void qti_set_my_virtio_blk(Object *obj, bool value, Error **errp)
     s->my_virtio_blk = value;
 }
 
+static bool qti_get_my_virtio_packed(Object *obj, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    return s->my_virtio_packed;
+}
+
+static void qti_set_my_virtio_packed(Object *obj, bool value, Error **errp)
+{
+    QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
+
+    s->my_virtio_packed = value;
+}
+
 static bool qti_get_dw_pcie(Object *obj, Error **errp)
 {
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
@@ -1832,6 +1847,7 @@ static void qti_machine_instance_init(Object *obj)
     object_initialize_child(obj, "cpus", &s->cpus, TYPE_RISCV_HART_ARRAY);
     s->generated_dtb = ON_OFF_AUTO_AUTO;
     s->my_virtio_blk = false;
+    s->my_virtio_packed = false;
     s->dw_pcie = false;
     s->io_system_pcie_iommu_map = true;
     s->io_system_backend_kind = IO_SYSTEM_BACKEND_CMODEL;
@@ -1987,6 +2003,12 @@ static void qti_machine_class_init(ObjectClass *klass, const void *data)
                                    qti_set_my_virtio_blk);
     object_class_property_set_description(klass, "my-virtio-blk",
                                           "Enable my-virtio block device");
+
+    object_class_property_add_bool(klass, "my-virtio-packed",
+                                   qti_get_my_virtio_packed,
+                                   qti_set_my_virtio_packed);
+    object_class_property_set_description(klass, "my-virtio-packed",
+                                          "Expose packed virtqueue support for my-virtio MMIO devices");
 
     object_class_property_add_bool(klass, "dw-pcie",
                                    qti_get_dw_pcie,
