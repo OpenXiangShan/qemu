@@ -41,6 +41,7 @@ enum vmm_virtio_id {
 	VMM_VIRTIO_ID_GPU		= 16, /* GPU device */
 	VMM_VIRTIO_ID_TIMER		= 17, /* Timer/Clock device */
 	VMM_VIRTIO_ID_INPUT		= 18, /* Input device */
+	VMM_VIRTIO_ID_GENIRQ		= 0x1000, /* BOSC genirq test device */
 };
 
 #define VMM_VIRTIO_ID_ANY		0xffffffff

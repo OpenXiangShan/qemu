@@ -2,6 +2,7 @@
 #include <string.h>
 #include "utils.h"
 #include "virtio.h"
+#include "virtio_config.h"
 #include "list.h"
 
 /**
@@ -132,6 +133,31 @@ void virtio_device_set_guest_features(struct virtio_device *dev,
 	dev->guest_features |= ((uint64_t)features << (select * 32));
 }
 
+uint64_t virtio_device_get_host_features(struct virtio_device *dev)
+{
+	uint64_t features = 0;
+
+	if (!dev) {
+		return 0;
+	}
+
+	if (dev->emu && dev->emu->get_host_features) {
+		features = dev->emu->get_host_features(dev);
+	}
+
+	return features | dev->transport_features;
+}
+
+void virtio_device_set_transport_features(struct virtio_device *dev,
+					  uint64_t features)
+{
+	if (!dev) {
+		return;
+	}
+
+	dev->transport_features = features;
+}
+
 unsigned int virtio_queue_desc_count(struct virtio_queue *vq)
 {
 	return (vq) ? vq->desc_count : 0;
@@ -176,37 +202,158 @@ unsigned int virtio_queue_max_desc(struct virtio_queue *vq)
 	return vq->desc_count;
 }
 
-void virtio_queue_set_avail_event(struct virtio_queue *vq)
+static bool virtio_queue_is_packed(struct virtio_queue *vq)
 {
-	uint16_t val;
-	uint32_t ret;
-	uint64_t avail_evt_pa;
+	return vq && vq->layout == VIRTIO_QUEUE_LAYOUT_PACKED;
+}
 
-	if (!vq) {
+static bool virtio_queue_packed_desc_is_avail(uint16_t flags,
+						      bool wrap_counter)
+{
+	bool avail = !!(flags & (1U << VMM_VRING_PACKED_DESC_F_AVAIL));
+	bool used = !!(flags & (1U << VMM_VRING_PACKED_DESC_F_USED));
+
+	return (avail != used) && (avail == wrap_counter);
+}
+
+static void virtio_queue_packed_advance(uint16_t *idx, bool *wrap_counter,
+						uint16_t num, uint16_t count)
+{
+	if (!idx || !wrap_counter || !num) {
 		return;
 	}
 
-	val = vq->last_avail_idx;
-	avail_evt_pa = vq->vring.used_pa +
-		  offsetof(struct vring_used, ring[vq->vring.num]);
-	ret = my_guest_physical_write(vq->vdev, avail_evt_pa, &val, sizeof(val));
-	if (ret != sizeof(val)) {
-		my_print(vq->vdev, "%s: write failed at avail_evt_pa=0x%lx\n",
-			 __FUNCTION__, avail_evt_pa);
+	*idx += count;
+	while (*idx >= num) {
+		*idx -= num;
+		*wrap_counter = !*wrap_counter;
 	}
 }
 
-void virtio_queue_set_used_elem(struct virtio_queue *vq,
-				uint32_t head, uint32_t len)
+static int virtio_queue_get_packed_desc(struct virtio_queue *vq,
+						uint16_t idx,
+						struct vring_packed_desc *desc)
+{
+	uint32_t ret;
+	uint64_t desc_pa;
+
+	if (!vq || !desc || idx >= vq->desc_count) {
+		return -1;
+	}
+
+	desc_pa = vq->vring.desc_pa +
+		  (uint64_t)idx * sizeof(struct vring_packed_desc);
+	ret = my_guest_physical_read(vq->vdev, desc_pa, desc, sizeof(*desc));
+	if (ret != sizeof(*desc)) {
+		my_print(vq->vdev, "%s: read failed at desc_pa=0x%lx\n",
+			 __FUNCTION__, desc_pa);
+		return -1;
+	}
+
+	return 0;
+}
+
+static bool virtio_queue_packed_available(struct virtio_queue *vq)
+{
+	struct vring_packed_desc desc;
+
+	if (!vq || !vq->vdev || !vq->desc_count ||
+	    !vq->vring.desc_pa || !vq->vring.avail_pa ||
+	    !vq->vring.used_pa) {
+		return false;
+	}
+
+	if (virtio_queue_get_packed_desc(vq, vq->last_avail_idx, &desc)) {
+		return false;
+	}
+
+	return virtio_queue_packed_desc_is_avail(desc.flags,
+						  vq->last_avail_wrap_counter);
+}
+
+static bool virtio_queue_split_available(struct virtio_queue *vq)
+{
+	uint16_t val;
+	uint32_t ret;
+	uint64_t avail_pa;
+
+	if (!vq || !vq->vdev || !vq->desc_count ||
+	    !vq->vring.desc_pa || !vq->vring.avail_pa ||
+	    !vq->vring.used_pa) {
+		return false;
+	}
+
+	avail_pa = vq->vring.avail_pa +
+		   offsetof(struct vring_avail, idx);
+	ret = my_guest_physical_read(vq->vdev, avail_pa, &val, sizeof(val));
+	if (ret != sizeof(val)) {
+		my_print(vq->vdev, "%s: read failed at avail_pa=0x%lx\n",
+			 __FUNCTION__, avail_pa);
+		return false;
+	}
+
+	return val != vq->last_avail_idx;
+}
+
+static bool virtio_queue_packed_need_event(struct virtio_queue *vq,
+						   bool wrap,
+						   uint16_t off_wrap,
+						   uint16_t new_idx,
+						   uint16_t old_idx)
+{
+	int event_idx = off_wrap & ~(1U << VMM_VRING_PACKED_EVENT_F_WRAP_CTR);
+
+	if (wrap != !!(off_wrap >> VMM_VRING_PACKED_EVENT_F_WRAP_CTR)) {
+		event_idx -= vq->desc_count;
+	}
+
+	return vring_need_event((uint16_t)event_idx, new_idx, old_idx);
+}
+
+static bool virtio_queue_packed_should_signal(struct virtio_queue *vq)
+{
+	uint32_t ret;
+	uint16_t old_idx, new_idx;
+	struct vring_packed_desc_event event;
+	bool valid;
+
+	if (!vq || !vq->vdev || !vq->vring.avail_pa) {
+		return false;
+	}
+
+	ret = my_guest_physical_read(vq->vdev, vq->vring.avail_pa,
+				       &event, sizeof(event));
+	if (ret != sizeof(event)) {
+		my_print(vq->vdev, "%s: read failed at avail_pa=0x%lx\n",
+			 __FUNCTION__, vq->vring.avail_pa);
+		return false;
+	}
+
+	old_idx = vq->last_used_signalled;
+	new_idx = vq->used_idx;
+	valid = vq->last_used_signalled_valid;
+	vq->last_used_signalled = new_idx;
+	vq->last_used_signalled_valid = true;
+
+	if (event.flags == VMM_VRING_PACKED_EVENT_FLAG_DISABLE) {
+		return false;
+	} else if (event.flags == VMM_VRING_PACKED_EVENT_FLAG_ENABLE) {
+		return true;
+	}
+
+	return !valid || virtio_queue_packed_need_event(vq,
+							 vq->used_wrap_counter,
+							 event.off_wrap,
+							 new_idx, old_idx);
+}
+
+static void virtio_queue_split_set_used_elem(struct virtio_queue *vq,
+						     uint32_t head, uint32_t len)
 {
 	uint32_t ret;
 	uint16_t used_idx;
 	struct vring_used_elem used_elem;
 	uint64_t used_idx_pa, used_elem_pa;
-
-	if (!vq) {
-		return;
-	}
 
 	used_idx_pa = vq->vring.used_pa +
 		      offsetof(struct vring_used, idx);
@@ -232,6 +379,102 @@ void virtio_queue_set_used_elem(struct virtio_queue *vq,
 	if (ret != sizeof(used_idx)) {
 		my_print(vq->vdev, "%s: write failed at used_idx_pa=0x%lx\n",
 			 __FUNCTION__, used_idx_pa);
+	}
+}
+
+static void virtio_queue_packed_set_used_elem(struct virtio_queue *vq,
+						      uint32_t head, uint32_t len)
+{
+	uint16_t id, flags;
+	uint32_t ret;
+	uint64_t desc_pa, id_pa, len_pa, flags_pa;
+	bool old_wrap_counter;
+	struct virtio_queue_packed_pending *pending;
+
+	if (!vq || head >= VIRTIO_QUEUE_MAX_DESC) {
+		return;
+	}
+
+	pending = &vq->packed_pending[head];
+	if (!pending->valid || !pending->ndescs) {
+		my_print(vq->vdev, "%s: missing packed pending head=%u\n",
+			 __FUNCTION__, head);
+		return;
+	}
+
+	id = head;
+	flags = 0;
+	if (vq->used_wrap_counter) {
+		flags |= (1U << VMM_VRING_PACKED_DESC_F_AVAIL) |
+			 (1U << VMM_VRING_PACKED_DESC_F_USED);
+	}
+
+	desc_pa = vq->vring.desc_pa +
+		  (uint64_t)vq->used_idx * sizeof(struct vring_packed_desc);
+	id_pa = desc_pa + offsetof(struct vring_packed_desc, id);
+	len_pa = desc_pa + offsetof(struct vring_packed_desc, len);
+	flags_pa = desc_pa + offsetof(struct vring_packed_desc, flags);
+
+	ret = my_guest_physical_write(vq->vdev, id_pa, &id, sizeof(id));
+	if (ret != sizeof(id)) {
+		my_print(vq->vdev, "%s: write failed at id_pa=0x%lx\n",
+			 __FUNCTION__, id_pa);
+	}
+
+	ret = my_guest_physical_write(vq->vdev, len_pa, &len, sizeof(len));
+	if (ret != sizeof(len)) {
+		my_print(vq->vdev, "%s: write failed at len_pa=0x%lx\n",
+			 __FUNCTION__, len_pa);
+	}
+
+	__sync_synchronize();
+	ret = my_guest_physical_write(vq->vdev, flags_pa, &flags, sizeof(flags));
+	if (ret != sizeof(flags)) {
+		my_print(vq->vdev, "%s: write failed at flags_pa=0x%lx\n",
+			 __FUNCTION__, flags_pa);
+	}
+
+	old_wrap_counter = vq->used_wrap_counter;
+	virtio_queue_packed_advance(&vq->used_idx, &vq->used_wrap_counter,
+					    vq->desc_count, pending->ndescs);
+	if (old_wrap_counter != vq->used_wrap_counter) {
+		vq->last_used_signalled_valid = false;
+	}
+	pending->valid = false;
+	pending->ndescs = 0;
+}
+
+void virtio_queue_set_avail_event(struct virtio_queue *vq)
+{
+	uint16_t val;
+	uint32_t ret;
+	uint64_t avail_evt_pa;
+
+	if (!vq || virtio_queue_is_packed(vq)) {
+		return;
+	}
+
+	val = vq->last_avail_idx;
+	avail_evt_pa = vq->vring.used_pa +
+		  offsetof(struct vring_used, ring[vq->vring.num]);
+	ret = my_guest_physical_write(vq->vdev, avail_evt_pa, &val, sizeof(val));
+	if (ret != sizeof(val)) {
+		my_print(vq->vdev, "%s: write failed at avail_evt_pa=0x%lx\n",
+			 __FUNCTION__, avail_evt_pa);
+	}
+}
+
+void virtio_queue_set_used_elem(struct virtio_queue *vq,
+				uint32_t head, uint32_t len)
+{
+	if (!vq) {
+		return;
+	}
+
+	if (virtio_queue_is_packed(vq)) {
+		virtio_queue_packed_set_used_elem(vq, head, len);
+	} else {
+		virtio_queue_split_set_used_elem(vq, head, len);
 	}
 }
 
@@ -291,26 +534,11 @@ unsigned short virtio_queue_pop(struct virtio_queue *vq)
 
 bool virtio_queue_available(struct virtio_queue *vq)
 {
-	uint16_t val;
-	uint32_t ret;
-	uint64_t avail_pa;
-
-	if (!vq || !vq->vdev || !vq->desc_count ||
-	    !vq->vring.desc_pa || !vq->vring.avail_pa ||
-	    !vq->vring.used_pa) {
-		return false;
+	if (virtio_queue_is_packed(vq)) {
+		return virtio_queue_packed_available(vq);
 	}
 
-	avail_pa = vq->vring.avail_pa +
-		   offsetof(struct vring_avail, idx);
-	ret = my_guest_physical_read(vq->vdev, avail_pa, &val, sizeof(val));
-	if (ret != sizeof(val)) {
-		my_print(vq->vdev, "%s: read failed at avail_pa=0x%lx\n",
-			 __FUNCTION__, avail_pa);
-		return false;
-	}
-
-	return val != vq->last_avail_idx;
+	return virtio_queue_split_available(vq);
 }
 
 bool virtio_queue_should_signal(struct virtio_queue *vq)
@@ -321,6 +549,10 @@ bool virtio_queue_should_signal(struct virtio_queue *vq)
 
 	if (!vq) {
 		return false;
+	}
+
+	if (virtio_queue_is_packed(vq)) {
+		return virtio_queue_packed_should_signal(vq);
 	}
 
 	old_idx = vq->last_used_signalled;
@@ -379,6 +611,10 @@ int virtio_queue_setup(struct virtio_device *dev, struct virtio_queue *vq,
 	uint64_t gphys_addr, hphys_addr;
 	uint64_t gphys_size, avail_size;
 
+	if (!dev || !vq || !desc_count || desc_count > VIRTIO_QUEUE_MAX_DESC) {
+		return -1;
+	}
+
 	gphys_addr = guest_pfn * guest_page_size;
 	gphys_size = vring_size(desc_count, align);
 
@@ -394,6 +630,15 @@ int virtio_queue_setup(struct virtio_device *dev, struct virtio_queue *vq,
 	}
 
 	vring_init(&vq->vring, desc_count, NULL, gphys_addr, align);
+
+	vq->layout = VIRTIO_QUEUE_LAYOUT_SPLIT;
+	vq->last_avail_idx = 0;
+	vq->last_used_signalled = 0;
+	vq->last_used_signalled_valid = false;
+	vq->used_idx = 0;
+	vq->last_avail_wrap_counter = true;
+	vq->used_wrap_counter = true;
+	memset(vq->packed_pending, 0, sizeof(vq->packed_pending));
 
 	vq->desc_count = desc_count;
 	vq->align = align;
@@ -415,14 +660,21 @@ int virtio_queue_setup_split(struct virtio_device *dev, struct virtio_queue *vq,
 {
 	uint64_t used_end;
 
-	if (!dev || !vq || !desc_count || !desc_addr || !avail_addr || !used_addr)
+	if (!dev || !vq || !desc_count || desc_count > VIRTIO_QUEUE_MAX_DESC ||
+	    !desc_addr || !avail_addr || !used_addr)
 		return -1;
 
 	used_end = used_addr + sizeof(uint16_t) * 2 +
 		   sizeof(struct vring_used_elem) * desc_count;
 
+	vq->layout = VIRTIO_QUEUE_LAYOUT_SPLIT;
 	vq->last_avail_idx = 0;
 	vq->last_used_signalled = 0;
+	vq->last_used_signalled_valid = false;
+	vq->used_idx = 0;
+	vq->last_avail_wrap_counter = true;
+	vq->used_wrap_counter = true;
+	memset(vq->packed_pending, 0, sizeof(vq->packed_pending));
 
 	vq->vring.num = desc_count;
 	vq->vring.desc = NULL;
@@ -442,6 +694,65 @@ int virtio_queue_setup_split(struct virtio_device *dev, struct virtio_queue *vq,
 	vq->vdev = dev;
 
 	return 0;
+}
+
+static int virtio_queue_setup_packed(struct virtio_device *dev,
+				     struct virtio_queue *vq,
+				     uint64_t desc_addr,
+				     uint64_t driver_addr,
+				     uint64_t device_addr,
+				     uint32_t desc_count)
+{
+	uint64_t ring_end;
+
+	if (!dev || !vq || !desc_count || desc_count > VIRTIO_QUEUE_MAX_DESC ||
+	    !desc_addr || !driver_addr || !device_addr) {
+		return -1;
+	}
+
+	ring_end = desc_addr +
+		   (uint64_t)desc_count * sizeof(struct vring_packed_desc);
+
+	vq->layout = VIRTIO_QUEUE_LAYOUT_PACKED;
+	vq->last_avail_idx = 0;
+	vq->last_used_signalled = 0;
+	vq->last_used_signalled_valid = false;
+	vq->used_idx = 0;
+	vq->last_avail_wrap_counter = true;
+	vq->used_wrap_counter = true;
+	memset(vq->packed_pending, 0, sizeof(vq->packed_pending));
+
+	vq->vring.num = desc_count;
+	vq->vring.desc = NULL;
+	vq->vring.desc_pa = desc_addr;
+	vq->vring.avail = NULL;
+	vq->vring.avail_pa = driver_addr;
+	vq->vring.used = NULL;
+	vq->vring.used_pa = device_addr;
+
+	vq->desc_count = desc_count;
+	vq->align = 0;
+	vq->guest_pfn = 0;
+	vq->guest_page_size = 0;
+	vq->guest_addr = desc_addr;
+	vq->host_addr = 0;
+	vq->total_size = (ring_end > desc_addr) ? (ring_end - desc_addr) : 0;
+	vq->vdev = dev;
+
+	return 0;
+}
+
+int virtio_queue_setup_addr(struct virtio_device *dev, struct virtio_queue *vq,
+			    uint64_t desc_addr, uint64_t avail_addr,
+			    uint64_t used_addr, uint32_t desc_count)
+{
+	if (virtio_device_has_feature(dev, VMM_VIRTIO_F_RING_PACKED)) {
+		return virtio_queue_setup_packed(dev, vq, desc_addr, avail_addr,
+						 used_addr, desc_count);
+	}
+
+	return virtio_queue_setup_split(dev, vq, desc_addr, avail_addr,
+				      used_addr, desc_count);
 }
 
 static unsigned next_desc(struct virtio_queue *vq,
@@ -476,7 +787,8 @@ int virtio_queue_get_head_iovec(struct virtio_queue *vq,
 	uint16_t idx, max;
 	struct vring_desc desc;
 
-	if (!vq || !iov) {
+	if (!vq || !iov || virtio_queue_is_packed(vq)) {
+		rc = VIRTIO_EINVALID;
 		goto fail;
 	}
 
@@ -553,11 +865,125 @@ fail:
 	return rc;
 }
 
+static int virtio_queue_get_packed_iovec(struct virtio_queue *vq,
+					 struct virtio_iovec *iov,
+					 uint32_t *ret_iov_cnt,
+					 uint32_t *ret_total_len,
+					 uint16_t *ret_head)
+{
+	int rc = 0;
+	uint16_t idx, head = 0, ndescs = 0;
+	uint32_t total_len = 0;
+	struct vring_packed_desc desc;
+
+	if (ret_iov_cnt) {
+		*ret_iov_cnt = 0;
+	}
+	if (ret_total_len) {
+		*ret_total_len = 0;
+	}
+	if (ret_head) {
+		*ret_head = 0;
+	}
+
+	if (!vq || !iov || !virtio_queue_is_packed(vq) || !vq->desc_count) {
+		return VIRTIO_EINVALID;
+	}
+
+	if (!virtio_queue_packed_available(vq)) {
+		return VIRTIO_ENOTAVAIL;
+	}
+
+	idx = vq->last_avail_idx;
+
+	for (;;) {
+		rc = virtio_queue_get_packed_desc(vq, idx, &desc);
+		if (rc) {
+			my_print(vq->vdev, "%s: failed to get descriptor idx=%d error=%d\n",
+				 __FUNCTION__, idx, rc);
+			goto fail;
+		}
+
+		if (desc.flags & VMM_VRING_DESC_F_INDIRECT) {
+			my_print(vq->vdev, "%s: indirect descriptor not supported idx=%d\n",
+				 __FUNCTION__, idx);
+			rc = VIRTIO_ENOTSUPP;
+			goto fail;
+		}
+
+		if (ndescs >= vq->desc_count || ndescs >= VIRTIO_QUEUE_MAX_DESC) {
+			my_print(vq->vdev, "%s: descriptor chain too long idx=%d\n",
+				 __FUNCTION__, idx);
+			rc = VIRTIO_EOVERFLOW;
+			goto fail;
+		}
+
+		iov[ndescs].addr = desc.addr;
+		iov[ndescs].len = desc.len;
+		iov[ndescs].flags = (desc.flags & VMM_VRING_DESC_F_WRITE) ? 1 : 0;
+		total_len += desc.len;
+		head = desc.id;
+		ndescs++;
+
+		if (!(desc.flags & VMM_VRING_DESC_F_NEXT)) {
+			break;
+		}
+
+		idx++;
+		if (idx >= vq->desc_count) {
+			idx = 0;
+		}
+	}
+
+	if (head >= VIRTIO_QUEUE_MAX_DESC) {
+		my_print(vq->vdev, "%s: packed descriptor id out of range id=%u\n",
+			 __FUNCTION__, head);
+		rc = VIRTIO_ERANGE;
+		goto fail;
+	}
+
+	vq->packed_pending[head].valid = true;
+	vq->packed_pending[head].ndescs = ndescs;
+
+	virtio_queue_packed_advance(&vq->last_avail_idx,
+				    &vq->last_avail_wrap_counter,
+				    vq->desc_count, ndescs);
+
+	if (ret_iov_cnt) {
+		*ret_iov_cnt = ndescs;
+	}
+	if (ret_total_len) {
+		*ret_total_len = total_len;
+	}
+	if (ret_head) {
+		*ret_head = head;
+	}
+
+	return 0;
+
+fail:
+	if (ret_iov_cnt) {
+		*ret_iov_cnt = 0;
+	}
+	if (ret_total_len) {
+		*ret_total_len = 0;
+	}
+	if (ret_head) {
+		*ret_head = 0;
+	}
+	return rc;
+}
+
 int virtio_queue_get_iovec(struct virtio_queue *vq,
 			   struct virtio_iovec *iov,
 			   uint32_t *ret_iov_cnt, uint32_t *ret_total_len,
 			   uint16_t *ret_head)
 {
+	if (virtio_queue_is_packed(vq)) {
+		return virtio_queue_get_packed_iovec(vq, iov, ret_iov_cnt,
+						     ret_total_len, ret_head);
+	}
+
 	uint16_t head = virtio_queue_pop(vq);
 
 	return virtio_queue_get_head_iovec(vq, head, iov,

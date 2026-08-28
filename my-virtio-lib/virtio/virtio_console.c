@@ -97,6 +97,27 @@ static int virtio_console_init_vq(struct virtio_device *dev,
 	return rc;
 }
 
+static int virtio_console_init_vq_addr(struct virtio_device *dev, uint32_t vq,
+				       uint64_t desc_addr, uint64_t avail_addr,
+				       uint64_t used_addr, uint32_t size)
+{
+	int rc;
+	struct virtio_console_dev *cdev = dev->emu_data;
+
+	switch (vq) {
+	case VIRTIO_CONSOLE_RX_QUEUE:
+	case VIRTIO_CONSOLE_TX_QUEUE:
+		rc = virtio_queue_setup_addr(dev, &cdev->vqs[vq], desc_addr,
+					    avail_addr, used_addr, size);
+		break;
+	default:
+		rc = -1;
+		break;
+	};
+
+	return rc;
+}
+
 static void virtio_console_reset_vq(struct virtio_device *dev, uint32_t vq)
 {
 	struct virtio_console_dev *cdev = dev->emu_data;
@@ -376,6 +397,7 @@ static struct virtio_emulator virtio_console = {
 	.get_host_features      = virtio_console_get_host_features,
 	.set_guest_features     = virtio_console_set_guest_features,
 	.init_vq                = virtio_console_init_vq,
+	.init_vq_addr           = virtio_console_init_vq_addr,
 	.reset_vq               = virtio_console_reset_vq,
 	.get_pfn_vq             = virtio_console_get_pfn_vq,
 	.get_size_vq            = virtio_console_get_size_vq,

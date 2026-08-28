@@ -135,7 +135,7 @@ static int virtio_input_init_vq_addr(struct virtio_device *dev, uint32_t vq,
 	if (!virtio_input_queue_size(vq))
 		return -1;
 
-	return virtio_queue_setup_split(dev, &idev->vqs[vq].vq, desc_addr,
+	return virtio_queue_setup_addr(dev, &idev->vqs[vq].vq, desc_addr,
 					avail_addr, used_addr, size);
 }
 

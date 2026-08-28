@@ -9,6 +9,7 @@
 #include "virtio_console.h"
 #include "virtio_gpu.h"
 #include "virtio_input.h"
+#include "virtio_genirq.h"
 
 /*
  * Copyright (c) 2026 Beijing Institute of Open Source Chip (BOSC)
@@ -74,6 +75,12 @@ static struct virtio_wrapper_dev_info virtio_dev_info[] = {
 		virtio_tablet_emulator_create,
 		{ .class_code = 0x09, .subclass = 0x02,
 		  .device_cfg_len = sizeof(struct virtio_input_config) },
+	},
+	{
+		VIRTIO_EMU_NAME_GENIRQ,
+		virtio_genirq_emulator_create,
+		{ .class_code = 0xff, .subclass = 0x00,
+		  .device_cfg_len = sizeof(struct virtio_genirq_config) },
 	},
 };
 
@@ -152,14 +159,15 @@ void virtio_mmio_show_all(void)
 	virtio_mmio_dev_show_all();
 }
 
-virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
-				   struct libvirtio_ops *ops, void *priv)
+virtio_handle_t virtio_mmio_create_ex(const char *name, uint64_t start, int len,
+				      struct libvirtio_ops *ops, void *priv,
+				      const struct virtio_mmio_options *opts)
 {
 	struct virtio_mmio_dev *dev;
 	const struct virtio_wrapper_dev_info *dev_info;
 	struct virtio_emulator *emu;
 
-	dev = virtio_dev_mmio_create(start, start + len, ops);
+	dev = virtio_dev_mmio_create_ex(start, start + len, ops, opts);
 	if (!dev)
 		return NULL;
 
@@ -176,6 +184,12 @@ virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
 	virtio_mmio_dev_connect(name, dev, emu);
 
 	return dev;
+}
+
+virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
+				   struct libvirtio_ops *ops, void *priv)
+{
+	return virtio_mmio_create_ex(name, start, len, ops, priv, NULL);
 }
 
 virtio_handle_t virtio_pci_ecam_create(const char *name, uint64_t ecam_base,

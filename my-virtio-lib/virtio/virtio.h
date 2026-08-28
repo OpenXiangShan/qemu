@@ -47,6 +47,14 @@ struct virtio_emulator;
 
 struct virtio_device;
 
+#define VIRTIO_QUEUE_MAX_DESC	256
+
+enum virtio_queue_layout {
+	VIRTIO_QUEUE_LAYOUT_NONE = 0,
+	VIRTIO_QUEUE_LAYOUT_SPLIT,
+	VIRTIO_QUEUE_LAYOUT_PACKED,
+};
+
 struct addr_trans_pair {
 	struct list_head list;
 	uint64_t gphys;
@@ -68,11 +76,23 @@ struct virtio_iovec {
 	uint16_t flags;
 };
 
+struct virtio_queue_packed_pending {
+	bool valid;
+	uint16_t ndescs;
+};
+
 struct virtio_queue {
+	enum virtio_queue_layout layout;
+
 	/* The last_avail_idx field is an index to ->ring of struct vring_avail.
 	   It's where we assume the next request index is at.  */
 	uint16_t		last_avail_idx;
 	uint16_t		last_used_signalled;
+	bool			last_used_signalled_valid;
+	uint16_t		used_idx;
+	bool			last_avail_wrap_counter;
+	bool			used_wrap_counter;
+	struct virtio_queue_packed_pending packed_pending[VIRTIO_QUEUE_MAX_DESC];
 
 	struct vring		vring;
 
@@ -97,6 +117,7 @@ struct virtio_device {
 	struct virtio_emulator *emu;
 	void *emu_data;
 	uint64_t guest_features;
+	uint64_t transport_features;
 
 	struct virtio_notify *vn;
 	void *vn_data;
@@ -140,6 +161,9 @@ void virtio_clear_addr_trans_tables(struct virtio_device *dev);
 bool virtio_device_has_feature(struct virtio_device *dev, uint32_t feature);
 void virtio_device_set_guest_features(struct virtio_device *dev,
 				      uint32_t select, uint32_t features);
+uint64_t virtio_device_get_host_features(struct virtio_device *dev);
+void virtio_device_set_transport_features(struct virtio_device *dev,
+					  uint64_t features);
 
 unsigned int virtio_queue_desc_count(struct virtio_queue *vq);
 unsigned int virtio_queue_align(struct virtio_queue *vq);
@@ -164,6 +188,9 @@ int virtio_queue_setup(struct virtio_device *dev, struct virtio_queue *vq,
 int virtio_queue_setup_split(struct virtio_device *dev, struct virtio_queue *vq,
 			     uint64_t desc_addr, uint64_t avail_addr,
 			     uint64_t used_addr, uint32_t desc_count);
+int virtio_queue_setup_addr(struct virtio_device *dev, struct virtio_queue *vq,
+			    uint64_t desc_addr, uint64_t avail_addr,
+			    uint64_t used_addr, uint32_t desc_count);
 int virtio_queue_get_head_iovec(struct virtio_queue *vq,
 				uint16_t head, struct virtio_iovec *iov,
 				uint32_t *ret_iov_cnt, uint32_t *ret_total_len,
