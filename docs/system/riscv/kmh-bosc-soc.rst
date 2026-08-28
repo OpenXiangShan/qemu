@@ -26,7 +26,7 @@ devices:
 * ACLINT timer/software interrupt blocks
 * One UART
 * DesignWare PCIe host controllers
-* RISC-V IOMMU platform device MMIO block
+* RISC-V IOMMU platform device with PCIe DMA remapping
 * DesignWare AXI DMAC
 * QSPI, trace, debug, and several control windows as unimplemented MMIO
   devices
@@ -143,7 +143,11 @@ Machine options
 ``iommu-sys=auto|on|off``
    是否启用 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
    ``off``。需要建模 IOMMU MMIO 设备并在生成的设备树中加入
-   ``riscv,iommu`` 节点时，显式设置 ``iommu-sys=on``。
+   ``riscv,iommu`` 节点时，显式设置 ``iommu-sys=on``。如果同时启用
+   ``dw-pcie=on``，每个 PCIe root bus 的 DMA 会接入该 IOMMU，生成的
+   PCIe 节点也会加入覆盖完整 requester-ID 空间的 ``iommu-map``。该选项
+   不改变 DesignWare AXI DMAC 的 DMA 路径。使用外部 ``-dtb`` 时需要由
+   外部设备树提供相同的 IOMMU 描述；当前 QEMU 生成的 ACPI 尚不包含 RIMT。
 
 ``autotest-dtb=on|off``
    是否在 QEMU 生成的设备树中加入 automated-test 节点。默认 ``off``。
@@ -170,6 +174,8 @@ Generated device tree
 * 未选中的 die 不生成对应 memory、AIA、DMAC、PCIe 等节点。
 * ``dw-pcie=off`` 时不生成 PCIe 节点。
 * ``iommu-sys=off`` 或默认 ``auto`` 时不生成 IOMMU 节点。
+* 同时设置 ``dw-pcie=on,iommu-sys=on`` 时，每个 PCIe 节点生成指向
+  system IOMMU 的 ``iommu-map``。
 * 未选中的 application hart 会保留 CPU 节点，但 ``status`` 为
   ``disabled``。
 * ``/chosen/opensbi-config/cold-boot-harts`` 只指向第一个被选中的
