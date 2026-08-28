@@ -5,6 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define VIRTIO_BACKEND_PRINTF(fmt, args) \
+	__attribute__((format(printf, fmt, args)))
+#else
+#define VIRTIO_BACKEND_PRINTF(fmt, args)
+#endif
+
 typedef void *virtio_backend_handle_t;
 
 enum virtio_backend_type {
@@ -63,7 +70,8 @@ struct virtio_backend_input_event {
 struct virtio_backend_callbacks {
 	void (*event)(void *opaque, virtio_backend_handle_t handle,
 		      unsigned int events);
-	void (*log)(void *opaque, int level, const char *fmt, va_list ap);
+	void (*log)(void *opaque, int level, const char *fmt, va_list ap)
+		VIRTIO_BACKEND_PRINTF(3, 0);
 };
 
 struct virtio_backend_config {
