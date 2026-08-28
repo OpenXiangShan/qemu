@@ -135,7 +135,9 @@ TEST_SRCS := \
 	tests/iommu_external_smoke.c \
 	tests/rtl_template_smoke.c
 ifeq ($(IO_SYSTEM_RTL_SYSTEM),1)
-TEST_SRCS += tests/rtl_system_smoke.c
+TEST_SRCS += \
+	tests/rtl_system_smoke.c \
+	tests/rtl_system_packed_smoke.c
 endif
 
 CORE_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))

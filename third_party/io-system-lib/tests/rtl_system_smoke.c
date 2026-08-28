@@ -1,6 +1,7 @@
 #include "io_system.h"
 
 #include <assert.h>
+#include <stdbool.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -50,6 +51,7 @@
 #define VIRTIO_MMIO_VERSION           0x004
 #define VIRTIO_MMIO_DEVICE_ID         0x008
 #define VIRTIO_MMIO_HOST_FEATURES     0x010
+#define VIRTIO_MMIO_HOST_FEATURES_SEL 0x014
 #define VIRTIO_MMIO_GUEST_FEATURES    0x020
 #define VIRTIO_MMIO_GUEST_FEATURES_SEL 0x024
 #define VIRTIO_MMIO_GUEST_PAGE_SIZE   0x028
@@ -58,20 +60,34 @@
 #define VIRTIO_MMIO_QUEUE_NUM         0x038
 #define VIRTIO_MMIO_QUEUE_ALIGN       0x03c
 #define VIRTIO_MMIO_QUEUE_PFN         0x040
+#define VIRTIO_MMIO_QUEUE_READY       0x044
 #define VIRTIO_MMIO_QUEUE_NOTIFY      0x050
 #define VIRTIO_MMIO_INTERRUPT_STATUS  0x060
+#define VIRTIO_MMIO_INTERRUPT_ACK     0x064
 #define VIRTIO_MMIO_STATUS            0x070
+#define VIRTIO_MMIO_QUEUE_DESC_LOW    0x080
+#define VIRTIO_MMIO_QUEUE_AVAIL_LOW   0x090
+#define VIRTIO_MMIO_QUEUE_USED_LOW    0x0a0
 #define VIRTIO_MMIO_CONFIG            0x100
 
 #define VIRTIO_BLK_T_OUT              1u
 #define VIRTIO_BLK_S_OK               0u
+#define VIRTIO_F_VERSION_1            32u
+#define VIRTIO_F_RING_PACKED          34u
 #define VRING_DESC_F_NEXT             1u
 #define VRING_DESC_F_WRITE            2u
+#define VRING_PACKED_DESC_F_AVAIL     (1u << 7)
+#define VRING_PACKED_DESC_F_USED      (1u << 15)
+#define VRING_PACKED_EVENT_FLAG_ENABLE 0u
+#define VRING_PACKED_EVENT_FLAG_DESC  2u
+#define VRING_PACKED_EVENT_F_WRAP_CTR 15u
 
 #define TEST_PAGE_SIZE 4096u
 #define TEST_QUEUE_NUM 128u
 #define TEST_QUEUE_BASE (TEST_MEM_BASE + 0x1000)
 #define TEST_USED_BASE  (TEST_MEM_BASE + 0x2000)
+#define TEST_PACKED_DRIVER_EVENT_BASE (TEST_MEM_BASE + 0x3000)
+#define TEST_PACKED_DEVICE_EVENT_BASE (TEST_MEM_BASE + 0x3010)
 #define TEST_REQ_BASE   (TEST_MEM_BASE + 0x4000)
 #define TEST_MSI_ADDR   (TEST_MEM_BASE + 0xf000)
 #define TEST_IMAGE_SIZE 4096u
@@ -185,6 +201,7 @@ static uint64_t test_mem_read(TestHost *host, uint64_t addr, size_t size)
     return load_le(host->mem + (addr - TEST_MEM_BASE), size);
 }
 
+#ifndef IO_RTL_SYSTEM_SMOKE_PACKED
 static void test_write_desc(TestHost *host, unsigned int index,
                             uint64_t addr, uint32_t len,
                             uint16_t flags, uint16_t next)
@@ -196,21 +213,22 @@ static void test_write_desc(TestHost *host, unsigned int index,
     test_mem_write(host, desc + 12, flags, 2);
     test_mem_write(host, desc + 14, next, 2);
 }
-
-static void run_virtio_blk_smoke(IoSystem *system, TestHost *host)
+#else
+static void test_write_packed_desc(TestHost *host, unsigned int index,
+                                   uint64_t addr, uint32_t len,
+                                   uint16_t id, uint16_t flags)
 {
-    uint64_t avail = TEST_QUEUE_BASE + TEST_QUEUE_NUM * 16u;
-    uint32_t features;
+    uint64_t desc = TEST_QUEUE_BASE + index * 16u;
 
-    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
-                       VIRTIO_MMIO_MAGIC_VALUE) == 0x74726976u);
-    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
-                       VIRTIO_MMIO_VERSION) == 1u);
-    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
-                       VIRTIO_MMIO_DEVICE_ID) == 2u);
-    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
-                       VIRTIO_MMIO_CONFIG) == TEST_IMAGE_SIZE / 512u);
+    test_mem_write(host, desc, addr, 8);
+    test_mem_write(host, desc + 8, len, 4);
+    test_mem_write(host, desc + 12, id, 2);
+    test_mem_write(host, desc + 14, flags, 2);
+}
+#endif
 
+static void setup_virtio_blk_irq(IoSystem *system)
+{
     q2io_write32(system, IO_RTL_SYSTEM_APLIC_M_BASE +
                  APLIC_SMSICFGADDR, (uint32_t)(TEST_MSI_ADDR >> 12));
     q2io_write32(system, IO_RTL_SYSTEM_APLIC_M_BASE +
@@ -248,6 +266,24 @@ static void run_virtio_blk_smoke(IoSystem *system, TestHost *host)
            IO_RTL_SYSTEM_BLK_EIID);
     assert(q2io_read32(system, IO_RTL_SYSTEM_APLIC_S_BASE + APLIC_SETIE) &
            (1u << IO_RTL_SYSTEM_BLK_IRQ));
+}
+
+#ifndef IO_RTL_SYSTEM_SMOKE_PACKED
+static void run_virtio_blk_smoke(IoSystem *system, TestHost *host)
+{
+    uint64_t avail = TEST_QUEUE_BASE + TEST_QUEUE_NUM * 16u;
+    uint32_t features;
+
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_MAGIC_VALUE) == 0x74726976u);
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_VERSION) == 1u);
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_DEVICE_ID) == 2u);
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_CONFIG) == TEST_IMAGE_SIZE / 512u);
+
+    setup_virtio_blk_irq(system);
 
     features = q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
                            VIRTIO_MMIO_HOST_FEATURES);
@@ -303,6 +339,158 @@ static void run_virtio_blk_smoke(IoSystem *system, TestHost *host)
     assert(test_mem_read(host, TEST_MSI_ADDR, 4) ==
            IO_RTL_SYSTEM_BLK_EIID);
 }
+#else
+static void run_virtio_blk_packed_smoke(IoSystem *system, TestHost *host)
+{
+    uint32_t features0;
+    uint32_t features1;
+    uint32_t packed_features1;
+    uint16_t avail_flags = VRING_PACKED_DESC_F_AVAIL;
+
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_MAGIC_VALUE) == 0x74726976u);
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_VERSION) == 2u);
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_DEVICE_ID) == 2u);
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_CONFIG) == TEST_IMAGE_SIZE / 512u);
+
+    setup_virtio_blk_irq(system);
+
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_HOST_FEATURES_SEL, 0);
+    features0 = q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                            VIRTIO_MMIO_HOST_FEATURES);
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_HOST_FEATURES_SEL, 1);
+    features1 = q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                            VIRTIO_MMIO_HOST_FEATURES);
+    assert(features1 & (1u << (VIRTIO_F_VERSION_1 - 32u)));
+    assert(features1 & (1u << (VIRTIO_F_RING_PACKED - 32u)));
+
+    packed_features1 = (1u << (VIRTIO_F_VERSION_1 - 32u)) |
+                       (1u << (VIRTIO_F_RING_PACKED - 32u));
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_GUEST_FEATURES_SEL, 0);
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_GUEST_FEATURES, features0);
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_GUEST_FEATURES_SEL, 1);
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_GUEST_FEATURES, packed_features1);
+
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE + VIRTIO_MMIO_QUEUE_SEL, 0);
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_QUEUE_NUM_MAX) == 128u);
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE + VIRTIO_MMIO_QUEUE_NUM,
+                 TEST_QUEUE_NUM);
+    write_addr64(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_QUEUE_DESC_LOW, TEST_QUEUE_BASE);
+    write_addr64(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_QUEUE_AVAIL_LOW, TEST_PACKED_DRIVER_EVENT_BASE);
+    write_addr64(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_QUEUE_USED_LOW, TEST_PACKED_DEVICE_EVENT_BASE);
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE + VIRTIO_MMIO_QUEUE_READY, 1);
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE + VIRTIO_MMIO_STATUS, 0x0f);
+
+    memset(host->mem + (TEST_QUEUE_BASE - TEST_MEM_BASE), 0,
+           TEST_PAGE_SIZE * 3u);
+    memset(host->mem + (TEST_REQ_BASE - TEST_MEM_BASE), 0, 0x1000);
+    test_mem_write(host, TEST_PACKED_DRIVER_EVENT_BASE + 2,
+                   VRING_PACKED_EVENT_FLAG_ENABLE, 2);
+    test_mem_write(host, TEST_REQ_BASE, VIRTIO_BLK_T_OUT, 4);
+    test_mem_write(host, TEST_REQ_BASE + 8, 0, 8);
+    memcpy(host->mem + (TEST_REQ_BASE + 16 - TEST_MEM_BASE),
+           "rtl-system-packed-blk", sizeof("rtl-system-packed-blk"));
+    test_mem_write(host, TEST_REQ_BASE + 16 + 512, 0xff, 1);
+
+    test_write_packed_desc(host, 0, TEST_REQ_BASE, 16, 0,
+                           VRING_DESC_F_NEXT | avail_flags);
+    test_write_packed_desc(host, 1, TEST_REQ_BASE + 16, 512, 0,
+                           VRING_DESC_F_NEXT | avail_flags);
+    test_write_packed_desc(host, 2, TEST_REQ_BASE + 16 + 512, 1, 0,
+                           VRING_DESC_F_WRITE | avail_flags);
+
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE + VIRTIO_MMIO_QUEUE_NOTIFY,
+                 0);
+    for (int i = 0; i < 64; i++) {
+        assert(io_system_service(system, 0) == IO_SYSTEM_OK);
+    }
+
+    assert(test_mem_read(host, TEST_REQ_BASE + 16 + 512, 1) ==
+           VIRTIO_BLK_S_OK);
+    assert(test_mem_read(host, TEST_QUEUE_BASE + 12, 2) == 0u);
+    assert(test_mem_read(host, TEST_QUEUE_BASE + 8, 4) == 512u);
+    assert((test_mem_read(host, TEST_QUEUE_BASE + 14, 2) &
+            (VRING_PACKED_DESC_F_AVAIL | VRING_PACKED_DESC_F_USED)) ==
+           (VRING_PACKED_DESC_F_AVAIL | VRING_PACKED_DESC_F_USED));
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_INTERRUPT_STATUS) & 1u);
+    for (int i = 0; i < 8; i++) {
+        assert(io_system_service(system, 0) == IO_SYSTEM_OK);
+    }
+    assert(test_mem_read(host, TEST_MSI_ADDR, 4) ==
+           IO_RTL_SYSTEM_BLK_EIID);
+
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE +
+                 VIRTIO_MMIO_INTERRUPT_ACK, 1);
+    test_mem_write(host, TEST_MSI_ADDR, 0, 4);
+    test_mem_write(host, TEST_PACKED_DRIVER_EVENT_BASE,
+                   3u | (1u << VRING_PACKED_EVENT_F_WRAP_CTR), 2);
+    test_mem_write(host, TEST_PACKED_DRIVER_EVENT_BASE + 2,
+                   VRING_PACKED_EVENT_FLAG_DESC, 2);
+
+    test_mem_write(host, TEST_REQ_BASE + 0x800, VIRTIO_BLK_T_OUT, 4);
+    test_mem_write(host, TEST_REQ_BASE + 0x808, 1, 8);
+    memset(host->mem + (TEST_REQ_BASE + 0x810 - TEST_MEM_BASE), 0x5a, 512);
+    test_mem_write(host, TEST_REQ_BASE + 0xa10, 0xff, 1);
+
+    for (uint32_t n = 0; n < TEST_QUEUE_NUM; n++) {
+        uint32_t index = (3u + n) % TEST_QUEUE_NUM;
+        bool wrapped = index < 3u;
+        uint16_t flags = wrapped ? VRING_PACKED_DESC_F_USED :
+                                   VRING_PACKED_DESC_F_AVAIL;
+        uint64_t addr = TEST_REQ_BASE + 0x810;
+        uint32_t len = 0;
+
+        if (n == 0) {
+            addr = TEST_REQ_BASE + 0x800;
+            len = 16;
+        } else if (n == 1) {
+            len = 512;
+        } else if (n == TEST_QUEUE_NUM - 1u) {
+            addr = TEST_REQ_BASE + 0xa10;
+            len = 1;
+            flags |= VRING_DESC_F_WRITE;
+        }
+        if (n != TEST_QUEUE_NUM - 1u) {
+            flags |= VRING_DESC_F_NEXT;
+        }
+        test_write_packed_desc(host, index, addr, len, 1, flags);
+    }
+
+    q2io_write32(system, IO_RTL_SYSTEM_BLK_BASE + VIRTIO_MMIO_QUEUE_NOTIFY,
+                 0);
+    for (int i = 0; i < 64; i++) {
+        assert(io_system_service(system, 0) == IO_SYSTEM_OK);
+    }
+
+    assert(test_mem_read(host, TEST_REQ_BASE + 0xa10, 1) ==
+           VIRTIO_BLK_S_OK);
+    assert(test_mem_read(host, TEST_QUEUE_BASE + 3u * 16u + 12u, 2) == 1u);
+    assert((test_mem_read(host, TEST_QUEUE_BASE + 3u * 16u + 14u, 2) &
+            (VRING_PACKED_DESC_F_AVAIL | VRING_PACKED_DESC_F_USED)) ==
+           (VRING_PACKED_DESC_F_AVAIL | VRING_PACKED_DESC_F_USED));
+    assert(q2io_read32(system, IO_RTL_SYSTEM_BLK_BASE +
+                       VIRTIO_MMIO_INTERRUPT_STATUS) & 1u);
+    for (int i = 0; i < 8; i++) {
+        assert(io_system_service(system, 0) == IO_SYSTEM_OK);
+    }
+    assert(test_mem_read(host, TEST_MSI_ADDR, 4) ==
+           IO_RTL_SYSTEM_BLK_EIID);
+}
+#endif
 
 int main(void)
 {
@@ -320,6 +508,9 @@ int main(void)
         .backend_library_path = getenv("IO_RTL_SYSTEM_API_SO"),
         .backend_vcs_libdir = getenv("IO_RTL_SYSTEM_VCS_LIBDIR"),
         .my_virtio_blk_enabled = true,
+#ifdef IO_RTL_SYSTEM_SMOKE_PACKED
+        .my_virtio_blk_packed = true,
+#endif
         .my_virtio_blk_image_path = image_path,
         .trace_capacity = 256,
     };
@@ -373,7 +564,11 @@ int main(void)
     assert(!(status & IO_RTL_SYSTEM_DMAC_STAT_ERROR));
     assert(memcmp(host.mem + (src - TEST_MEM_BASE),
                   host.mem + (dst - TEST_MEM_BASE), size) == 0);
+#ifdef IO_RTL_SYSTEM_SMOKE_PACKED
+    run_virtio_blk_packed_smoke(system, &host);
+#else
     run_virtio_blk_smoke(system, &host);
+#endif
     assert(io_system_trace_count(system) >= 8);
 
     io_system_destroy(system);
