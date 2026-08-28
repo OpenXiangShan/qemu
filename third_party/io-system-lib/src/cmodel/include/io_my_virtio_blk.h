@@ -20,6 +20,7 @@ typedef struct IoMyVirtioBlkConfig {
     uint32_t irq;
     uint32_t requester_id;
     bool use_iommu;
+    bool packed;
     const char *image_path;
 } IoMyVirtioBlkConfig;
 

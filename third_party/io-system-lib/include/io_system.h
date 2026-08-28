@@ -106,6 +106,7 @@ typedef struct IoSystemConfig {
     const char *pcie_secondary_bus_name;
     const char *pcie_root_bus_path;
     bool my_virtio_blk_enabled;
+    bool my_virtio_blk_packed;
     uint32_t my_virtio_blk_requester_id;
     bool my_virtio_blk_use_iommu;
     const char *my_virtio_blk_image_path;

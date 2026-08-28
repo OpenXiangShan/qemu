@@ -142,6 +142,7 @@ static IoSystemStatus io_cmodel_create_my_virtio_blk(
             .irq = blk->irq,
             .requester_id = system->config.my_virtio_blk_requester_id,
             .use_iommu = system->config.my_virtio_blk_use_iommu,
+            .packed = system->config.my_virtio_blk_packed,
             .image_path = system->config.my_virtio_blk_image_path,
         }, devices->aplic_s);
     return devices->my_virtio_blk ? IO_SYSTEM_OK : IO_SYSTEM_ERR_IO;

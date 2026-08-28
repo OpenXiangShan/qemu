@@ -23,7 +23,8 @@ module virtio_gbus_mmio_blk_top (
 );
 
   localparam logic [31:0] VIRTIO_MMIO_MAGIC_VALUE = 32'h7472_6976;
-  localparam logic [31:0] VIRTIO_MMIO_VERSION     = 32'h0000_0001;
+  localparam logic [31:0] VIRTIO_MMIO_VERSION_LEGACY = 32'h0000_0001;
+  localparam logic [31:0] VIRTIO_MMIO_VERSION_MODERN = 32'h0000_0002;
   localparam logic [31:0] VIRTIO_MMIO_DEVICE_ID   = 32'h0000_0002;
   localparam logic [31:0] VIRTIO_MMIO_VENDOR_ID   = 32'h5253_5658;
 
@@ -46,6 +47,12 @@ module virtio_gbus_mmio_blk_top (
   localparam logic [11:0] REG_INTERRUPT_STATUS    = 12'h060;
   localparam logic [11:0] REG_INTERRUPT_ACK       = 12'h064;
   localparam logic [11:0] REG_STATUS              = 12'h070;
+  localparam logic [11:0] REG_QUEUE_DESC_LOW      = 12'h080;
+  localparam logic [11:0] REG_QUEUE_DESC_HIGH     = 12'h084;
+  localparam logic [11:0] REG_QUEUE_AVAIL_LOW     = 12'h090;
+  localparam logic [11:0] REG_QUEUE_AVAIL_HIGH    = 12'h094;
+  localparam logic [11:0] REG_QUEUE_USED_LOW      = 12'h0a0;
+  localparam logic [11:0] REG_QUEUE_USED_HIGH     = 12'h0a4;
   localparam logic [11:0] REG_CONFIG_GENERATION   = 12'h0fc;
   localparam logic [11:0] REG_CONFIG              = 12'h100;
 
@@ -56,12 +63,25 @@ module virtio_gbus_mmio_blk_top (
   localparam logic [31:0] GBUS_DRIVER_FEATURES_1  = 32'h0018;
   localparam logic [31:0] GBUS_GUEST_PAGE_SIZE    = 32'h001c;
   localparam logic [31:0] GBUS_RESET_SEQ          = 32'h0020;
+  localparam logic [31:0] GBUS_TRANSPORT_FEATURES_0 = 32'h0024;
+  localparam logic [31:0] GBUS_TRANSPORT_FEATURES_1 = 32'h0028;
   localparam logic [31:0] GBUS_BLK_CAPACITY_LOW   = 32'h0040;
   localparam logic [31:0] GBUS_BLK_CAPACITY_HIGH  = 32'h0044;
   localparam logic [31:0] GBUS_BLK_SEG_MAX        = 32'h0048;
   localparam logic [31:0] GBUS_BLK_SIZE           = 32'h004c;
   localparam logic [31:0] GBUS_QUEUE_BASE         = 32'h0100;
-  localparam logic [31:0] GBUS_QUEUE_STRIDE       = 32'h0020;
+  localparam logic [31:0] GBUS_QUEUE_STRIDE       = 32'h0040;
+  localparam logic [31:0] GBUS_QUEUE_NUM          = 32'h0000;
+  localparam logic [31:0] GBUS_QUEUE_ALIGN        = 32'h0004;
+  localparam logic [31:0] GBUS_QUEUE_PFN          = 32'h0008;
+  localparam logic [31:0] GBUS_QUEUE_READY        = 32'h000c;
+  localparam logic [31:0] GBUS_QUEUE_NOTIFY_SEQ   = 32'h0010;
+  localparam logic [31:0] GBUS_QUEUE_DESC_LOW     = 32'h0014;
+  localparam logic [31:0] GBUS_QUEUE_DESC_HIGH    = 32'h0018;
+  localparam logic [31:0] GBUS_QUEUE_AVAIL_LOW    = 32'h001c;
+  localparam logic [31:0] GBUS_QUEUE_AVAIL_HIGH   = 32'h0020;
+  localparam logic [31:0] GBUS_QUEUE_USED_LOW     = 32'h0024;
+  localparam logic [31:0] GBUS_QUEUE_USED_HIGH    = 32'h0028;
   localparam logic [31:0] GBUS_HOST_IRQ_SET       = 32'h0200;
 
   localparam int unsigned NUM_QUEUES              = 3;
@@ -75,6 +95,7 @@ module virtio_gbus_mmio_blk_top (
   localparam int unsigned VIRTIO_BLK_F_BLK_SIZE   = 6;
   localparam int unsigned VIRTIO_BLK_F_FLUSH      = 9;
   localparam int unsigned VIRTIO_RING_F_EVENT_IDX = 29;
+  localparam int unsigned VIRTIO_F_VERSION_1_SEL1 = 0;
 
   localparam logic [31:0] DEVICE_FEATURES_0 =
     (32'h1 << VIRTIO_BLK_F_SEG_MAX) |
@@ -86,6 +107,8 @@ module virtio_gbus_mmio_blk_top (
   logic [31:0] driver_features_sel_reg;
   logic [31:0] driver_features_0_reg;
   logic [31:0] driver_features_1_reg;
+  logic [31:0] transport_features_0_reg;
+  logic [31:0] transport_features_1_reg;
   logic [31:0] guest_page_size_reg;
   logic [31:0] queue_sel_reg;
   logic [31:0] interrupt_status_reg;
@@ -100,6 +123,9 @@ module virtio_gbus_mmio_blk_top (
   logic [31:0] queue_pfn_reg        [NUM_QUEUES];
   logic [31:0] queue_ready_reg      [NUM_QUEUES];
   logic [31:0] queue_notify_seq_reg [NUM_QUEUES];
+  logic [63:0] queue_desc_reg       [NUM_QUEUES];
+  logic [63:0] queue_avail_reg      [NUM_QUEUES];
+  logic [63:0] queue_used_reg       [NUM_QUEUES];
 
   logic        publish_pending_valid_reg;
   logic [31:0] publish_pending_addr_reg;
@@ -153,11 +179,17 @@ module virtio_gbus_mmio_blk_top (
       mmio_word = 32'h0000_0000;
       unique case (reg_addr)
         REG_MAGIC_VALUE:         mmio_word = VIRTIO_MMIO_MAGIC_VALUE;
-        REG_VERSION:             mmio_word = VIRTIO_MMIO_VERSION;
+        REG_VERSION:             mmio_word = transport_features_1_reg[VIRTIO_F_VERSION_1_SEL1] ?
+                                             VIRTIO_MMIO_VERSION_MODERN :
+                                             VIRTIO_MMIO_VERSION_LEGACY;
         REG_DEVICE_ID:           mmio_word = VIRTIO_MMIO_DEVICE_ID;
         REG_VENDOR_ID:           mmio_word = VIRTIO_MMIO_VENDOR_ID;
         REG_DEVICE_FEATURES:     mmio_word = (device_features_sel_reg == 32'd0) ?
-                                             DEVICE_FEATURES_0 : 32'h0000_0000;
+                                             (DEVICE_FEATURES_0 |
+                                              transport_features_0_reg) :
+                                             (device_features_sel_reg == 32'd1) ?
+                                             transport_features_1_reg :
+                                             32'h0000_0000;
         REG_DEVICE_FEATURES_SEL: mmio_word = device_features_sel_reg;
         REG_DRIVER_FEATURES:     mmio_word = (driver_features_sel_reg == 32'd0) ?
                                              driver_features_0_reg :
@@ -171,6 +203,12 @@ module virtio_gbus_mmio_blk_top (
         REG_QUEUE_ALIGN:         mmio_word = queue_valid ? queue_align_reg[q] : 32'h0;
         REG_QUEUE_PFN:           mmio_word = queue_valid ? queue_pfn_reg[q] : 32'h0;
         REG_QUEUE_READY:         mmio_word = queue_valid ? queue_ready_reg[q] : 32'h0;
+        REG_QUEUE_DESC_LOW:      mmio_word = queue_valid ? queue_desc_reg[q][31:0] : 32'h0;
+        REG_QUEUE_DESC_HIGH:     mmio_word = queue_valid ? queue_desc_reg[q][63:32] : 32'h0;
+        REG_QUEUE_AVAIL_LOW:     mmio_word = queue_valid ? queue_avail_reg[q][31:0] : 32'h0;
+        REG_QUEUE_AVAIL_HIGH:    mmio_word = queue_valid ? queue_avail_reg[q][63:32] : 32'h0;
+        REG_QUEUE_USED_LOW:      mmio_word = queue_valid ? queue_used_reg[q][31:0] : 32'h0;
+        REG_QUEUE_USED_HIGH:     mmio_word = queue_valid ? queue_used_reg[q][63:32] : 32'h0;
         REG_INTERRUPT_STATUS:    mmio_word = interrupt_status_reg;
         REG_STATUS:              mmio_word = status_reg;
         REG_CONFIG_GENERATION:   mmio_word = 32'h0000_0000;
@@ -236,6 +274,9 @@ module virtio_gbus_mmio_blk_top (
         queue_pfn_reg[i]        <= 32'h0000_0000;
         queue_ready_reg[i]      <= 32'h0000_0000;
         queue_notify_seq_reg[i] <= 32'h0000_0000;
+        queue_desc_reg[i]       <= 64'h0000_0000_0000_0000;
+        queue_avail_reg[i]      <= 64'h0000_0000_0000_0000;
+        queue_used_reg[i]       <= 64'h0000_0000_0000_0000;
       end
     end
   endtask
@@ -243,6 +284,8 @@ module virtio_gbus_mmio_blk_top (
   always_ff @(posedge clock or posedge reset) begin
     if (reset) begin
       clear_driver_state();
+      transport_features_0_reg <= 32'h0000_0000;
+      transport_features_1_reg <= 32'h0000_0000;
       guest_page_size_reg <= 32'h0000_0000;
       reset_seq_reg <= 32'h0000_0000;
       capacity_reg  <= 64'h0000_0000_0000_0000;
@@ -303,7 +346,8 @@ module virtio_gbus_mmio_blk_top (
             if (queue_sel_reg < NUM_QUEUES) begin
               queue_num_reg[q] <= new_word;
               publish_sysbus(GBUS_QUEUE_BASE +
-                             queue_sel_reg * GBUS_QUEUE_STRIDE,
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_NUM,
                              new_word);
             end
           end
@@ -311,7 +355,8 @@ module virtio_gbus_mmio_blk_top (
             if (queue_sel_reg < NUM_QUEUES) begin
               queue_align_reg[q] <= new_word;
               publish_sysbus(GBUS_QUEUE_BASE +
-                             queue_sel_reg * GBUS_QUEUE_STRIDE + 32'h04,
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_ALIGN,
                              new_word);
             end
           end
@@ -320,10 +365,12 @@ module virtio_gbus_mmio_blk_top (
               queue_pfn_reg[q] <= new_word;
               queue_ready_reg[q] <= {31'h0, (new_word != 32'h0000_0000)};
               publish_sysbus(GBUS_QUEUE_BASE +
-                             queue_sel_reg * GBUS_QUEUE_STRIDE + 32'h08,
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_PFN,
                              new_word);
               publish_sysbus_later(
-                GBUS_QUEUE_BASE + queue_sel_reg * GBUS_QUEUE_STRIDE + 32'h0c,
+                GBUS_QUEUE_BASE + queue_sel_reg * GBUS_QUEUE_STRIDE +
+                GBUS_QUEUE_READY,
                 {31'h0, (new_word != 32'h0000_0000)});
             end
           end
@@ -331,8 +378,63 @@ module virtio_gbus_mmio_blk_top (
             if (queue_sel_reg < NUM_QUEUES) begin
               queue_ready_reg[q] <= {31'h0, new_word[0]};
               publish_sysbus(GBUS_QUEUE_BASE +
-                             queue_sel_reg * GBUS_QUEUE_STRIDE + 32'h0c,
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_READY,
                              {31'h0, new_word[0]});
+            end
+          end
+          REG_QUEUE_DESC_LOW: begin
+            if (queue_sel_reg < NUM_QUEUES) begin
+              queue_desc_reg[q][31:0] <= new_word;
+              publish_sysbus(GBUS_QUEUE_BASE +
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_DESC_LOW,
+                             new_word);
+            end
+          end
+          REG_QUEUE_DESC_HIGH: begin
+            if (queue_sel_reg < NUM_QUEUES) begin
+              queue_desc_reg[q][63:32] <= new_word;
+              publish_sysbus(GBUS_QUEUE_BASE +
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_DESC_HIGH,
+                             new_word);
+            end
+          end
+          REG_QUEUE_AVAIL_LOW: begin
+            if (queue_sel_reg < NUM_QUEUES) begin
+              queue_avail_reg[q][31:0] <= new_word;
+              publish_sysbus(GBUS_QUEUE_BASE +
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_AVAIL_LOW,
+                             new_word);
+            end
+          end
+          REG_QUEUE_AVAIL_HIGH: begin
+            if (queue_sel_reg < NUM_QUEUES) begin
+              queue_avail_reg[q][63:32] <= new_word;
+              publish_sysbus(GBUS_QUEUE_BASE +
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_AVAIL_HIGH,
+                             new_word);
+            end
+          end
+          REG_QUEUE_USED_LOW: begin
+            if (queue_sel_reg < NUM_QUEUES) begin
+              queue_used_reg[q][31:0] <= new_word;
+              publish_sysbus(GBUS_QUEUE_BASE +
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_USED_LOW,
+                             new_word);
+            end
+          end
+          REG_QUEUE_USED_HIGH: begin
+            if (queue_sel_reg < NUM_QUEUES) begin
+              queue_used_reg[q][63:32] <= new_word;
+              publish_sysbus(GBUS_QUEUE_BASE +
+                             queue_sel_reg * GBUS_QUEUE_STRIDE +
+                             GBUS_QUEUE_USED_HIGH,
+                             new_word);
             end
           end
           REG_QUEUE_NOTIFY: begin
@@ -340,7 +442,8 @@ module virtio_gbus_mmio_blk_top (
               queue_notify_seq_reg[new_word[$clog2(NUM_QUEUES)-1:0]] <=
                 queue_notify_seq_reg[new_word[$clog2(NUM_QUEUES)-1:0]] + 32'd1;
               publish_sysbus(
-                GBUS_QUEUE_BASE + new_word * GBUS_QUEUE_STRIDE + 32'h10,
+                GBUS_QUEUE_BASE + new_word * GBUS_QUEUE_STRIDE +
+                GBUS_QUEUE_NOTIFY_SEQ,
                 queue_notify_seq_reg[
                   new_word[$clog2(NUM_QUEUES)-1:0]] + 32'd1);
             end
@@ -365,6 +468,10 @@ module virtio_gbus_mmio_blk_top (
 
       if (todut_en) begin
         unique case (todut_addr)
+          GBUS_TRANSPORT_FEATURES_0:
+            transport_features_0_reg <= todut_data;
+          GBUS_TRANSPORT_FEATURES_1:
+            transport_features_1_reg <= todut_data;
           GBUS_BLK_CAPACITY_LOW:  capacity_reg[31:0]  <= todut_data;
           GBUS_BLK_CAPACITY_HIGH: capacity_reg[63:32] <= todut_data;
           GBUS_BLK_SEG_MAX:       seg_max_reg <= todut_data;

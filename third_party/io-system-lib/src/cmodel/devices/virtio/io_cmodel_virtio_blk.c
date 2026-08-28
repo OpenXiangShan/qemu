@@ -19,7 +19,14 @@
 #define IO_VIRTIO_MMIO_QUEUE_NUM 0x38
 #define IO_VIRTIO_MMIO_QUEUE_ALIGN 0x3c
 #define IO_VIRTIO_MMIO_QUEUE_PFN 0x40
+#define IO_VIRTIO_MMIO_QUEUE_READY 0x44
 #define IO_VIRTIO_MMIO_INTERRUPT_ACK 0x64
+#define IO_VIRTIO_MMIO_QUEUE_DESC_LOW 0x80
+#define IO_VIRTIO_MMIO_QUEUE_DESC_HIGH 0x84
+#define IO_VIRTIO_MMIO_QUEUE_AVAIL_LOW 0x90
+#define IO_VIRTIO_MMIO_QUEUE_AVAIL_HIGH 0x94
+#define IO_VIRTIO_MMIO_QUEUE_USED_LOW 0xa0
+#define IO_VIRTIO_MMIO_QUEUE_USED_HIGH 0xa4
 #define IO_VIRTIO_BLK_F_SEG_MAX 2
 #define IO_VIRTIO_BLK_F_BLK_SIZE 6
 #define IO_VIRTIO_BLK_F_FLUSH 9
@@ -239,11 +246,48 @@ static void cmodel_virtio_publish(IoMyVirtioBlk *blk, uint32_t addr,
         blk->queue_sel = value;
         break;
     case IO_VIRTIO_MMIO_QUEUE_NUM:
+        queue_addr = VIRTIO_GBUS_CSR_QUEUE_BASE +
+                     blk->queue_sel * VIRTIO_GBUS_CSR_QUEUE_STRIDE;
+        blk->shadow[(queue_addr + VIRTIO_GBUS_CSR_QUEUE_NUM) / 4] = value;
+        break;
     case IO_VIRTIO_MMIO_QUEUE_ALIGN:
+        queue_addr = VIRTIO_GBUS_CSR_QUEUE_BASE +
+                     blk->queue_sel * VIRTIO_GBUS_CSR_QUEUE_STRIDE;
+        blk->shadow[(queue_addr + VIRTIO_GBUS_CSR_QUEUE_ALIGN) / 4] = value;
+        break;
     case IO_VIRTIO_MMIO_QUEUE_PFN:
         queue_addr = VIRTIO_GBUS_CSR_QUEUE_BASE +
                      blk->queue_sel * VIRTIO_GBUS_CSR_QUEUE_STRIDE;
-        blk->shadow[(queue_addr + addr - IO_VIRTIO_MMIO_QUEUE_NUM) / 4] =
+        blk->shadow[(queue_addr + VIRTIO_GBUS_CSR_QUEUE_PFN) / 4] = value;
+        break;
+    case IO_VIRTIO_MMIO_QUEUE_READY:
+        queue_addr = VIRTIO_GBUS_CSR_QUEUE_BASE +
+                     blk->queue_sel * VIRTIO_GBUS_CSR_QUEUE_STRIDE;
+        blk->shadow[(queue_addr + VIRTIO_GBUS_CSR_QUEUE_READY) / 4] =
+            value & 1u;
+        break;
+    case IO_VIRTIO_MMIO_QUEUE_DESC_LOW:
+    case IO_VIRTIO_MMIO_QUEUE_DESC_HIGH:
+        queue_addr = VIRTIO_GBUS_CSR_QUEUE_BASE +
+                     blk->queue_sel * VIRTIO_GBUS_CSR_QUEUE_STRIDE +
+                     VIRTIO_GBUS_CSR_QUEUE_DESC_LOW;
+        blk->shadow[(queue_addr + addr - IO_VIRTIO_MMIO_QUEUE_DESC_LOW) / 4] =
+            value;
+        break;
+    case IO_VIRTIO_MMIO_QUEUE_AVAIL_LOW:
+    case IO_VIRTIO_MMIO_QUEUE_AVAIL_HIGH:
+        queue_addr = VIRTIO_GBUS_CSR_QUEUE_BASE +
+                     blk->queue_sel * VIRTIO_GBUS_CSR_QUEUE_STRIDE +
+                     VIRTIO_GBUS_CSR_QUEUE_AVAIL_LOW;
+        blk->shadow[(queue_addr + addr - IO_VIRTIO_MMIO_QUEUE_AVAIL_LOW) / 4] =
+            value;
+        break;
+    case IO_VIRTIO_MMIO_QUEUE_USED_LOW:
+    case IO_VIRTIO_MMIO_QUEUE_USED_HIGH:
+        queue_addr = VIRTIO_GBUS_CSR_QUEUE_BASE +
+                     blk->queue_sel * VIRTIO_GBUS_CSR_QUEUE_STRIDE +
+                     VIRTIO_GBUS_CSR_QUEUE_USED_LOW;
+        blk->shadow[(queue_addr + addr - IO_VIRTIO_MMIO_QUEUE_USED_LOW) / 4] =
             value;
         break;
     case IO_VIRTIO_MMIO_QUEUE_NOTIFY:
@@ -325,6 +369,13 @@ static IoSystemStatus cmodel_virtio_write(void *opaque, uint64_t addr,
                    offset == IO_VIRTIO_MMIO_QUEUE_NUM ||
                    offset == IO_VIRTIO_MMIO_QUEUE_ALIGN ||
                    offset == IO_VIRTIO_MMIO_QUEUE_PFN ||
+                   offset == IO_VIRTIO_MMIO_QUEUE_READY ||
+                   offset == IO_VIRTIO_MMIO_QUEUE_DESC_LOW ||
+                   offset == IO_VIRTIO_MMIO_QUEUE_DESC_HIGH ||
+                   offset == IO_VIRTIO_MMIO_QUEUE_AVAIL_LOW ||
+                   offset == IO_VIRTIO_MMIO_QUEUE_AVAIL_HIGH ||
+                   offset == IO_VIRTIO_MMIO_QUEUE_USED_LOW ||
+                   offset == IO_VIRTIO_MMIO_QUEUE_USED_HIGH ||
                    offset == IO_VIRTIO_MMIO_QUEUE_NOTIFY ||
                    offset == IO_VIRTIO_MMIO_STATUS;
         if (!shadowed && virtio_mmio_write(blk->virtio, aligned, raw, 4,
@@ -373,12 +424,14 @@ IoMyVirtioBlk *io_my_virtio_blk_create(IoSystem *system,
     struct virtio_backend_config backend_config = {
         .type = VIRTIO_BACKEND_BLK,
     };
+    struct virtio_mmio_options virtio_opts = { 0 };
     struct virtio_backend_info info;
 
     if (!system || !config || !config->base || !config->size ||
         !config->image_path || !*config->image_path) {
         return NULL;
     }
+    virtio_opts.packed = config->packed;
     blk = calloc(1, sizeof(*blk));
     if (!blk) {
         return NULL;
@@ -400,10 +453,11 @@ IoMyVirtioBlk *io_my_virtio_blk_create(IoSystem *system,
         (uint32_t)info.u.blk.capacity;
     blk->shadow[VIRTIO_GBUS_CSR_BLK_CAPACITY_HIGH / 4] =
         (uint32_t)(info.u.blk.capacity >> 32);
-    blk->virtio = virtio_gbus_create(VIRTIO_EMU_NAME_BLK,
-                                     config->base, config->size,
-                                     &cmodel_virtio_ops, blk,
-                                     &cmodel_virtio_gbus_ops, blk);
+    blk->virtio = virtio_gbus_create_ex(VIRTIO_EMU_NAME_BLK,
+                                        config->base, config->size,
+                                        &cmodel_virtio_ops, blk,
+                                        &cmodel_virtio_gbus_ops, blk,
+                                        &virtio_opts);
     if (!blk->virtio || io_cmodel_register_mmio_window(
             system, config->name ? config->name : "my-virtio-blk",
             config->base, config->size, cmodel_virtio_read,

@@ -3,6 +3,7 @@
 
 #include "io_rtl_system_api.h"
 
+#include "virtio_config.h"
 #include "virtio_backend.h"
 #include "virtio_wrapper.h"
 
@@ -440,15 +441,27 @@ static struct libvirtio_ops io_rtl_system_virtio_ops = {
 
 static bool io_rtl_system_init_blk_rtl_config(IoSystemRtlSystemBackend *rtl)
 {
+    IoSystem *system = rtl ? rtl->base.system : NULL;
     struct virtio_backend_info info;
     uint64_t capacity = 0;
+    uint32_t transport_features1 = 0;
 
     if (virtio_backend_get_info(rtl->blk_backend, &info) == 0 &&
         info.type == VIRTIO_BACKEND_BLK && info.u.blk.capacity > 0) {
         capacity = (uint64_t)info.u.blk.capacity;
     }
+    if (system && system->config.my_virtio_blk_packed) {
+        transport_features1 =
+            (1u << (VMM_VIRTIO_F_VERSION_1 - 32)) |
+            (1u << (VMM_VIRTIO_F_RING_PACKED - 32));
+    }
 
     return io_rtl_system_backend_gbus_write(
+               rtl, VIRTIO_GBUS_CSR_TRANSPORT_FEATURES_0, 0) == 0 &&
+           io_rtl_system_backend_gbus_write(
+               rtl, VIRTIO_GBUS_CSR_TRANSPORT_FEATURES_1,
+               transport_features1) == 0 &&
+           io_rtl_system_backend_gbus_write(
                rtl, VIRTIO_GBUS_CSR_BLK_CAPACITY_LOW,
                (uint32_t)capacity) == 0 &&
            io_rtl_system_backend_gbus_write(
@@ -468,12 +481,14 @@ static bool io_rtl_system_create_blk(IoSystemRtlSystemBackend *rtl)
     struct virtio_backend_config backend_config = {
         .type = VIRTIO_BACKEND_BLK,
     };
+    struct virtio_mmio_options virtio_opts = { 0 };
     uint32_t magic = 0;
     uint32_t version = 0;
 
     if (!system || !system->config.my_virtio_blk_enabled) {
         return true;
     }
+    virtio_opts.packed = system->config.my_virtio_blk_packed;
 
     backend_config.u.blk.image_path = system->config.my_virtio_blk_image_path;
     rtl->blk_backend = virtio_backend_create(&backend_config);
@@ -502,12 +517,12 @@ static bool io_rtl_system_create_blk(IoSystemRtlSystemBackend *rtl)
         return false;
     }
 
-    rtl->blk_virtio = virtio_gbus_create(VIRTIO_EMU_NAME_BLK,
-                                         IO_RTL_SYSTEM_MY_VIRTIO_BLK_BASE,
-                                         IO_RTL_SYSTEM_MY_VIRTIO_BLK_SIZE,
-                                         &io_rtl_system_virtio_ops, rtl,
-                                         &io_rtl_system_virtio_gbus_ops,
-                                         rtl);
+    rtl->blk_virtio = virtio_gbus_create_ex(VIRTIO_EMU_NAME_BLK,
+                                            IO_RTL_SYSTEM_MY_VIRTIO_BLK_BASE,
+                                            IO_RTL_SYSTEM_MY_VIRTIO_BLK_SIZE,
+                                            &io_rtl_system_virtio_ops, rtl,
+                                            &io_rtl_system_virtio_gbus_ops,
+                                            rtl, &virtio_opts);
     if (!rtl->blk_virtio) {
         io_rtl_system_log(system, 0,
                           "io-rtl-system: failed to create virtio-gbus blk\n");

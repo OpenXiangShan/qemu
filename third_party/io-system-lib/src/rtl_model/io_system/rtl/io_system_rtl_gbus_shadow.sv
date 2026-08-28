@@ -58,7 +58,8 @@ module io_system_rtl_gbus_shadow (
     localparam logic [31:0] GBUS_DRIVER_FEATURES_1 = 32'h0018;
     localparam logic [31:0] GBUS_RESET_SEQ         = 32'h0020;
     localparam logic [31:0] GBUS_QUEUE_BASE        = 32'h0100;
-    localparam int unsigned GBUS_QUEUE_STRIDE_WORDS = 8;
+    localparam int unsigned GBUS_QUEUE_STRIDE_WORDS = 16;
+    localparam int unsigned GBUS_QUEUE_RESET_WORDS = 11;
     localparam int unsigned GBUS_NUM_QUEUES = 3;
     localparam int unsigned GBUS_LAST_WORD = 128;
 
@@ -129,7 +130,7 @@ module io_system_rtl_gbus_shadow (
                 shadow_q[i] <= 32'h0;
             end
             shadow_q[0] <= 32'h7375_6267;
-            shadow_q[1] <= 32'h0000_0001;
+            shadow_q[1] <= 32'h0000_0002;
             shadow_q[GBUS_UPDATE_SEQ[9:2]] <= 32'h0;
             shadow_q[18] <= 32'd126;
             shadow_q[19] <= 32'd512;
@@ -225,7 +226,7 @@ module io_system_rtl_gbus_shadow (
                     shadow_q[GBUS_DRIVER_FEATURES_0[9:2]] <= 32'h0;
                     shadow_q[GBUS_DRIVER_FEATURES_1[9:2]] <= 32'h0;
                     for (int q = 0; q < GBUS_NUM_QUEUES; q++) begin
-                        for (int word = 0; word < 5; word++) begin
+                        for (int word = 0; word < GBUS_QUEUE_RESET_WORDS; word++) begin
                             shadow_q[32'(GBUS_QUEUE_BASE[9:2]) +
                                      q * GBUS_QUEUE_STRIDE_WORDS + word] <=
                                 32'h0;
