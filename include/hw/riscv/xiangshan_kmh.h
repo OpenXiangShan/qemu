@@ -18,6 +18,28 @@
 
 #define XIANGSHAN_KMH_MAX_CPUS 16
 #define XIANGSHAN_KMH_PCIE_NUM 2
+#define XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS 16
+#define XIANGSHAN_KMH_MY_VIRTIO_BASE 0x310A0000ULL
+#define XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE 0x1000ULL
+#define XIANGSHAN_KMH_MY_VIRTIO_IRQ_BASE 15
+
+typedef enum XiangshanKmhMyVirtioDevice {
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_NET,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_CONSOLE,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GPU,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_KEYBOARD,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_COUNT,
+} XiangshanKmhMyVirtioDevice;
+
+typedef struct XiangshanKmhMyVirtioSlot {
+    XiangshanKmhMyVirtioDevice device;
+    hwaddr base;
+    uint32_t irq;
+} XiangshanKmhMyVirtioSlot;
 
 typedef struct XiangshanKmhSoCState {
     /*< private >*/
@@ -43,6 +65,9 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_tablet;
     bool my_virtio_genirq;
     bool my_virtio_packed;
+    uint32_t my_virtio_slot_count;
+    XiangshanKmhMyVirtioSlot
+        my_virtio_slots[XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS];
     void *my_virtio_ui;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
@@ -87,6 +112,9 @@ typedef struct XiangshanKmhState {
     bool my_virtio_tablet;
     bool my_virtio_genirq;
     bool my_virtio_packed;
+    uint32_t my_virtio_slot_count;
+    XiangshanKmhMyVirtioSlot
+        my_virtio_slots[XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS];
 #ifdef CONFIG_KVM_M_MODE
     bool kvm_m_mode;
 #endif
@@ -94,6 +122,7 @@ typedef struct XiangshanKmhState {
     bool kvm_nested;
 #endif
     void *my_virtio_ui;
+    char *my_virtio_devices;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
     char *my_virtio_net_network;
@@ -131,15 +160,8 @@ DECLARE_INSTANCE_CHECKER(XiangshanKmhState, XIANGSHAN_KMH_MACHINE,
 enum {
     XIANGSHAN_KMH_ROM,
     XIANGSHAN_KMH_FLASH,
-    XIANGSHAN_KMH_MY_VIRTIO_CONSOLE,
-    XIANGSHAN_KMH_MY_VIRTIO_NET,
-    XIANGSHAN_KMH_MY_VIRTIO_BLK,
+    XIANGSHAN_KMH_MY_VIRTIO,
     XIANGSHAN_KMH_UART0,
-    XIANGSHAN_KMH_MY_VIRTIO_GPU,
-    XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD,
-    XIANGSHAN_KMH_MY_VIRTIO_MOUSE,
-    XIANGSHAN_KMH_MY_VIRTIO_TABLET,
-    XIANGSHAN_KMH_MY_VIRTIO_GENIRQ,
     XIANGSHAN_KMH_CLINT,
     XIANGSHAN_KMH_APLIC_M,
     XIANGSHAN_KMH_APLIC_S,
@@ -160,16 +182,8 @@ enum {
     XIANGSHAN_KMH_UART1_IRQ = 11,
     XIANGSHAN_KMH_RC_MSI0_IRQ = 12,
     XIANGSHAN_KMH_RC_HP0_IRQ = 13,
-    XIANGSHAN_KMH_RC_MSI1_IRQ = 15,
-    XIANGSHAN_KMH_RC_HP1_IRQ = 16,
-    XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ = 17,
-    XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ = 18,
-    XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD_IRQ = 19,
-    XIANGSHAN_KMH_MY_VIRTIO_MOUSE_IRQ = 20,
-    XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ = 21,
-    XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ = 22,
-    XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ = 23,
-    XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ = 25,
+    XIANGSHAN_KMH_RC_MSI1_IRQ = 31,
+    XIANGSHAN_KMH_RC_HP1_IRQ = 32,
     XIANGSHAN_KMH_IOMMU_SYS_IRQ = 0x24,
 };
 

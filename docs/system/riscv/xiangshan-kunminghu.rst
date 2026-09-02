@@ -99,11 +99,20 @@ Machine options
    ``iommu-map``。使用外部 ``-dtb`` 时，需要外部设备树自己描述同一个
    IOMMU。
 
+``my-virtio-devices=<list>``
+   所有已启用 my-virtio 设备的有序列表。支持 ``blk``、``net``、
+   ``console``、``gpu``、``keyboard``、``mouse``、``tablet`` 和
+   ``genirq``。启用任意 ``my-virtio-*=on`` 时必须提供此属性，列表必须与
+   启用集合完全一致，且不能包含未知、重复或未启用的设备。slot N 使用
+   ``0x310a0000 + N * 0x1000`` 和 IRQ ``15 + N``，最多 16 个 slot。
+   QEMU 的选项语法用两个逗号表示字符串值中的一个逗号，因此两设备示例写成
+   ``-M 'xiangshan-kunminghu,my-virtio-blk=on,my-virtio-genirq=on,my-virtio-devices=blk,,genirq'``；
+   machine 属性实际收到的值是 ``blk,genirq``。
+
 ``my-virtio-blk=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio blk 设备，默认 ``off``。
-   如果 QEMU 当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_blk@310a0000``。blk backend 使用
-   ``my-virtio-blk-image`` 指定的 raw image 文件。
+   其节点、地址和 IRQ 由 ``my-virtio-devices`` 中的 slot 决定。blk backend
+   使用 ``my-virtio-blk-image`` 指定的 raw image 文件。
 
 ``my-virtio-blk-image=<path>``
    my-virtio blk 后端镜像路径，默认 ``disk.img``。建议运行时使用绝对路径。
@@ -117,9 +126,8 @@ Machine options
 
 ``my-virtio-net=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio net 设备，默认 ``off``。
-   如果 QEMU 当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_net@31090000``。net backend 使用 libslirp user-mode
-   网络，不需要 ``/dev/net/tun`` 或 ``tap0`` 权限。
+   其节点、地址和 IRQ 由 ``my-virtio-devices`` 中的 slot 决定。net backend
+   使用 libslirp user-mode 网络，不需要 ``/dev/net/tun`` 或 ``tap0`` 权限。
 
 ``my-virtio-net-hostfwd=<rules>``
    my-virtio net 的 libslirp hostfwd 规则，默认空字符串表示不占用宿主端口。
@@ -150,8 +158,8 @@ Machine options
 
 ``my-virtio-console=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio console 设备，默认 ``off``。
-   如果 QEMU 当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_console@31080000``，并把 ``stdout-path`` 指到该节点。
+   其节点、地址和 IRQ 由 ``my-virtio-devices`` 中的 slot 决定，生成 DTB 时
+   ``stdout-path`` 会指向对应的 ``/soc/virtioN@addr`` 节点。
    如果没有外部 command line，QEMU 会给生成 DTB 设置
    ``console=hvc1 earlycon=sbi vt.nr_consoles=6`` 这一类默认 bootargs。
    没有打开 ``my-virtio-console`` 时，默认 bootargs 使用 UART0：
@@ -163,9 +171,8 @@ Machine options
 
 ``my-virtio-gpu=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio GPU 设备，默认 ``off``。
-   如果 QEMU 当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_gpu@310c0000``。GPU backend 默认创建一个独立的
-   VNC server，不使用 QEMU 原生 ``-vnc``。
+   其节点、地址和 IRQ 由 ``my-virtio-devices`` 中的 slot 决定。GPU backend
+   默认创建一个独立的 VNC server，不使用 QEMU 原生 ``-vnc``。
 
 ``my-virtio-vnc-listen=<host:port>``
    my-virtio GPU backend VNC server 的监听地址，默认
@@ -175,27 +182,27 @@ Machine options
 
 ``my-virtio-keyboard=on|off``
    是否创建标准 virtio-input keyboard 设备，默认 ``off``。如果 QEMU 当前
-   使用生成的设备树，打开后会加入 ``/soc/my_virtio_keyboard@310d0000``。
-   guest Linux 需要启用 ``CONFIG_VIRTIO_INPUT``。
+   使用生成的设备树，节点、地址和 IRQ 由 ``my-virtio-devices`` 中的 slot
+   决定。guest Linux 需要启用 ``CONFIG_VIRTIO_INPUT``。
 
 ``my-virtio-mouse=on|off``
    是否创建标准 virtio-input relative mouse 设备，默认 ``off``。如果 QEMU
-   当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_mouse@310e0000``。这个设备上报 ``REL_X``、``REL_Y``
-   和鼠标按键，适合需要相对移动输入的场景。
+   当前使用生成的设备树，节点、地址和 IRQ 由 ``my-virtio-devices`` 中的
+   slot 决定。这个设备上报 ``REL_X``、``REL_Y`` 和鼠标按键，适合需要
+   相对移动输入的场景。
 
 ``my-virtio-tablet=on|off``
    是否创建标准 virtio-input absolute tablet 设备，默认 ``off``。如果 QEMU
-   当前使用生成的设备树，打开后会加入
-   ``/soc/my_virtio_tablet@310f0000``。这个设备上报 ``ABS_X``、``ABS_Y``
-   和鼠标按键，更适合 Linux 桌面这类绝对光标场景。
+   当前使用生成的设备树，节点、地址和 IRQ 由 ``my-virtio-devices`` 中的
+   slot 决定。这个设备上报 ``ABS_X``、``ABS_Y`` 和鼠标按键，更适合 Linux
+   桌面这类绝对光标场景。
 
 ``my-virtio-genirq=on|off``
    是否创建 virtio genirq MSI 压力测试设备，默认 ``off``。如果 QEMU 当前
-   使用生成的设备树，打开后会加入 ``/soc/my_virtio_genirq@31110000``。
-   TCG 路径中该设备由 QEMU userspace my-virtio wrapper 执行 MSI 写；KVM
-   路径中 QEMU 创建 in-kernel genirq bridge，由 host KVM 把 L2 IMSIC GPA
-   转换成真实 VS interrupt file PA 后写入外层 genirq 寄存器。
+   使用生成的设备树，节点、地址和 IRQ 由 ``my-virtio-devices`` 中的 slot
+   决定。TCG 路径中该设备由 QEMU userspace my-virtio wrapper 执行 MSI 写；
+   KVM 路径中 QEMU 创建 in-kernel genirq bridge，由 host KVM 把 L2 IMSIC
+   GPA 转换成真实 VS interrupt file PA 后写入外层 genirq 寄存器。
 
 ``my-virtio-keyboard-backend=vnc|evdev|ui``、``my-virtio-mouse-backend=vnc|evdev|ui``、``my-virtio-tablet-backend=vnc|evdev|ui``
    my-virtio input 的宿主输入来源，默认都是 ``vnc``。``vnc`` 和 ``ui``
@@ -322,7 +329,7 @@ KVM。
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,my-virtio-blk=on,my-virtio-blk-image=/path/to/rootfs.ext4 \
+       -M xiangshan-kunminghu,my-virtio-blk=on,my-virtio-devices=blk,my-virtio-blk-image=/path/to/rootfs.ext4 \
        -accel kvm \
        -cpu host \
        -smp 1 -m 4G \
@@ -411,7 +418,7 @@ host 的独立 block device 作为 inner Linux ``/dev/vda``：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,kvm-m-mode=on,my-virtio-blk=on,my-virtio-blk-image=/dev/vdb \
+       -M xiangshan-kunminghu,kvm-m-mode=on,my-virtio-blk=on,my-virtio-devices=blk,my-virtio-blk-image=/dev/vdb \
        -accel kvm -cpu host -smp 1 -m 4G \
        -display none -monitor none -serial stdio \
        -bios none -kernel /path/to/fw_payload.bin \
@@ -574,52 +581,37 @@ Use my-virtio MMIO devices
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``my-virtio-blk``、``my-virtio-net``、``my-virtio-console``、
-``my-virtio-gpu`` 和 ``my-virtio-*`` input 的 machine 属性只控制是否创建
-设备。设备树仍然由 ``-kernel``、``generated-dtb=on`` 或
-``autotest-dtb=on`` 这些已有路径决定；使用外部 ``-dtb`` 时，需要外部设备树
-自己描述已打开的 my-virtio 设备。
+``my-virtio-gpu`` 和 ``my-virtio-*`` input 的 machine 属性控制是否创建设备，
+``my-virtio-devices`` 决定所有已启用设备的 slot 顺序。设备树仍然由
+``-kernel``、``generated-dtb=on`` 或 ``autotest-dtb=on`` 这些已有路径决定；
+使用外部 ``-dtb`` 时，需要外部设备树按相同 slot 顺序描述已打开的设备。
 
-当前 my-virtio MMIO 资源固定分配如下：
+QEMU 为 my-virtio 预留 16 个 MMIO slot：
 
 .. list-table::
    :header-rows: 1
 
-   * - 设备
+   * - slot
      - DTB 节点
      - MMIO
      - IRQ
-   * - console
-     - ``/soc/my_virtio_console@31080000``
-     - ``0x31080000``
-     - ``17``
-   * - net
-     - ``/soc/my_virtio_net@31090000``
-     - ``0x31090000``
-     - ``16``
-   * - blk
-     - ``/soc/my_virtio_blk@310a0000``
+   * - 0
+     - ``/soc/virtio0@310a0000``
      - ``0x310a0000``
      - ``15``
-   * - gpu
-     - ``/soc/my_virtio_gpu@310c0000``
-     - ``0x310c0000``
-     - ``18``
-   * - keyboard
-     - ``/soc/my_virtio_keyboard@310d0000``
-     - ``0x310d0000``
-     - ``19``
-   * - mouse
-     - ``/soc/my_virtio_mouse@310e0000``
-     - ``0x310e0000``
-     - ``20``
-   * - tablet
-     - ``/soc/my_virtio_tablet@310f0000``
-     - ``0x310f0000``
-     - ``21``
-   * - genirq
-     - ``/soc/my_virtio_genirq@31110000``
-     - ``0x31110000``
-     - ``25``
+   * - N
+     - ``/soc/virtioN@addr``
+     - ``0x310a0000 + N * 0x1000``
+     - ``15 + N``
+   * - 15
+     - ``/soc/virtio15@310af000``
+     - ``0x310af000``
+     - ``30``
+
+例如 ``my-virtio-devices=blk,genirq`` 让 blk 占 slot 0、genirq 占 slot 1；
+交换列表顺序也会交换两个设备的 MMIO 地址和 transport IRQ。生成 DTB 和
+autotest DTB 使用 ``virtio0``、``virtio1`` 等通用节点名，ACPI 使用相同的
+slot 数组生成 ``VR00``、``VR01`` 等设备。
 
 ``my-virtio-genirq=on`` 创建的设备用于向 IMSIC MSI 目标发送可编程 pattern。
 Linux 驱动通过 debugfs 配置目标数量、pattern、repeat、seed 等参数，并检查
@@ -632,7 +624,7 @@ blk 设备需要通过 ``my-virtio-blk-image`` 指定 raw image 文件：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-blk-image=/path/to/disk.img \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-devices=blk,my-virtio-blk-image=/path/to/disk.img \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image-virtio,addr=0x80400000
@@ -644,7 +636,7 @@ virtio-console 的 ``hvc1`` 输出：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-console=on \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-console=on,my-virtio-devices=console \
        -smp 4 -m 16G -nographic \
        -serial tcp:127.0.0.1:2234,server,nowait \
        -serial tcp:127.0.0.1:2235,server,nowait \
@@ -670,7 +662,7 @@ blk 和 console 可以一起打开：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-console=on,my-virtio-blk-image=/path/to/disk.img \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,my-virtio-console=on,my-virtio-devices=blk,,console,my-virtio-blk-image=/path/to/disk.img \
        -smp 4 -m 16G -nographic \
        -serial tcp:127.0.0.1:2234,server,nowait \
        -serial tcp:127.0.0.1:2235,server,nowait \
@@ -678,27 +670,27 @@ blk 和 console 可以一起打开：
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image-virtio,addr=0x80400000
 
-``my-virtio-net=on`` 会创建 net 设备并在生成 DTB 中加入
-``/soc/my_virtio_net@31090000``。如需从宿主机转发 SSH 到 guest，可以加上：
+``my-virtio-net=on`` 会创建 net 设备，并按 ``my-virtio-devices`` 指定的 slot
+加入生成 DTB。如需从宿主机转发 SSH 到 guest，可以加上：
 
 .. code-block:: bash
 
-   -M xiangshan-kunminghu,generated-dtb=on,my-virtio-net=on,my-virtio-net-hostfwd=tcp:0.0.0.0:2222:10.0.2.15:22
+   -M xiangshan-kunminghu,generated-dtb=on,my-virtio-net=on,my-virtio-devices=net,my-virtio-net-hostfwd=tcp:0.0.0.0:2222:10.0.2.15:22
 
 也可以让 hostfwd 的 guest IP 跟随当前 DHCP 配置：
 
 .. code-block:: bash
 
-   -M xiangshan-kunminghu,generated-dtb=on,my-virtio-net=on,my-virtio-net-hostfwd=tcp::2222::22,my-virtio-net-network=10.10.0.0,my-virtio-net-netmask=255.255.255.0,my-virtio-net-host-ip=10.10.0.2,my-virtio-net-dhcp-start=10.10.0.15,my-virtio-net-dns-ip=10.10.0.3
+   -M xiangshan-kunminghu,generated-dtb=on,my-virtio-net=on,my-virtio-devices=net,my-virtio-net-hostfwd=tcp::2222::22,my-virtio-net-network=10.10.0.0,my-virtio-net-netmask=255.255.255.0,my-virtio-net-host-ip=10.10.0.2,my-virtio-net-dhcp-start=10.10.0.15,my-virtio-net-dns-ip=10.10.0.3
 
-``my-virtio-gpu=on`` 会创建 GPU 设备并在生成 DTB 中加入
-``/soc/my_virtio_gpu@310c0000``。GPU backend 会启动独立 VNC server，
-默认监听 ``127.0.0.1:5915``：
+``my-virtio-gpu=on`` 会创建 GPU 设备并按 ``my-virtio-devices`` 指定的 slot
+加入生成 DTB。GPU backend 会启动独立 VNC server，默认监听
+``127.0.0.1:5915``：
 
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-vnc-listen=127.0.0.1:5915 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-devices=gpu,my-virtio-vnc-listen=127.0.0.1:5915 \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image-virtio-gpu,addr=0x80400000
@@ -726,7 +718,7 @@ guest 桌面光标对齐：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-keyboard=on,my-virtio-tablet=on,my-virtio-vnc-listen=127.0.0.1:5915 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-keyboard=on,my-virtio-tablet=on,my-virtio-devices=gpu,,keyboard,,tablet,my-virtio-vnc-listen=127.0.0.1:5915 \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image-virtio-gpu,addr=0x80400000
@@ -737,7 +729,7 @@ guest 桌面光标对齐：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-keyboard=on,my-virtio-mouse=on,my-virtio-vnc-listen=127.0.0.1:5915 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-gpu=on,my-virtio-keyboard=on,my-virtio-mouse=on,my-virtio-devices=gpu,,keyboard,,mouse,my-virtio-vnc-listen=127.0.0.1:5915 \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image-virtio-gpu,addr=0x80400000
@@ -749,7 +741,7 @@ guest 桌面光标对齐：
 .. code-block:: bash
 
    $ ./build/qemu-system-riscv64 \
-       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-keyboard=on,my-virtio-keyboard-backend=evdev,my-virtio-keyboard-evdev=/dev/input/eventX \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-keyboard=on,my-virtio-devices=keyboard,my-virtio-keyboard-backend=evdev,my-virtio-keyboard-evdev=/dev/input/eventX \
        -smp 4 -m 16G -nographic \
        -bios /path/to/fw_jump.bin \
        -device loader,file=/path/to/Image-virtio,addr=0x80400000

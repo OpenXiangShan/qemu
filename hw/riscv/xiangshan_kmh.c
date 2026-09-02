@@ -85,15 +85,12 @@
 static const MemMapEntry xiangshan_kmh_memmap[] = {
     [XIANGSHAN_KMH_ROM]      =        {     0x1000,       0x40000 },
     [XIANGSHAN_KMH_FLASH]    =        { 0x10000000,     0x4000000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_CONSOLE] = { 0x31080000,      0x1000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_NET] =   { 0x31090000,        0x1000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_BLK] =   { 0x310A0000,        0x1000 },
+    [XIANGSHAN_KMH_MY_VIRTIO] = {
+        XIANGSHAN_KMH_MY_VIRTIO_BASE,
+        XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS *
+            XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+    },
     [XIANGSHAN_KMH_UART0]    =        { 0x310B0000,       0x10000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_GPU] =   { 0x310C0000,        0x1000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD] = { 0x310D0000,      0x1000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_MOUSE] = { 0x310E0000,         0x1000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_TABLET] = { 0x310F0000,        0x1000 },
-    [XIANGSHAN_KMH_MY_VIRTIO_GENIRQ] = { 0x31110000,        0x1000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
     [XIANGSHAN_KMH_PCIE1_DBI] =       { 0x40000000,      0x400000 },
@@ -148,12 +145,178 @@ static const XiangshanKmhPciePort xiangshan_kmh_pcie_ports[] = {
     },
 };
 
+typedef struct XiangshanKmhMyVirtioDeviceInfo {
+    const char *token;
+    XiangshanKmhMyVirtioDevice device;
+} XiangshanKmhMyVirtioDeviceInfo;
+
+static const XiangshanKmhMyVirtioDeviceInfo
+xiangshan_kmh_my_virtio_device_info[] = {
+    { "blk", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK },
+    { "net", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_NET },
+    { "console", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_CONSOLE },
+    { "gpu", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GPU },
+    { "keyboard", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_KEYBOARD },
+    { "mouse", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE },
+    { "tablet", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET },
+    { "genirq", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ },
+};
+
+static bool xiangshan_kmh_my_virtio_device_enabled(
+    const XiangshanKmhState *s, XiangshanKmhMyVirtioDevice device)
+{
+    switch (device) {
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK:
+        return s->my_virtio_blk;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_NET:
+        return s->my_virtio_net;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_CONSOLE:
+        return s->my_virtio_console;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GPU:
+        return s->my_virtio_gpu;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_KEYBOARD:
+        return s->my_virtio_keyboard;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE:
+        return s->my_virtio_mouse;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET:
+        return s->my_virtio_tablet;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ:
+        return s->my_virtio_genirq;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_COUNT:
+        break;
+    }
+
+    g_assert_not_reached();
+}
+
+static const char *xiangshan_kmh_my_virtio_device_token(
+    XiangshanKmhMyVirtioDevice device)
+{
+    for (int i = 0; i < ARRAY_SIZE(xiangshan_kmh_my_virtio_device_info); i++) {
+        if (xiangshan_kmh_my_virtio_device_info[i].device == device) {
+            return xiangshan_kmh_my_virtio_device_info[i].token;
+        }
+    }
+
+    g_assert_not_reached();
+}
+
+static bool xiangshan_kmh_my_virtio_device_from_token(
+    const char *token, XiangshanKmhMyVirtioDevice *device)
+{
+    for (int i = 0; i < ARRAY_SIZE(xiangshan_kmh_my_virtio_device_info); i++) {
+        if (!strcmp(token, xiangshan_kmh_my_virtio_device_info[i].token)) {
+            *device = xiangshan_kmh_my_virtio_device_info[i].device;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void xiangshan_kmh_build_my_virtio_slots(XiangshanKmhState *s)
+{
+    g_auto(GStrv) tokens = NULL;
+    uint32_t seen = 0;
+    unsigned int count;
+
+    s->my_virtio_slot_count = 0;
+    if (!s->my_virtio_devices || !*s->my_virtio_devices) {
+        for (int device = 0;
+             device < XIANGSHAN_KMH_MY_VIRTIO_DEVICE_COUNT; device++) {
+            if (xiangshan_kmh_my_virtio_device_enabled(s, device)) {
+                error_report("my-virtio-%s=on requires "
+                             "my-virtio-devices to list the device",
+                             xiangshan_kmh_my_virtio_device_token(device));
+                exit(1);
+            }
+        }
+        return;
+    }
+
+    tokens = g_strsplit(s->my_virtio_devices, ",", -1);
+    count = g_strv_length(tokens);
+    if (count > XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS) {
+        error_report("my-virtio-devices contains %u devices; maximum is %u",
+                     count, XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS);
+        exit(1);
+    }
+
+    for (unsigned int slot = 0; slot < count; slot++) {
+        XiangshanKmhMyVirtioDevice device;
+
+        if (!xiangshan_kmh_my_virtio_device_from_token(tokens[slot],
+                                                        &device)) {
+            error_report("unknown my-virtio-devices token '%s'",
+                         tokens[slot]);
+            exit(1);
+        }
+        if (seen & BIT(device)) {
+            error_report("duplicate my-virtio-devices token '%s'",
+                         tokens[slot]);
+            exit(1);
+        }
+        if (!xiangshan_kmh_my_virtio_device_enabled(s, device)) {
+            error_report("my-virtio-devices lists '%s', but "
+                         "my-virtio-%s is not enabled",
+                         tokens[slot], tokens[slot]);
+            exit(1);
+        }
+
+        seen |= BIT(device);
+        s->my_virtio_slots[slot] = (XiangshanKmhMyVirtioSlot) {
+            .device = device,
+            .base = XIANGSHAN_KMH_MY_VIRTIO_BASE +
+                    slot * XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+            .irq = XIANGSHAN_KMH_MY_VIRTIO_IRQ_BASE + slot,
+        };
+        s->my_virtio_slot_count++;
+    }
+
+    for (int device = 0;
+         device < XIANGSHAN_KMH_MY_VIRTIO_DEVICE_COUNT; device++) {
+        if (xiangshan_kmh_my_virtio_device_enabled(s, device) &&
+            !(seen & BIT(device))) {
+            error_report("my-virtio-%s=on is missing from my-virtio-devices",
+                         xiangshan_kmh_my_virtio_device_token(device));
+            exit(1);
+        }
+    }
+}
+
+static uint32_t xiangshan_kmh_my_virtio_slot_index(
+    const XiangshanKmhState *s, XiangshanKmhMyVirtioDevice device)
+{
+    for (uint32_t i = 0; i < s->my_virtio_slot_count; i++) {
+        if (s->my_virtio_slots[i].device == device) {
+            return i;
+        }
+    }
+
+    g_assert_not_reached();
+}
+
+#ifdef CONFIG_MY_VIRTIO
+static const XiangshanKmhMyVirtioSlot *xiangshan_kmh_soc_my_virtio_slot(
+    const XiangshanKmhSoCState *s, XiangshanKmhMyVirtioDevice device)
+{
+    for (uint32_t i = 0; i < s->my_virtio_slot_count; i++) {
+        if (s->my_virtio_slots[i].device == device) {
+            return &s->my_virtio_slots[i];
+        }
+    }
+
+    g_assert_not_reached();
+}
+#endif
+
 #ifndef CONFIG_MY_VIRTIO
 static bool xiangshan_kmh_my_virtio_requested(const XiangshanKmhState *s)
 {
     return s->my_virtio_blk || s->my_virtio_net || s->my_virtio_console ||
            s->my_virtio_gpu || s->my_virtio_keyboard || s->my_virtio_mouse ||
-           s->my_virtio_tablet || s->my_virtio_genirq;
+           s->my_virtio_tablet || s->my_virtio_genirq ||
+           (s->my_virtio_devices && *s->my_virtio_devices);
 }
 #endif
 
@@ -360,19 +523,25 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
 
 #ifdef CONFIG_MY_VIRTIO
     if (s->my_virtio_blk) {
-        my_virtio_blk_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].base,
-                             memmap[XIANGSHAN_KMH_MY_VIRTIO_BLK].size,
-                             qdev_get_gpio_in(DEVICE(s->irqchip),
-                                              XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ),
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK);
+
+        my_virtio_blk_create(slot->base,
+                             XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                             qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
                              s->my_virtio_blk_image,
                              s->my_virtio_packed);
     }
 
     if (s->my_virtio_net) {
-        my_virtio_net_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_NET].base,
-                             memmap[XIANGSHAN_KMH_MY_VIRTIO_NET].size,
-                             qdev_get_gpio_in(DEVICE(s->irqchip),
-                                              XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ),
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_NET);
+
+        my_virtio_net_create(slot->base,
+                             XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                             qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
                              s->my_virtio_net_hostfwd,
                              s->my_virtio_net_network,
                              s->my_virtio_net_netmask,
@@ -383,11 +552,13 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     }
 
     if (s->my_virtio_console) {
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_CONSOLE);
+
         my_virtio_console_create(
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_CONSOLE].base,
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_CONSOLE].size,
-            qdev_get_gpio_in(DEVICE(s->irqchip),
-                             XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ),
+            slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+            qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
             s->my_virtio_console_backend,
             s->my_virtio_console_input_path,
             s->my_virtio_console_output_path,
@@ -395,22 +566,27 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     }
 
     if (s->my_virtio_gpu) {
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GPU);
+
         s->my_virtio_ui =
-            my_virtio_gpu_create(memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].base,
-                                 memmap[XIANGSHAN_KMH_MY_VIRTIO_GPU].size,
-                                 qdev_get_gpio_in(
-                                     DEVICE(s->irqchip),
-                                     XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ),
+            my_virtio_gpu_create(slot->base,
+                                 XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                                 qdev_get_gpio_in(DEVICE(s->irqchip),
+                                                  slot->irq),
                                  s->my_virtio_vnc_listen,
                                  s->my_virtio_packed);
     }
 
     if (s->my_virtio_keyboard) {
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_KEYBOARD);
+
         my_virtio_keyboard_create(
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD].base,
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD].size,
-            qdev_get_gpio_in(DEVICE(s->irqchip),
-                             XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD_IRQ),
+            slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+            qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
             s->my_virtio_keyboard_backend,
             s->my_virtio_keyboard_evdev_path,
             s->my_virtio_ui,
@@ -418,11 +594,13 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     }
 
     if (s->my_virtio_mouse) {
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE);
+
         my_virtio_mouse_create(
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_MOUSE].base,
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_MOUSE].size,
-            qdev_get_gpio_in(DEVICE(s->irqchip),
-                             XIANGSHAN_KMH_MY_VIRTIO_MOUSE_IRQ),
+            slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+            qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
             s->my_virtio_mouse_backend,
             s->my_virtio_mouse_evdev_path,
             s->my_virtio_ui,
@@ -430,11 +608,13 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     }
 
     if (s->my_virtio_tablet) {
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET);
+
         my_virtio_tablet_create(
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_TABLET].base,
-            memmap[XIANGSHAN_KMH_MY_VIRTIO_TABLET].size,
-            qdev_get_gpio_in(DEVICE(s->irqchip),
-                             XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ),
+            slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+            qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
             s->my_virtio_tablet_backend,
             s->my_virtio_tablet_evdev_path,
             s->my_virtio_ui,
@@ -442,19 +622,19 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
     }
 
     if (s->my_virtio_genirq) {
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ);
+
         if (kvm_enabled()) {
             kvm_riscv_my_virtio_genirq_create(
-                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].base,
-                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].size,
-                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].base,
-                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].size,
-                XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ);
+                slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                slot->irq);
         } else {
             my_virtio_genirq_create(
-                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].base,
-                memmap[XIANGSHAN_KMH_MY_VIRTIO_GENIRQ].size,
-                qdev_get_gpio_in(DEVICE(s->irqchip),
-                                 XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ),
+                slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
                 s->my_virtio_packed);
         }
     }
@@ -828,25 +1008,24 @@ static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
 }
 
 static void xiangshan_kmh_fdt_add_my_virtio(XiangshanKmhState *s,
-                                            const char *node_name,
-                                            int memmap_index,
-                                            int irq,
+                                            uint32_t slot_index,
                                             uint32_t aplic_s_phandle)
 {
     MachineState *ms = MACHINE(s);
-    const MemMapEntry *memmap = xiangshan_kmh_memmap;
+    const XiangshanKmhMyVirtioSlot *slot =
+        &s->my_virtio_slots[slot_index];
     void *fdt = ms->fdt;
-    g_autofree char *name = g_strdup_printf("/soc/%s@%"HWADDR_PRIx,
-        node_name, memmap[memmap_index].base);
+    g_autofree char *name = g_strdup_printf("/soc/virtio%u@%"HWADDR_PRIx,
+                                             slot_index, slot->base);
 
     qemu_fdt_add_subnode(fdt, name);
     qemu_fdt_setprop_string(fdt, name, "compatible", "virtio,mmio");
     qemu_fdt_setprop_sized_cells(fdt, name, "reg",
-                                 2, memmap[memmap_index].base,
-                                 2, memmap[memmap_index].size);
+                                 2, slot->base,
+                                 2, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE);
     qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
     qemu_fdt_setprop_cells(fdt, name, "interrupts",
-                           irq, FDT_IRQ_TYPE_EDGE_RISING);
+                           slot->irq, FDT_IRQ_TYPE_EDGE_RISING);
     qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
@@ -896,8 +1075,15 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     qemu_fdt_setprop_string(fdt, "/chosen", "stdout-path",
                             "/soc/serial@310b0000:115200n8");
     if (s->my_virtio_console) {
+        uint32_t slot_index = xiangshan_kmh_my_virtio_slot_index(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_CONSOLE);
+        const XiangshanKmhMyVirtioSlot *slot =
+            &s->my_virtio_slots[slot_index];
+        g_autofree char *stdout_path = g_strdup_printf(
+            "/soc/virtio%u@%"HWADDR_PRIx, slot_index, slot->base);
+
         qemu_fdt_setprop_string(fdt, "/chosen", "stdout-path",
-                                "/soc/my_virtio_console@31080000");
+                                stdout_path);
     }
     if (ms->kernel_cmdline && *ms->kernel_cmdline) {
         qemu_fdt_setprop_string(fdt, "/chosen", "bootargs",
@@ -1102,60 +1288,9 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
         qemu_fdt_setprop_string(fdt, name, "status", "okay");
     }
 
-    if (s->my_virtio_blk) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_blk",
-                                        XIANGSHAN_KMH_MY_VIRTIO_BLK,
-                                        XIANGSHAN_KMH_MY_VIRTIO_BLK_IRQ,
-                                        aplic_s_phandle);
-    }
-
-    if (s->my_virtio_net) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_net",
-                                        XIANGSHAN_KMH_MY_VIRTIO_NET,
-                                        XIANGSHAN_KMH_MY_VIRTIO_NET_IRQ,
-                                        aplic_s_phandle);
-    }
-
-    if (s->my_virtio_console) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_console",
-                                        XIANGSHAN_KMH_MY_VIRTIO_CONSOLE,
-                                        XIANGSHAN_KMH_MY_VIRTIO_CONSOLE_IRQ,
-                                        aplic_s_phandle);
-    }
-
-    if (s->my_virtio_gpu) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_gpu",
-                                        XIANGSHAN_KMH_MY_VIRTIO_GPU,
-                                        XIANGSHAN_KMH_MY_VIRTIO_GPU_IRQ,
-                                        aplic_s_phandle);
-    }
-
-    if (s->my_virtio_keyboard) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_keyboard",
-                                        XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD,
-                                        XIANGSHAN_KMH_MY_VIRTIO_KEYBOARD_IRQ,
-                                        aplic_s_phandle);
-    }
-
-    if (s->my_virtio_mouse) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_mouse",
-                                        XIANGSHAN_KMH_MY_VIRTIO_MOUSE,
-                                        XIANGSHAN_KMH_MY_VIRTIO_MOUSE_IRQ,
-                                        aplic_s_phandle);
-    }
-
-    if (s->my_virtio_tablet) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_tablet",
-                                        XIANGSHAN_KMH_MY_VIRTIO_TABLET,
-                                        XIANGSHAN_KMH_MY_VIRTIO_TABLET_IRQ,
-                                        aplic_s_phandle);
-    }
-
-    if (s->my_virtio_genirq) {
-        xiangshan_kmh_fdt_add_my_virtio(s, "my_virtio_genirq",
-                                        XIANGSHAN_KMH_MY_VIRTIO_GENIRQ,
-                                        XIANGSHAN_KMH_MY_VIRTIO_GENIRQ_IRQ,
-                                        aplic_s_phandle);
+    /* qemu_fdt_add_subnode() prepends children; add in reverse slot order. */
+    for (uint32_t slot = s->my_virtio_slot_count; slot-- > 0;) {
+        xiangshan_kmh_fdt_add_my_virtio(s, slot, aplic_s_phandle);
     }
 
     if (kmh_is_iommu_sys_enabled(s)) {
@@ -1268,6 +1403,8 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     }
 #endif
 
+    xiangshan_kmh_build_my_virtio_slots(s);
+
     if (kvm_enabled()) {
         if (machine->firmware && strcmp(machine->firmware, "none")) {
             error_report("Machine mode firmware is not supported in "
@@ -1296,6 +1433,9 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_tablet = s->my_virtio_tablet;
     s->soc.my_virtio_genirq = s->my_virtio_genirq;
     s->soc.my_virtio_packed = s->my_virtio_packed;
+    s->soc.my_virtio_slot_count = s->my_virtio_slot_count;
+    memcpy(s->soc.my_virtio_slots, s->my_virtio_slots,
+           sizeof(s->my_virtio_slots));
 #ifdef CONFIG_KVM_M_MODE
     s->soc.kvm_m_mode = kvm_m_mode;
 #endif
@@ -1686,6 +1826,23 @@ static void xiangshan_kmh_set_my_virtio_packed(Object *obj, bool value,
     s->my_virtio_packed = value;
 }
 
+static char *xiangshan_kmh_get_my_virtio_devices(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_devices ? s->my_virtio_devices : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_devices(Object *obj,
+                                                const char *value,
+                                                Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_devices);
+    s->my_virtio_devices = g_strdup(value ? value : "");
+}
+
 static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1893,6 +2050,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
 #ifdef CONFIG_KVM_NESTED
     s->kvm_nested = false;
 #endif
+    s->my_virtio_devices = g_strdup("");
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
     s->my_virtio_net_network = g_strdup("");
@@ -2040,6 +2198,13 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_packed);
     object_class_property_set_description(klass, "my-virtio-packed",
                                           "Expose packed virtqueue support for my-virtio MMIO devices");
+
+    object_class_property_add_str(klass, "my-virtio-devices",
+                                  xiangshan_kmh_get_my_virtio_devices,
+                                  xiangshan_kmh_set_my_virtio_devices);
+    object_class_property_set_description(
+        klass, "my-virtio-devices",
+        "Ordered my-virtio MMIO slot list: blk,net,console,gpu,keyboard,mouse,tablet,genirq");
 
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   xiangshan_kmh_get_my_virtio_blk_image,
