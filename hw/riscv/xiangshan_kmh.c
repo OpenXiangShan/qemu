@@ -521,6 +521,10 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
         xiangshan_kmh_dw_pcie_init(s);
     }
 
+    create_unimplemented_device("xiangshan-kunminghu.my-virtio-slots",
+                                memmap[XIANGSHAN_KMH_MY_VIRTIO].base,
+                                memmap[XIANGSHAN_KMH_MY_VIRTIO].size);
+
 #ifdef CONFIG_MY_VIRTIO
     if (s->my_virtio_blk) {
         const XiangshanKmhMyVirtioSlot *slot =
