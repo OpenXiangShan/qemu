@@ -13,8 +13,21 @@
 #define VIRTIO_EMU_NAME_MOUSE   "virtio_mouse"
 #define VIRTIO_EMU_NAME_TABLET  "virtio_tablet"
 #define VIRTIO_EMU_NAME_GENIRQ  "virtio_genirq"
+#define VIRTIO_EMU_NAME_IOMMU   "virtio_iommu"
 
 typedef void *virtio_handle_t;
+
+enum virtio_iommu_stage_mode {
+	VIRTIO_IOMMU_STAGE_S1 = 0,
+	VIRTIO_IOMMU_STAGE_S2,
+	VIRTIO_IOMMU_STAGE_S1_S2,
+};
+
+enum virtio_iommu_access {
+	VIRTIO_IOMMU_ACCESS_READ = 1U << 0,
+	VIRTIO_IOMMU_ACCESS_WRITE = 1U << 1,
+	VIRTIO_IOMMU_ACCESS_EXEC = 1U << 2,
+};
 
 enum {
 	VIRTIO_GBUS_CSR_MAGIC = 0x0000,
@@ -119,7 +132,23 @@ struct virtio_gbus_ops {
 
 struct virtio_mmio_options {
 	bool packed;
+	bool modern;
+	virtio_handle_t iommu;
+	uint32_t endpoint_id;
+	enum virtio_iommu_stage_mode iommu_mode;
 };
+
+int virtio_iommu_relay_attach(virtio_handle_t iommu, uint64_t namespace_id,
+			      uint32_t domain, uint32_t endpoint);
+int virtio_iommu_relay_detach(virtio_handle_t iommu, uint64_t namespace_id,
+			      uint32_t domain, uint32_t endpoint);
+int virtio_iommu_relay_map(virtio_handle_t iommu, uint64_t namespace_id,
+			   uint32_t domain, uint32_t endpoint,
+			   uint64_t virt_start, uint64_t virt_end,
+			   uint64_t phys_start, uint32_t flags);
+int virtio_iommu_relay_unmap(virtio_handle_t iommu, uint64_t namespace_id,
+			     uint32_t domain, uint32_t endpoint,
+			     uint64_t virt_start, uint64_t virt_end);
 
 int virtio_receive(virtio_handle_t handle, void *buf, int len);
 
@@ -135,6 +164,7 @@ virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
 virtio_handle_t virtio_mmio_create_ex(const char *name, uint64_t start, int len,
 				      struct libvirtio_ops *ops, void *priv,
 				      const struct virtio_mmio_options *opts);
+void virtio_mmio_destroy(virtio_handle_t handle);
 virtio_handle_t virtio_gbus_create(const char *name, uint64_t start, int len,
 				   struct libvirtio_ops *ops, void *priv,
 				   const struct virtio_gbus_ops *gbus_ops,

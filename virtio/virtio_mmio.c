@@ -489,15 +489,16 @@ int virtio_dev_mmio_read(struct virtio_mmio_dev *mdev,
 	return virtio_mmio_config_read(mdev, offset, val, len);
 }
 
-void virtio_mmio_dev_connect(const char *name, struct virtio_mmio_dev *mdev,
-			     struct virtio_emulator *emu)
+int virtio_mmio_dev_connect(const char *name, struct virtio_mmio_dev *mdev,
+			    struct virtio_emulator *emu)
 {
 	strcpy(mdev->dev.name, name);
 	mdev->dev.emu = emu;
 	mdev->dev.guest_features = 0;
 	mdev->config.device_id = emu->id_table[0].type;
 	if (emu && emu->connect)
-		emu->connect(&mdev->dev, emu);
+		return emu->connect(&mdev->dev, emu);
+	return 0;
 }
 
 static struct virtio_notify mmio_notify = {
@@ -533,6 +534,7 @@ struct virtio_mmio_dev *virtio_dev_mmio_create_ex(uint64_t start, uint64_t end,
 	struct virtio_mmio_dev *mdev;
 	uint64_t transport_features = 0;
 	bool packed = opts && opts->packed;
+	bool modern = opts && opts->modern;
 
 	list_for_each_entry(mdev, &virtio_mmio_dev_list, list) {
 		if (memory_region_is_overlay(mdev->start, mdev->end,
@@ -551,13 +553,19 @@ struct virtio_mmio_dev *virtio_dev_mmio_create_ex(uint64_t start, uint64_t end,
 	mdev->end = end;
 
 	mdev->ops = ops;
-	mdev->modern = packed;
+	mdev->iommu = opts ? opts->iommu : NULL;
+	mdev->endpoint_id = opts ? opts->endpoint_id : 0;
+	mdev->iommu_mode = opts ? opts->iommu_mode : VIRTIO_IOMMU_STAGE_S1;
+	mdev->modern = modern || packed || mdev->iommu;
 	mdev->packed_supported = packed;
 
 	mdev->dev.vn = &mmio_notify;
 	mdev->dev.vn_data = (void *)mdev;
 	if (mdev->modern) {
 		transport_features |= (1ULL << VMM_VIRTIO_F_VERSION_1);
+	}
+	if (mdev->iommu) {
+		transport_features |= (1ULL << VMM_VIRTIO_F_IOMMU_PLATFORM);
 	}
 	if (mdev->packed_supported) {
 		transport_features |= (1ULL << VMM_VIRTIO_F_RING_PACKED);

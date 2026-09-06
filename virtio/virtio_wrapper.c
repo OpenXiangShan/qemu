@@ -10,6 +10,7 @@
 #include "virtio_gpu.h"
 #include "virtio_input.h"
 #include "virtio_genirq.h"
+#include "virtio_iommu.h"
 
 /*
  * Copyright (c) 2026 Beijing Institute of Open Source Chip (BOSC)
@@ -81,6 +82,12 @@ static struct virtio_wrapper_dev_info virtio_dev_info[] = {
 		virtio_genirq_emulator_create,
 		{ .class_code = 0xff, .subclass = 0x00,
 		  .device_cfg_len = sizeof(struct virtio_genirq_config) },
+	},
+	{
+		VIRTIO_EMU_NAME_IOMMU,
+		virtio_iommu_emulator_create,
+		{ .class_code = 0x08, .subclass = 0x06,
+		  .device_cfg_len = sizeof(struct virtio_iommu_config) },
 	},
 };
 
@@ -166,6 +173,16 @@ virtio_handle_t virtio_mmio_create_ex(const char *name, uint64_t start, int len,
 	struct virtio_mmio_dev *dev;
 	const struct virtio_wrapper_dev_info *dev_info;
 	struct virtio_emulator *emu;
+	struct virtio_mmio_options iommu_opts;
+
+	if (name && !strcmp(name, VIRTIO_EMU_NAME_IOMMU) &&
+	    (!opts || !opts->modern)) {
+		memset(&iommu_opts, 0, sizeof(iommu_opts));
+		if (opts)
+			iommu_opts = *opts;
+		iommu_opts.modern = true;
+		opts = &iommu_opts;
+	}
 
 	dev = virtio_dev_mmio_create_ex(start, start + len, ops, opts);
 	if (!dev)
@@ -176,14 +193,36 @@ virtio_handle_t virtio_mmio_create_ex(const char *name, uint64_t start, int len,
 	dev_info = virtio_find_dev_info(name);
 	emu = dev_info ? dev_info->create() : NULL;
 	if (!emu) {
+		list_del(&dev->list);
 		if (ops && ops->mm_free)
 			ops->mm_free((uint64_t)(uintptr_t)dev, sizeof(*dev));
 		return NULL;
 	}
 
-	virtio_mmio_dev_connect(name, dev, emu);
+	if (virtio_mmio_dev_connect(name, dev, emu)) {
+		if (dev->dev.emu && dev->dev.emu->disconnect)
+			dev->dev.emu->disconnect(&dev->dev);
+		list_del(&dev->list);
+		if (ops && ops->mm_free)
+			ops->mm_free((uint64_t)(uintptr_t)dev, sizeof(*dev));
+		return NULL;
+	}
 
 	return dev;
+}
+
+void virtio_mmio_destroy(virtio_handle_t handle)
+{
+	struct virtio_mmio_dev *dev = handle;
+
+	if (!dev)
+		return;
+	if (dev->dev.emu && dev->dev.emu->disconnect)
+		dev->dev.emu->disconnect(&dev->dev);
+	virtio_clear_addr_trans_tables(&dev->dev);
+	list_del(&dev->list);
+	if (dev->ops && dev->ops->mm_free)
+		dev->ops->mm_free((uint64_t)(uintptr_t)dev, sizeof(*dev));
 }
 
 virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
