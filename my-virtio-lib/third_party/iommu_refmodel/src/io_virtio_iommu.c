@@ -6,7 +6,6 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1044,13 +1043,6 @@ int io_virtio_iommu_translate(IoVirtioIommu *iommu, uint32_t endpoint,
          !(mapping->flags & IO_VIRTIO_IOMMU_MAP_READ)) ||
         ((access & IO_VIRTIO_IOMMU_ACCESS_WRITE) &&
          !(mapping->flags & IO_VIRTIO_IOMMU_MAP_WRITE))) {
-        if (getenv("MY_VIRTIO_IOMMU_TRACE")) {
-            fprintf(stderr, "viommu translate reject endpoint=%u domain=%u "
-                    "addr=%#llx len=%zu stage=%u relay=%u mapping=%p "
-                    "access=%#x\n", endpoint, domain->id,
-                    (unsigned long long)address, length, stage,
-                    relay_active, (void *)mapping, access);
-        }
         return -EFAULT;
     }
     context.device_id = endpoint;
@@ -1059,13 +1051,6 @@ int io_virtio_iommu_translate(IoVirtioIommu *iommu, uint32_t endpoint,
     if (!io_refmodel_iommu_translate(iommu->refmodel, address, length,
                                      &context, access, translated,
                                      address_mask, &permissions)) {
-        if (getenv("MY_VIRTIO_IOMMU_TRACE")) {
-            fprintf(stderr, "viommu translate refmodel fault endpoint=%u "
-                    "domain=%u addr=%#llx len=%zu stage=%u relay=%u "
-                    "translated-request=%u\n", endpoint, domain->id,
-                    (unsigned long long)address, length, stage,
-                    relay_active, context.is_translated);
-        }
         return -EFAULT;
     }
     if (*address_mask > VIOMMU_PAGE_MASK) {

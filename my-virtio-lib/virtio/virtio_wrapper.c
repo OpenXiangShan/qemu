@@ -225,7 +225,6 @@ void virtio_mmio_destroy(virtio_handle_t handle)
 		dev->ops->mm_free((uint64_t)(uintptr_t)dev, sizeof(*dev));
 }
 
-
 virtio_handle_t virtio_mmio_create(const char *name, uint64_t start, int len,
 				   struct libvirtio_ops *ops, void *priv)
 {

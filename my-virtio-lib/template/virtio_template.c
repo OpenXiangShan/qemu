@@ -7,6 +7,7 @@
 
 #include <limits.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,7 +111,7 @@ static void template_free(uint64_t addr, int size)
 	free((void *)(uintptr_t)addr);
 }
 
-static int template_dma_read(uint64_t gpa, void *dst, uint32_t len)
+static int template_dma_read(uint64_t gpa, void *dst, uint32_t len, void *priv)
 {
 	/*
 	 * TODO: Copy len bytes from guest/SoC physical address gpa into dst.
@@ -120,10 +121,11 @@ static int template_dma_read(uint64_t gpa, void *dst, uint32_t len)
 	(void)gpa;
 	(void)dst;
 	(void)len;
+	(void)priv;
 	return -1;
 }
 
-static int template_dma_write(uint64_t gpa, void *src, uint32_t len)
+static int template_dma_write(uint64_t gpa, void *src, uint32_t len, void *priv)
 {
 	/*
 	 * TODO: Copy len bytes from src into guest/SoC physical address gpa.
@@ -131,6 +133,7 @@ static int template_dma_write(uint64_t gpa, void *src, uint32_t len)
 	(void)gpa;
 	(void)src;
 	(void)len;
+	(void)priv;
 	return -1;
 }
 
@@ -296,6 +299,18 @@ static struct libvirtio_ops template_ops = {
 	},
 };
 
+static virtio_handle_t template_create_mmio(struct template_virtio_dev *dev,
+					    bool packed)
+{
+	struct virtio_mmio_options options = {
+		.packed = packed,
+	};
+
+	return virtio_mmio_create_ex(dev->name, dev->mmio_base,
+				     dev->mmio_size, &template_ops, dev,
+				     &options);
+}
+
 static void template_net_drain_rx(struct template_virtio_dev *dev)
 {
 	for (;;) {
@@ -398,7 +413,8 @@ static void template_backend_event(void *opaque, virtio_backend_handle_t handle,
 }
 
 static int template_create_blk(struct template_virtio_dev *dev,
-			       uint64_t base, const char *image_path)
+			       uint64_t base, const char *image_path,
+			       bool packed)
 {
 	struct virtio_backend_config backend_config = {
 		.type = VIRTIO_BACKEND_BLK,
@@ -414,12 +430,12 @@ static int template_create_blk(struct template_virtio_dev *dev,
 	if (!dev->backend)
 		return -1;
 
-	dev->virtio = virtio_mmio_create(dev->name, dev->mmio_base,
-					 dev->mmio_size, &template_ops, dev);
+	dev->virtio = template_create_mmio(dev, packed);
 	return dev->virtio ? 0 : -1;
 }
 
-static int template_create_net(struct template_virtio_dev *dev, uint64_t base)
+static int template_create_net(struct template_virtio_dev *dev, uint64_t base,
+			       bool packed)
 {
 	static const uint8_t mac[6] = {
 		0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
@@ -454,13 +470,12 @@ static int template_create_net(struct template_virtio_dev *dev, uint64_t base)
 	if (!dev->backend)
 		return -1;
 
-	dev->virtio = virtio_mmio_create(dev->name, dev->mmio_base,
-					 dev->mmio_size, &template_ops, dev);
+	dev->virtio = template_create_mmio(dev, packed);
 	return dev->virtio ? 0 : -1;
 }
 
 static int template_create_console(struct template_virtio_dev *dev,
-				   uint64_t base)
+				   uint64_t base, bool packed)
 {
 	struct virtio_backend_callbacks callbacks = {
 		.event = template_backend_event,
@@ -481,8 +496,7 @@ static int template_create_console(struct template_virtio_dev *dev,
 	if (!dev->backend)
 		return -1;
 
-	dev->virtio = virtio_mmio_create(dev->name, dev->mmio_base,
-					 dev->mmio_size, &template_ops, dev);
+	dev->virtio = template_create_mmio(dev, packed);
 	return dev->virtio ? 0 : -1;
 }
 
@@ -490,7 +504,7 @@ static int template_gpu_guest_read(void *opaque, uint64_t gpa,
 				   void *dst, uint32_t len)
 {
 	(void)opaque;
-	return template_dma_read(gpa, dst, len);
+	return template_dma_read(gpa, dst, len, NULL);
 }
 
 static void template_gpu_scanout_update(void *opaque, uint32_t scanout_id,
@@ -530,7 +544,8 @@ static void template_gpu_scanout_disable(void *opaque, uint32_t scanout_id)
 }
 
 static int template_create_gpu(struct template_virtio_dev *dev,
-			       uint64_t base, const char *vnc_listen)
+			       uint64_t base, const char *vnc_listen,
+			       bool packed)
 {
 	struct virtio_backend_config ui_config = {
 		.type = VIRTIO_BACKEND_UI,
@@ -570,8 +585,7 @@ static int template_create_gpu(struct template_virtio_dev *dev,
 		return -1;
 	}
 
-	dev->virtio = virtio_mmio_create(dev->name, dev->mmio_base,
-					 dev->mmio_size, &template_ops, dev);
+	dev->virtio = template_create_mmio(dev, packed);
 	if (!dev->virtio) {
 		virtio_backend_destroy(dev->backend);
 		dev->backend = NULL;
@@ -604,7 +618,7 @@ static int template_create_input(struct template_virtio_dev *dev,
 				 enum virtio_backend_input_profile profile,
 				 enum virtio_backend_input_source source,
 				 const char *evdev_path,
-				 virtio_backend_handle_t ui)
+				 virtio_backend_handle_t ui, bool packed)
 {
 	struct virtio_backend_callbacks callbacks = {
 		.event = template_backend_event,
@@ -633,8 +647,7 @@ static int template_create_input(struct template_virtio_dev *dev,
 	if (!dev->backend)
 		return -1;
 
-	dev->virtio = virtio_mmio_create(dev->name, dev->mmio_base,
-					 dev->mmio_size, &template_ops, dev);
+	dev->virtio = template_create_mmio(dev, packed);
 	if (!dev->virtio) {
 		virtio_backend_destroy(dev->backend);
 		dev->backend = NULL;
@@ -644,36 +657,42 @@ static int template_create_input(struct template_virtio_dev *dev,
 	return 0;
 }
 
-int template_virtio_init(const char *disk_image, const char *vnc_listen)
+int template_virtio_init_ex(const char *disk_image, const char *vnc_listen,
+			    bool packed)
 {
-	if (template_create_blk(&g_ctx.blk, 0x10001000, disk_image) < 0)
+	if (template_create_blk(&g_ctx.blk, 0x10001000, disk_image, packed) < 0)
 		return -1;
-	if (template_create_net(&g_ctx.net, 0x10002000) < 0)
+	if (template_create_net(&g_ctx.net, 0x10002000, packed) < 0)
 		return -1;
-	if (template_create_console(&g_ctx.console, 0x10003000) < 0)
+	if (template_create_console(&g_ctx.console, 0x10003000, packed) < 0)
 		return -1;
-	if (template_create_gpu(&g_ctx.gpu, 0x10004000, vnc_listen) < 0)
+	if (template_create_gpu(&g_ctx.gpu, 0x10004000, vnc_listen, packed) < 0)
 		return -1;
 	if (template_create_input(&g_ctx.keyboard, 0x10005000,
 				  TEMPLATE_DEV_KEYBOARD,
 				  VIRTIO_BACKEND_INPUT_KEYBOARD,
 				  VIRTIO_BACKEND_INPUT_SOURCE_UI, NULL,
-				  g_ctx.gpu.ui) < 0)
+				  g_ctx.gpu.ui, packed) < 0)
 		return -1;
 	if (template_create_input(&g_ctx.mouse, 0x10006000,
 				  TEMPLATE_DEV_MOUSE,
 				  VIRTIO_BACKEND_INPUT_MOUSE,
 				  VIRTIO_BACKEND_INPUT_SOURCE_UI, NULL,
-				  g_ctx.gpu.ui) < 0)
+				  g_ctx.gpu.ui, packed) < 0)
 		return -1;
 	if (template_create_input(&g_ctx.tablet, 0x10007000,
 				  TEMPLATE_DEV_TABLET,
 				  VIRTIO_BACKEND_INPUT_TABLET,
 				  VIRTIO_BACKEND_INPUT_SOURCE_UI, NULL,
-				  g_ctx.gpu.ui) < 0)
+				  g_ctx.gpu.ui, packed) < 0)
 		return -1;
 
 	return 0;
+}
+
+int template_virtio_init(const char *disk_image, const char *vnc_listen)
+{
+	return template_virtio_init_ex(disk_image, vnc_listen, false);
 }
 
 static struct template_virtio_dev *template_find_mmio_dev(uint64_t addr)
@@ -768,8 +787,9 @@ int main(int argc, char **argv)
 {
 	const char *disk_image = argc > 1 ? argv[1] : "disk.img";
 	const char *vnc_listen = argc > 2 ? argv[2] : "127.0.0.1:5915";
+	bool packed = argc > 3 && strcmp(argv[3], "packed") == 0;
 
-	if (template_virtio_init(disk_image, vnc_listen) < 0) {
+	if (template_virtio_init_ex(disk_image, vnc_listen, packed) < 0) {
 		fprintf(stderr, "failed to initialize virtio template devices\n");
 		return 1;
 	}

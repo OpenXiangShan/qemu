@@ -2,7 +2,6 @@
 #include <endian.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "io_virtio_iommu.h"
@@ -24,11 +23,6 @@ struct virtio_iommu_dev {
 	uint64_t features;
 	bool pending_request;
 };
-
-static bool virtio_iommu_trace_enabled(void)
-{
-	return getenv("MY_VIRTIO_IOMMU_TRACE") != NULL;
-}
 
 static IoVirtioIommuMode iommu_refmodel_mode(
 					enum virtio_iommu_stage_mode mode)
@@ -214,9 +208,6 @@ static int virtio_iommu_handle_request(struct virtio_iommu_dev *idev,
 		ret = io_virtio_iommu_attach(idev->refmodel, domain, endpoint,
 					     flags,
 					     iommu_refmodel_mode(idev->mode));
-		if (virtio_iommu_trace_enabled())
-			my_print(idev->vdev, "viommu attach domain=%u endpoint=%u flags=%#x mode=%u ret=%d\n",
-				 domain, endpoint, flags, idev->mode, ret);
 		return iommu_status_from_errno(ret);
 	case VIRTIO_IOMMU_T_DETACH:
 		if (len != sizeof(struct virtio_iommu_req_detach) -
@@ -227,9 +218,6 @@ static int virtio_iommu_handle_request(struct virtio_iommu_dev *idev,
 		domain = le32toh(domain);
 		endpoint = le32toh(endpoint);
 		ret = io_virtio_iommu_detach(idev->refmodel, domain, endpoint);
-		if (virtio_iommu_trace_enabled())
-			my_print(idev->vdev, "viommu detach domain=%u endpoint=%u ret=%d\n",
-				 domain, endpoint, ret);
 		return iommu_status_from_errno(ret);
 	case VIRTIO_IOMMU_T_MAP:
 		if (len != sizeof(struct virtio_iommu_req_map) -
@@ -254,11 +242,6 @@ static int virtio_iommu_handle_request(struct virtio_iommu_dev *idev,
 		ret = io_virtio_iommu_map(idev->refmodel, domain, virt_start,
 					  virt_end, phys_start, flags,
 					  iommu_refmodel_mode(idev->mode));
-		if (virtio_iommu_trace_enabled())
-			my_print(idev->vdev, "viommu map domain=%u iova=%#llx-%#llx phys=%#llx flags=%#x mode=%u ret=%d\n",
-				 domain, (unsigned long long)virt_start,
-				 (unsigned long long)virt_end,
-				 (unsigned long long)phys_start, flags, idev->mode, ret);
 		return iommu_status_from_errno(ret);
 	case VIRTIO_IOMMU_T_UNMAP:
 		if (len != sizeof(struct virtio_iommu_req_unmap) -
@@ -275,10 +258,6 @@ static int virtio_iommu_handle_request(struct virtio_iommu_dev *idev,
 		ret = io_virtio_iommu_unmap(idev->refmodel, domain, virt_start,
 					    virt_end,
 					    iommu_refmodel_mode(idev->mode));
-		if (virtio_iommu_trace_enabled())
-			my_print(idev->vdev, "viommu unmap domain=%u iova=%#llx-%#llx mode=%u ret=%d\n",
-				 domain, (unsigned long long)virt_start,
-				 (unsigned long long)virt_end, idev->mode, ret);
 		return iommu_status_from_errno(ret);
 	case VIRTIO_IOMMU_T_PROBE:
 		if (len != sizeof(struct virtio_iommu_req_probe))

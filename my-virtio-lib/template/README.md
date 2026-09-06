@@ -27,7 +27,9 @@ as `TODO`.
    - input: keyboard/mouse/tablet profiles, using either UI/VNC, evdev, or
      external event injection
 
-3. Create the virtio MMIO device with `virtio_mmio_create()`.
+3. Create the virtio MMIO device with `virtio_mmio_create_ex()`.
+   Pass `struct virtio_mmio_options.packed = true` to advertise modern
+   packed-ring support, or leave it false for the split-ring default.
 
 4. Route platform MMIO accesses to:
    - `virtio_mmio_read()`
@@ -42,7 +44,8 @@ as `TODO`.
 
 ## Devices in the template
 
-The sample `template_virtio_init()` creates these MMIO devices:
+The sample `template_virtio_init()` creates these MMIO devices with split
+queues. Use `template_virtio_init_ex(..., true)` to advertise packed queues:
 
 - `0x10001000`: blk
 - `0x10002000`: net
@@ -53,7 +56,8 @@ The sample `template_virtio_init()` creates these MMIO devices:
 - `0x10007000`: tablet, backed by the GPU UI
 
 The default VNC listen address is `127.0.0.1:5915`; pass a second argv value to
-the sample `main()` to override it.
+the sample `main()` to override it. Pass `packed` as the third argv value to use
+the packed-ring example path.
 
 For non-VNC or additional display sinks, replace `template_gpu_scanout_update()`
 and `template_gpu_scanout_disable()` with platform display code. With the

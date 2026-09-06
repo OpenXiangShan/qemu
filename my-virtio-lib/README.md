@@ -7,6 +7,8 @@ other environments.
 - No OS dependencies — runs directly on physical hardware.
 - Virtio 1.0 compliant - Support for split virtqueues.
 - Support virtio-blk & virtio-net & virtio-console.
+- Include a vendored RISC-V IOMMU reference model and a standard
+  virtio-iommu device shell.
 - Flexible I/O backend - Support for adding your own custom virtio device module.
 - Isolate platform-specific code - The user implements a small set of callbacks
   for memory access, interrupt delivery...
@@ -67,9 +69,10 @@ ninja qemu-system-riscv64
 
 ## Source layout
 ```
-virtio/      # Sources and internal headers for libMyVirtio.a
-backend/     # Sources and internal headers for libMyVirtio_backend.a
-template/    # Integration template showing how to wire both libraries
+virtio/                         # Sources and internal headers for libMyVirtio.a
+backend/                        # Sources and internal headers for libMyVirtio_backend.a
+third_party/iommu_refmodel/     # Vendored RISC-V IOMMU model and adapter
+template/                       # Integration template showing both libraries
 ```
 
 ## Output
