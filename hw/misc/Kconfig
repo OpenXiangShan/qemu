@@ -262,4 +262,8 @@ config MY_VIRTIO_GENIRQ
     bool
     depends on MY_VIRTIO
 
+config MY_VIRTIO_IOMMU
+    bool
+    depends on MY_VIRTIO
+
 source macio/Kconfig

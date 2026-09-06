@@ -38,6 +38,8 @@ struct MyVirtioStateConsole {
     int backend_input_fd;
     int backend_output_fd;
     bool packed;
+    void *iommu;
+    uint32_t endpoint_id;
 };
 
 #define TYPE_MY_VIRTIO_CONSOLE "my-virtio-console"
@@ -218,13 +220,16 @@ static struct libvirtio_ops ops = {
 
 void my_virtio_console_create(hwaddr start, hwaddr size, qemu_irq irq,
                               const char *backend, const char *input_path,
-                              const char *output_path, bool packed)
+                              const char *output_path, bool packed,
+                              const MyVirtioDmaConfig *dma)
 {
     MyVirtioStateConsole *s = MY_VIRTIO_CONSOLE(qdev_new(TYPE_MY_VIRTIO_CONSOLE));
 
     base = start;
     len = size;
     s->packed = packed;
+    s->iommu = dma ? dma->iommu : NULL;
+    s->endpoint_id = dma ? dma->endpoint_id : 0;
 
     qdev_prop_set_string(DEVICE(s), "backend", backend ? backend : "external");
     if (input_path && *input_path) {
@@ -251,6 +256,8 @@ static void my_virtio_console_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     struct virtio_mmio_options opts = {
         .packed = s->packed,
+        .iommu = s->iommu,
+        .endpoint_id = s->endpoint_id,
     };
     enum virtio_backend_console_backend backend_type =
         VIRTIO_BACKEND_CONSOLE_EXTERNAL;

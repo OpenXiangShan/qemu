@@ -24,6 +24,8 @@ struct MyVirtioStateGpu {
     virtio_backend_handle_t ui;
     char *vnc_listen;
     bool packed;
+    void *iommu;
+    uint32_t endpoint_id;
 };
 
 #define TYPE_MY_VIRTIO_GPU "my-virtio-gpu"
@@ -145,13 +147,16 @@ static struct libvirtio_ops ops = {
 };
 
 void *my_virtio_gpu_create(hwaddr start, hwaddr size, qemu_irq irq,
-                           const char *vnc_listen, bool packed)
+                           const char *vnc_listen, bool packed,
+                           const MyVirtioDmaConfig *dma)
 {
     MyVirtioStateGpu *s = MY_VIRTIO_GPU(qdev_new(TYPE_MY_VIRTIO_GPU));
 
     s->base = start;
     s->size = size;
     s->packed = packed;
+    s->iommu = dma ? dma->iommu : NULL;
+    s->endpoint_id = dma ? dma->endpoint_id : 0;
     if (vnc_listen && *vnc_listen) {
         qdev_prop_set_string(DEVICE(s), "vnc-listen", vnc_listen);
     }
@@ -167,6 +172,8 @@ static void my_virtio_gpu_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     struct virtio_mmio_options opts = {
         .packed = s->packed,
+        .iommu = s->iommu,
+        .endpoint_id = s->endpoint_id,
     };
     struct virtio_backend_config ui_config = {
         .type = VIRTIO_BACKEND_UI,

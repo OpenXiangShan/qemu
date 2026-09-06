@@ -22,7 +22,7 @@ The ``xiangshan-kunminghu`` machine supports the following devices:
 * 1 UART
 * PCIe host bridge
 * Optional system IOMMU platform device
-* Optional my-virtio MMIO blk/net/console/gpu/input/genirq devices
+* Optional my-virtio MMIO iommu/blk/net/console/gpu/input/genirq devices
 
 Boot options
 ------------
@@ -101,13 +101,55 @@ Machine options
 
 ``my-virtio-devices=<list>``
    所有已启用 my-virtio 设备的有序列表。支持 ``blk``、``net``、
-   ``console``、``gpu``、``keyboard``、``mouse``、``tablet`` 和
-   ``genirq``。启用任意 ``my-virtio-*=on`` 时必须提供此属性，列表必须与
+   ``console``、``gpu``、``keyboard``、``mouse``、``tablet``、
+   ``genirq`` 和 ``iommu``。启用任意 ``my-virtio-*=on`` 时必须提供此属性，列表必须与
    启用集合完全一致，且不能包含未知、重复或未启用的设备。slot N 使用
    ``0x310a0000 + N * 0x1000`` 和 IRQ ``15 + N``，最多 16 个 slot。
    QEMU 的选项语法用两个逗号表示字符串值中的一个逗号，因此两设备示例写成
    ``-M 'xiangshan-kunminghu,my-virtio-blk=on,my-virtio-genirq=on,my-virtio-devices=blk,,genirq'``；
    machine 属性实际收到的值是 ``blk,genirq``。
+
+``my-virtio-iommu=on|off``
+   创建标准 virtio-iommu v0.12 MMIO 设备。设备提供 request VQ
+   （ATTACH/DETACH/MAP/UNMAP/PROBE）和 event VQ（fault），后端直接调用
+   ``my-virtio-lib/third_party/iommu_refmodel`` 中 vendored 的 RISC-V IOMMU
+   reference model。只需要使用 ``--enable-my-virtio`` 构建 QEMU；该设备不
+   依赖 ``io-system-lib``。
+
+``my-virtio-iommu-relay=on|off``
+   在 KVM 模式下使用 Linux 内核中的 virtio-mmio relay。relay 仍然实现
+   同一个标准 request/event VQ 接口；当前已实现 request VQ，inner fault
+   event 的异步注入仍是后续工作。KVM relay 通过
+   ``ioremap(0x311e0000, 0x1000)`` 访问 outer TCG QEMU 的物理 relay
+   MMIO mailbox；outer TCG QEMU 捕获这些 ``writel/readl`` 操作并同步调用
+   RISC-V IOMMU refmodel。该选项要求 ``my-virtio-iommu=on`` 和 KVM；
+   outer TCG QEMU 的 userspace virtio-iommu 负责 outer Linux/VFIO 的 S2
+   控制面，inner KVM QEMU 只呈现 KVM relay 的 S1 控制面。该窗口是
+   host-only 管理接口，
+   不是传给 KVM 的 userspace 虚拟地址。每个 inner QEMU 使用自己的
+   namespace（由 QEMU 进程 ID 派生），并通过 KVM device 属性指定 outer
+   物理 endpoint；inner 请求中的逻辑 endpoint 只用于校验，不会直接作为
+   outer refmodel 的 endpoint。
+
+``my-virtio-iommu-devices=<list>``
+   指定哪些已启用的 my-virtio endpoint 的 ring 和 payload DMA 先经过
+   virtio-iommu；例如 ``blk`` 使用固定 endpoint ID ``0x10``。生成 DTB
+   会给所选设备加入 ``iommus``，IOMMU 自身始终走 raw memory path。
+
+``my-virtio-iommu-mode=s1|s2|two-stage``
+   选择 refmodel translation stage，默认 ``s1``。当前 ``s1`` 和 ``s2``
+   adapter 已实现；``two-stage`` 的 inner KVM relay 已提供标准协议、KVM
+   device 桥和物理 MMIO mailbox handoff，并已通过 outer TCG Linux 到
+   inner KVM Linux 的单 VM ``/dev/vda`` mount/read/write/umount 验证。运行
+   环境中的 outer RISC-V Linux 必须提供 ``/dev/kvm``、AIA
+   hardware-accelerated KVM，并能访问 ``0x311e0000`` relay window。
+
+``my-virtio-vfio-platform=on|off``
+   为 S2-only 直通在 guest 地址 ``0x310a1000``、IRQ 16 创建一个
+   ``vfio-platform`` 窗口，并在 QEMU 生成的 DT 中加入不带 ``iommus``
+   的 ``virtio,mmio`` 节点。该窗口保留 my-virtio slot 1；需配合
+   ``-device vfio-platform,host=<outer-platform-device>`` 使用。inner Linux
+   只看到直通的 virtio-blk，不看到 virtio-iommu。
 
 ``my-virtio-blk=on|off``
    是否创建基于 libMyVirtio 的 virtio-mmio blk 设备，默认 ``off``。
@@ -275,6 +317,55 @@ configure 时需要显式加 ``--enable-my-virtio``：
 
 没有打开该选项时，运行时请求 ``my-virtio-*=on`` 会直接报错：
 ``my-virtio support is not compiled in; reconfigure QEMU with --enable-my-virtio``。
+
+virtio-iommu 使用 my-virtio-lib 内置的 refmodel：
+
+.. code-block:: bash
+
+   $ ./configure --target-list=riscv64-softmmu --disable-docs \
+       --enable-my-virtio
+
+S1-only blk 示例中，逗号作为字符串值时需要写成双逗号：
+
+.. code-block:: bash
+
+   $ ./build/qemu-system-riscv64 \
+       -M 'xiangshan-kunminghu,generated-dtb=on,my-virtio-iommu=on,my-virtio-blk=on,my-virtio-devices=iommu,,blk,my-virtio-iommu-devices=blk,my-virtio-iommu-mode=s1,my-virtio-blk-image=/path/to/disk.img' \
+       -kernel /path/to/Image -nographic
+
+S2-only inner KVM 示例（outer Linux 已将设备绑定到 vfio-platform）：
+
+outer Linux 需要 ``vfio_platform.reset_required=0``；若平台不提供隔离的
+MSI domain，还需要 ``vfio_iommu_type1.allow_unsafe_interrupts=1``。将
+``310a1000.virtio1`` 从 ``virtio-mmio`` 解绑并通过 ``driver_override``
+绑定到 ``vfio-platform`` 后，确认设备具有 ``iommu_group``，且对应的
+``/dev/vfio/<group>`` 已创建。
+
+.. code-block:: bash
+
+   $ qemu-system-riscv64 \
+       -M xiangshan-kunminghu,generated-dtb=on,my-virtio-vfio-platform=on \
+       -accel kvm -cpu host -m 128M -smp 1 -bios none \
+       -kernel /path/to/Image \
+       -device vfio-platform,host=310a1000.virtio1,x-no-mmap=on,x-irqfd=off \
+       -append 'console=ttyS0,115200 earlycon=sbi rdinit=/bin/sh loglevel=8' \
+       -nographic -monitor none
+
+``128M`` 是当前 4 KiB G-stage leaf 实现的推荐验收配置；更大内存会增加
+VFIO 初始 MAP 请求的页表构建时间。inner DT 中的直通节点不得包含
+``iommus``，其 DMA 地址由 outer VFIO MAP/UNMAP 通过 S2 refmodel 转换。
+
+S1+S2 relay 验收使用 ``run-virtio-iommu-stage3-inner.sh``。该脚本运行在
+outer TCG QEMU 启动的 RISC-V Linux 中：outer QEMU 先以
+``my-virtio-iommu-mode=two-stage`` 创建 userspace refmodel 和 VFIO S2
+控制面，脚本启动的 inner QEMU 再以
+``my-virtio-iommu-relay=on`` 创建 KVM relay 和 inner S1 virtio-iommu。
+inner DT 应同时包含 virtio-iommu 和 passed-through virtio-blk 的
+``iommus`` 关系；脚本启动 inner shell 并在退出后恢复 outer 驱动，
+inner shell 中应执行 ``/dev/vda`` 的 ext4 mount、读写和卸载检查。该路径必须在 outer RISC-V Linux 的
+``/dev/kvm``、AIA hardware-accelerated KVM 和物理 ``0x311e0000`` relay
+mailbox 都可用时运行。当前单 inner VM 验收已通过；relay fault event 异步
+注入和多个 inner VM 的并发压力测试不在该验收结果内。
 
 KVM software M-mode 也默认不参与编译。用于嵌套测试的 RISC-V host 版本需要
 同时打开 KVM、M-mode 和 my-virtio：

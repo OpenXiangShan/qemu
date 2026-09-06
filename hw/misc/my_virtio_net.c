@@ -31,6 +31,8 @@ struct MyVirtioStateNet {
     char *dns_ip;
     uint8_t mac[6];
     bool packed;
+    void *iommu;
+    uint32_t endpoint_id;
 };
 
 #define TYPE_MY_VIRTIO_NET "my-virtio-net"
@@ -211,7 +213,7 @@ void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq,
                           const char *hostfwd, const char *network,
                           const char *netmask, const char *host_ip,
                           const char *dhcp_start, const char *dns_ip,
-                          bool packed)
+                          bool packed, const MyVirtioDmaConfig *dma)
 {
     MyVirtioStateNet *s = MY_VIRTIO_NET(qdev_new("my-virtio-net"));
 
@@ -224,6 +226,8 @@ void my_virtio_net_create(hwaddr start, hwaddr size, qemu_irq irq,
     s->dhcp_start = g_strdup(dhcp_start ? dhcp_start : "");
     s->dns_ip = g_strdup(dns_ip ? dns_ip : "");
     s->packed = packed;
+    s->iommu = dma ? dma->iommu : NULL;
+    s->endpoint_id = dma ? dma->endpoint_id : 0;
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, base);
@@ -238,6 +242,8 @@ static void my_virtio_net_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     struct virtio_mmio_options opts = {
         .packed = s->packed,
+        .iommu = s->iommu,
+        .endpoint_id = s->endpoint_id,
     };
     struct virtio_backend_callbacks backend_callbacks = {
         .event = my_virtio_net_backend_event,

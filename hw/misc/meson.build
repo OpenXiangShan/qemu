@@ -199,8 +199,15 @@ if get_option('my_virtio').enabled()
   my_virtio_backend = declare_dependency(
     include_directories: include_directories(
       '../../my-virtio-lib/virtio',
-      '../../my-virtio-lib/backend'),
+      '../../my-virtio-lib/backend',
+      '../../my-virtio-lib/third_party/iommu_refmodel/include'),
     dependencies: [glib, threads, libm] + socket,
+    # Keep the vendored refmodel ahead of io-system's copy when both optional
+    # backends are enabled.  They intentionally expose the same upstream C
+    # symbols, but my-virtio must resolve all of them from libMyVirtio.a.
+    link_args: [
+      join_paths(my_virtio_lib_output_dir, 'libMyVirtio.a'),
+    ],
     sources: my_virtio_libs)
   system_ss.add(my_virtio_backend)
   system_ss.add(when: 'CONFIG_MY_VIRTIO_BLK',
@@ -215,4 +222,6 @@ if get_option('my_virtio').enabled()
                 if_true: files('my_virtio_input.c'))
   system_ss.add(when: 'CONFIG_MY_VIRTIO_GENIRQ',
                 if_true: files('my_virtio_genirq.c'))
+  system_ss.add(when: 'CONFIG_MY_VIRTIO_IOMMU',
+                if_true: files('my_virtio_iommu.c'))
 endif

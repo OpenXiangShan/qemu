@@ -26,6 +26,8 @@ typedef struct MyVirtioStateInput {
     char *evdev_path;
     virtio_backend_handle_t ui;
     bool packed;
+    void *iommu;
+    uint32_t endpoint_id;
 } MyVirtioStateInput;
 
 #define TYPE_MY_VIRTIO_INPUT "my-virtio-input"
@@ -185,7 +187,8 @@ static struct libvirtio_ops ops = {
 static void my_virtio_input_create(hwaddr start, hwaddr size, qemu_irq irq,
                                    const char *type, const char *backend,
                                    const char *evdev_path, void *ui,
-                                   bool packed)
+                                   bool packed,
+                                   const MyVirtioDmaConfig *dma)
 {
     MyVirtioStateInput *s = MY_VIRTIO_INPUT(qdev_new(type));
 
@@ -193,6 +196,8 @@ static void my_virtio_input_create(hwaddr start, hwaddr size, qemu_irq irq,
     s->size = size;
     s->ui = ui;
     s->packed = packed;
+    s->iommu = dma ? dma->iommu : NULL;
+    s->endpoint_id = dma ? dma->endpoint_id : 0;
     qdev_prop_set_string(DEVICE(s), "backend", backend ? backend : "vnc");
     if (evdev_path && *evdev_path) {
         qdev_prop_set_string(DEVICE(s), "evdev-path", evdev_path);
@@ -204,26 +209,29 @@ static void my_virtio_input_create(hwaddr start, hwaddr size, qemu_irq irq,
 
 void my_virtio_keyboard_create(hwaddr start, hwaddr size, qemu_irq irq,
                                const char *backend, const char *evdev_path,
-                               void *ui, bool packed)
+                               void *ui, bool packed,
+                               const MyVirtioDmaConfig *dma)
 {
     my_virtio_input_create(start, size, irq, TYPE_MY_VIRTIO_KEYBOARD,
-                           backend, evdev_path, ui, packed);
+                           backend, evdev_path, ui, packed, dma);
 }
 
 void my_virtio_mouse_create(hwaddr start, hwaddr size, qemu_irq irq,
                             const char *backend, const char *evdev_path,
-                            void *ui, bool packed)
+                            void *ui, bool packed,
+                            const MyVirtioDmaConfig *dma)
 {
     my_virtio_input_create(start, size, irq, TYPE_MY_VIRTIO_MOUSE,
-                           backend, evdev_path, ui, packed);
+                           backend, evdev_path, ui, packed, dma);
 }
 
 void my_virtio_tablet_create(hwaddr start, hwaddr size, qemu_irq irq,
                              const char *backend, const char *evdev_path,
-                             void *ui, bool packed)
+                             void *ui, bool packed,
+                             const MyVirtioDmaConfig *dma)
 {
     my_virtio_input_create(start, size, irq, TYPE_MY_VIRTIO_TABLET,
-                           backend, evdev_path, ui, packed);
+                           backend, evdev_path, ui, packed, dma);
 }
 
 static void my_virtio_input_realize(DeviceState *dev, Error **errp)
@@ -232,6 +240,8 @@ static void my_virtio_input_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     struct virtio_mmio_options opts = {
         .packed = s->packed,
+        .iommu = s->iommu,
+        .endpoint_id = s->endpoint_id,
     };
     struct virtio_backend_callbacks callbacks = {
         .event = my_virtio_input_backend_event,

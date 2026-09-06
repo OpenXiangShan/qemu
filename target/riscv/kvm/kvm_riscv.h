@@ -31,6 +31,11 @@ void kvm_riscv_my_virtio_genirq_create(uint64_t dev_addr, uint64_t dev_size,
                                        uint64_t backing_addr,
                                        uint64_t backing_size,
                                        uint32_t irq);
+void kvm_riscv_my_virtio_iommu_create(uint64_t dev_addr, uint64_t dev_size,
+                                      uint64_t backing_addr,
+                                      uint64_t backing_size, uint32_t irq,
+                                      uint64_t namespace_id,
+                                      uint32_t physical_endpoint);
 void riscv_kvm_aplic_request(void *opaque, int irq, int level);
 int kvm_riscv_sync_mpstate_to_kvm(RISCVCPU *cpu, int state);
 void riscv_kvm_cpu_finalize_features(RISCVCPU *cpu, Error **errp);

@@ -19,6 +19,8 @@ typedef struct MyVirtioStateGenirq {
     hwaddr base;
     hwaddr size;
     bool packed;
+    void *iommu;
+    uint32_t endpoint_id;
 } MyVirtioStateGenirq;
 
 #define TYPE_MY_VIRTIO_GENIRQ "my-virtio-genirq"
@@ -125,13 +127,15 @@ static void my_virtio_genirq_bh(void *opaque)
 }
 
 void my_virtio_genirq_create(hwaddr start, hwaddr size, qemu_irq irq,
-                             bool packed)
+                             bool packed, const MyVirtioDmaConfig *dma)
 {
     MyVirtioStateGenirq *s = MY_VIRTIO_GENIRQ(qdev_new(TYPE_MY_VIRTIO_GENIRQ));
 
     s->base = start;
     s->size = size;
     s->packed = packed;
+    s->iommu = dma ? dma->iommu : NULL;
+    s->endpoint_id = dma ? dma->endpoint_id : 0;
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, start);
     sysbus_connect_irq(SYS_BUS_DEVICE(s), 0, irq);
@@ -143,6 +147,8 @@ static void my_virtio_genirq_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     struct virtio_mmio_options opts = {
         .packed = s->packed,
+        .iommu = s->iommu,
+        .endpoint_id = s->endpoint_id,
     };
 
     memory_region_init_io(&s->iomem, OBJECT(dev), &my_virtio_genirq_mmio_ops,

@@ -5,6 +5,7 @@
 #include "virtio_wrapper.h"
 #include "virtio_mmio.h"
 #include "virtio.h"
+#include "virtio_iommu.h"
 #include "utils.h"
 
 /*
@@ -142,21 +143,71 @@ u32 do_udiv32(u32 dividend, u32 divisor, u32 * remainder)
 int libvirtio_gphys_read(struct virtio_device *dev, uint64_t gpa, void *dst, uint32_t len)
 {
 	struct virtio_mmio_dev *mdev = container_of(dev, struct virtio_mmio_dev, dev);
+	uint32_t done = 0;
 
 	if (!mdev || !mdev->ops || !mdev->ops->guest_mem_read)
 		return -1;
 
-	return mdev->ops->guest_mem_read(gpa, dst, len, mdev->priv);
+	if (!mdev->iommu)
+		return mdev->ops->guest_mem_read(gpa, dst, len, mdev->priv);
+
+	while (done < len) {
+		uint64_t translated, mask;
+		uint32_t chunk;
+
+		if (virtio_iommu_translate(mdev->iommu, mdev->endpoint_id,
+					   gpa + done, len - done,
+					   VIRTIO_IOMMU_ACCESS_READ,
+					   &translated, &mask)) {
+			virtio_iommu_report_fault(mdev->iommu, mdev->endpoint_id,
+						  gpa + done,
+						  VIRTIO_IOMMU_ACCESS_READ);
+			return done;
+		}
+		chunk = len - done;
+		if (mask != UINT64_MAX && chunk > (mask + 1) - ((gpa + done) & mask))
+			chunk = (uint32_t)((mask + 1) - ((gpa + done) & mask));
+		if (mdev->ops->guest_mem_read(translated, (uint8_t *)dst + done,
+					      chunk, mdev->priv) != (int)chunk)
+			return done;
+		done += chunk;
+	}
+	return done;
 }
 
 int libvirtio_gphys_write(struct virtio_device *dev, uint64_t gpa, void *src, uint32_t len)
 {
 	struct virtio_mmio_dev *mdev = container_of(dev, struct virtio_mmio_dev, dev);
+	uint32_t done = 0;
 
 	if (!mdev || !mdev->ops || !mdev->ops->guest_mem_write)
 		return -1;
 
-	return mdev->ops->guest_mem_write(gpa, src, len, mdev->priv);
+	if (!mdev->iommu)
+		return mdev->ops->guest_mem_write(gpa, src, len, mdev->priv);
+
+	while (done < len) {
+		uint64_t translated, mask;
+		uint32_t chunk;
+
+		if (virtio_iommu_translate(mdev->iommu, mdev->endpoint_id,
+					   gpa + done, len - done,
+					   VIRTIO_IOMMU_ACCESS_WRITE,
+					   &translated, &mask)) {
+			virtio_iommu_report_fault(mdev->iommu, mdev->endpoint_id,
+						  gpa + done,
+						  VIRTIO_IOMMU_ACCESS_WRITE);
+			return done;
+		}
+		chunk = len - done;
+		if (mask != UINT64_MAX && chunk > (mask + 1) - ((gpa + done) & mask))
+			chunk = (uint32_t)((mask + 1) - ((gpa + done) & mask));
+		if (mdev->ops->guest_mem_write(translated, (uint8_t *)src + done,
+					       chunk, mdev->priv) != (int)chunk)
+			return done;
+		done += chunk;
+	}
+	return done;
 }
 
 int libvirtio_gphys_map(struct virtio_device *dev,
@@ -166,6 +217,8 @@ int libvirtio_gphys_map(struct virtio_device *dev,
 	struct virtio_mmio_dev *mdev = container_of(dev, struct virtio_mmio_dev, dev);
 
 	if (!mdev || !mdev->ops || !mdev->ops->map)
+		return -1;
+	if (mdev->iommu)
 		return -1;
 
 	return mdev->ops->map(gphys_addr, gphys_size, hphys_addr, hphys_size, mdev->priv);
@@ -231,9 +284,20 @@ int libvirtio_genirq_send_msi(struct virtio_device *dev, uint64_t addr,
 				     uint32_t data)
 {
 	struct virtio_mmio_dev *mdev = container_of(dev, struct virtio_mmio_dev, dev);
+	uint64_t translated, mask;
 
 	if (!mdev || !mdev->ops || !mdev->ops->genirq_ops.send_msi)
 		return -1;
+	if (mdev->iommu) {
+		if ((addr & 3) || virtio_iommu_translate(mdev->iommu,
+				mdev->endpoint_id, addr, sizeof(data),
+				VIRTIO_IOMMU_ACCESS_WRITE, &translated, &mask)) {
+			virtio_iommu_report_fault(mdev->iommu, mdev->endpoint_id,
+						addr, VIRTIO_IOMMU_ACCESS_WRITE);
+			return -1;
+		}
+		addr = translated;
+	}
 
 	return mdev->ops->genirq_ops.send_msi(addr, data, mdev->priv);
 }

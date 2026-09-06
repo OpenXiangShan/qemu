@@ -140,6 +140,7 @@ config XIANGSHAN_KUNMINGHU
     select MY_VIRTIO_GPU if MY_VIRTIO
     select MY_VIRTIO_INPUT if MY_VIRTIO
     select MY_VIRTIO_GENIRQ if MY_VIRTIO
+    select MY_VIRTIO_IOMMU if MY_VIRTIO
 
 config QEMU_TO_IOSYSTEM
     bool

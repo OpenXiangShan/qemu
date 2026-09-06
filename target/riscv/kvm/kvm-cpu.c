@@ -2128,6 +2128,53 @@ void kvm_riscv_my_virtio_genirq_create(uint64_t dev_addr, uint64_t dev_size,
     }
 }
 
+void kvm_riscv_my_virtio_iommu_create(uint64_t dev_addr, uint64_t dev_size,
+                                      uint64_t backing_addr,
+                                      uint64_t backing_size, uint32_t irq,
+                                      uint64_t namespace_id,
+                                      uint32_t physical_endpoint)
+{
+    int fd;
+    int ret;
+
+    fd = kvm_create_device(kvm_state, KVM_DEV_TYPE_MY_VIRTIO_IOMMU, false);
+    if (fd < 0) {
+        error_report("KVM virtio-iommu: failed to create device");
+        exit(1);
+    }
+#define KVM_VIOMMU_SET(_group, _attr, _value) \
+    do { \
+        uint64_t value = (_value); \
+        ret = kvm_device_access(fd, (_group), (_attr), &value, true, NULL); \
+        if (ret < 0) { \
+            error_report("KVM virtio-iommu: failed to set device attribute"); \
+            exit(1); \
+        } \
+    } while (0)
+    KVM_VIOMMU_SET(KVM_DEV_RISCV_VIOMMU_GRP_DEVICE,
+                   KVM_DEV_RISCV_VIOMMU_DEV_ADDR, dev_addr);
+    KVM_VIOMMU_SET(KVM_DEV_RISCV_VIOMMU_GRP_DEVICE,
+                   KVM_DEV_RISCV_VIOMMU_DEV_SIZE, dev_size);
+    KVM_VIOMMU_SET(KVM_DEV_RISCV_VIOMMU_GRP_DEVICE,
+                   KVM_DEV_RISCV_VIOMMU_DEV_IRQ, irq);
+    KVM_VIOMMU_SET(KVM_DEV_RISCV_VIOMMU_GRP_BACKING,
+                   KVM_DEV_RISCV_VIOMMU_BACKING_ADDR, backing_addr);
+    KVM_VIOMMU_SET(KVM_DEV_RISCV_VIOMMU_GRP_BACKING,
+                   KVM_DEV_RISCV_VIOMMU_BACKING_SIZE, backing_size);
+    KVM_VIOMMU_SET(KVM_DEV_RISCV_VIOMMU_GRP_CTRL,
+                   KVM_DEV_RISCV_VIOMMU_CTRL_NAMESPACE, namespace_id);
+    KVM_VIOMMU_SET(KVM_DEV_RISCV_VIOMMU_GRP_CTRL,
+                   KVM_DEV_RISCV_VIOMMU_CTRL_ENDPOINT, physical_endpoint);
+    ret = kvm_device_access(fd, KVM_DEV_RISCV_VIOMMU_GRP_CTRL,
+                            KVM_DEV_RISCV_VIOMMU_CTRL_INIT,
+                            NULL, true, NULL);
+    if (ret < 0) {
+        error_report("KVM virtio-iommu: failed to initialize device");
+        exit(1);
+    }
+#undef KVM_VIOMMU_SET
+}
+
 static void kvm_cpu_instance_init(CPUState *cs)
 {
     Object *obj = OBJECT(RISCV_CPU(cs));

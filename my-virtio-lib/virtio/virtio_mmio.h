@@ -192,6 +192,9 @@ struct virtio_mmio_dev {
 	struct virtio_mmio_queue_state queues[VMM_VIRTIO_MMIO_MAX_VQ];
 	bool modern;
 	bool packed_supported;
+	virtio_handle_t iommu;
+	uint32_t endpoint_id;
+	enum virtio_iommu_stage_mode iommu_mode;
 	uint64_t start;
 	uint64_t end;
 	void *priv;
@@ -203,8 +206,8 @@ int virtio_dev_mmio_read(struct virtio_mmio_dev *dev,
 int virtio_dev_mmio_write(struct virtio_mmio_dev *mdev,
 			  uint32_t offset, uint32_t val,
 			  uint32_t len, int *is_doorbell);
-void virtio_mmio_dev_connect(const char *name, struct virtio_mmio_dev *mmio_dev,
-			     struct virtio_emulator *emu);
+int virtio_mmio_dev_connect(const char *name, struct virtio_mmio_dev *mmio_dev,
+			    struct virtio_emulator *emu);
 struct virtio_mmio_dev *virtio_dev_mmio_create(uint64_t start, uint64_t end,
 					       struct libvirtio_ops *ops);
 struct virtio_mmio_dev *virtio_dev_mmio_create_ex(uint64_t start, uint64_t end,

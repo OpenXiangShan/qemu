@@ -45,6 +45,7 @@
 #include "hw/riscv/boot.h"
 #include "hw/riscv/xiangshan_kmh.h"
 #include "hw/riscv/riscv_hart.h"
+#include "hw/vfio/vfio-platform.h"
 #include "system/system.h"
 #include "hw/misc/unimp.h"
 #ifdef CONFIG_MY_VIRTIO
@@ -160,6 +161,7 @@ xiangshan_kmh_my_virtio_device_info[] = {
     { "mouse", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE },
     { "tablet", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET },
     { "genirq", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ },
+    { "iommu", XIANGSHAN_KMH_MY_VIRTIO_DEVICE_IOMMU },
 };
 
 static bool xiangshan_kmh_my_virtio_device_enabled(
@@ -182,6 +184,8 @@ static bool xiangshan_kmh_my_virtio_device_enabled(
         return s->my_virtio_tablet;
     case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ:
         return s->my_virtio_genirq;
+    case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_IOMMU:
+        return s->my_virtio_iommu;
     case XIANGSHAN_KMH_MY_VIRTIO_DEVICE_COUNT:
         break;
     }
@@ -284,6 +288,61 @@ static void xiangshan_kmh_build_my_virtio_slots(XiangshanKmhState *s)
     }
 }
 
+static void xiangshan_kmh_build_my_virtio_iommu_devices(
+    XiangshanKmhState *s)
+{
+    g_auto(GStrv) tokens = NULL;
+
+    s->my_virtio_iommu_device_mask = 0;
+    if (!s->my_virtio_iommu_devices || !*s->my_virtio_iommu_devices) {
+        return;
+    }
+    if (!s->my_virtio_iommu) {
+        error_report("my-virtio-iommu-devices requires my-virtio-iommu=on");
+        exit(1);
+    }
+
+    tokens = g_strsplit(s->my_virtio_iommu_devices, ",", -1);
+    for (unsigned int i = 0; tokens[i]; i++) {
+        XiangshanKmhMyVirtioDevice device;
+
+        if (!xiangshan_kmh_my_virtio_device_from_token(tokens[i], &device) ||
+            device == XIANGSHAN_KMH_MY_VIRTIO_DEVICE_IOMMU) {
+            error_report("invalid my-virtio-iommu-devices token '%s'",
+                         tokens[i]);
+            exit(1);
+        }
+        if (!xiangshan_kmh_my_virtio_device_enabled(s, device)) {
+            error_report("my-virtio-iommu-devices lists disabled device '%s'",
+                         tokens[i]);
+            exit(1);
+        }
+        if (s->my_virtio_iommu_device_mask & BIT(device)) {
+            error_report("duplicate my-virtio-iommu-devices token '%s'",
+                         tokens[i]);
+            exit(1);
+        }
+        s->my_virtio_iommu_device_mask |= BIT(device);
+    }
+}
+
+static void xiangshan_kmh_parse_my_virtio_iommu_mode(XiangshanKmhState *s)
+{
+    const char *mode = s->my_virtio_iommu_mode_str;
+
+    if (!mode || !strcmp(mode, "s1")) {
+        s->my_virtio_iommu_mode = XIANGSHAN_KMH_MY_VIRTIO_IOMMU_S1;
+    } else if (!strcmp(mode, "s2")) {
+        s->my_virtio_iommu_mode = XIANGSHAN_KMH_MY_VIRTIO_IOMMU_S2;
+    } else if (!strcmp(mode, "two-stage")) {
+        s->my_virtio_iommu_mode = XIANGSHAN_KMH_MY_VIRTIO_IOMMU_S1_S2;
+    } else {
+        error_report("invalid my-virtio-iommu-mode '%s'; expected s1, s2, "
+                     "or two-stage", mode);
+        exit(1);
+    }
+}
+
 static uint32_t xiangshan_kmh_my_virtio_slot_index(
     const XiangshanKmhState *s, XiangshanKmhMyVirtioDevice device)
 {
@@ -308,6 +367,16 @@ static const XiangshanKmhMyVirtioSlot *xiangshan_kmh_soc_my_virtio_slot(
 
     g_assert_not_reached();
 }
+
+static MyVirtioDmaConfig xiangshan_kmh_soc_my_virtio_dma(
+    const XiangshanKmhSoCState *s, XiangshanKmhMyVirtioDevice device)
+{
+    return (MyVirtioDmaConfig) {
+        .iommu = s->my_virtio_iommu_device_mask & BIT(device) ?
+                 s->my_virtio_iommu_handle : NULL,
+        .endpoint_id = XIANGSHAN_KMH_MY_VIRTIO_ENDPOINT_BASE + device,
+    };
+}
 #endif
 
 #ifndef CONFIG_MY_VIRTIO
@@ -315,7 +384,8 @@ static bool xiangshan_kmh_my_virtio_requested(const XiangshanKmhState *s)
 {
     return s->my_virtio_blk || s->my_virtio_net || s->my_virtio_console ||
            s->my_virtio_gpu || s->my_virtio_keyboard || s->my_virtio_mouse ||
-           s->my_virtio_tablet || s->my_virtio_genirq ||
+           s->my_virtio_tablet || s->my_virtio_genirq || s->my_virtio_iommu ||
+           s->my_virtio_iommu_relay ||
            (s->my_virtio_devices && *s->my_virtio_devices);
 }
 #endif
@@ -526,22 +596,51 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                                 memmap[XIANGSHAN_KMH_MY_VIRTIO].size);
 
 #ifdef CONFIG_MY_VIRTIO
+#ifdef CONFIG_MY_VIRTIO_IOMMU
+    if (s->my_virtio_iommu) {
+        const XiangshanKmhMyVirtioSlot *slot =
+            xiangshan_kmh_soc_my_virtio_slot(
+                s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_IOMMU);
+
+        if (kvm_enabled() && s->my_virtio_iommu_relay) {
+            kvm_riscv_my_virtio_iommu_create(
+                slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                XIANGSHAN_KMH_MY_VIRTIO_IOMMU_RELAY_BASE,
+                XIANGSHAN_KMH_MY_VIRTIO_IOMMU_RELAY_SIZE,
+                slot->irq, (uint64_t)getpid(),
+                XIANGSHAN_KMH_MY_VIRTIO_ENDPOINT_BASE +
+                XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK);
+        } else {
+            /* Outer TCG QEMU owns the userspace refmodel device.  Inner KVM
+             * QEMU uses only the in-kernel relay at this slot. */
+            s->my_virtio_iommu_handle = my_virtio_iommu_create(
+                slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
+                qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
+                s->my_virtio_iommu_mode);
+        }
+    }
+#endif
+
     if (s->my_virtio_blk) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK);
 
         my_virtio_blk_create(slot->base,
                              XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
                              qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
                              s->my_virtio_blk_image,
-                             s->my_virtio_packed);
+                             s->my_virtio_packed, &dma);
     }
 
     if (s->my_virtio_net) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_NET);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_NET);
 
         my_virtio_net_create(slot->base,
                              XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
@@ -552,13 +651,15 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                              s->my_virtio_net_host_ip,
                              s->my_virtio_net_dhcp_start,
                              s->my_virtio_net_dns_ip,
-                             s->my_virtio_packed);
+                             s->my_virtio_packed, &dma);
     }
 
     if (s->my_virtio_console) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_CONSOLE);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_CONSOLE);
 
         my_virtio_console_create(
             slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
@@ -566,13 +667,15 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             s->my_virtio_console_backend,
             s->my_virtio_console_input_path,
             s->my_virtio_console_output_path,
-            s->my_virtio_packed);
+            s->my_virtio_packed, &dma);
     }
 
     if (s->my_virtio_gpu) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GPU);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GPU);
 
         s->my_virtio_ui =
             my_virtio_gpu_create(slot->base,
@@ -580,13 +683,15 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
                                  qdev_get_gpio_in(DEVICE(s->irqchip),
                                                   slot->irq),
                                  s->my_virtio_vnc_listen,
-                                 s->my_virtio_packed);
+                                 s->my_virtio_packed, &dma);
     }
 
     if (s->my_virtio_keyboard) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_KEYBOARD);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_KEYBOARD);
 
         my_virtio_keyboard_create(
             slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
@@ -594,13 +699,15 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             s->my_virtio_keyboard_backend,
             s->my_virtio_keyboard_evdev_path,
             s->my_virtio_ui,
-            s->my_virtio_packed);
+            s->my_virtio_packed, &dma);
     }
 
     if (s->my_virtio_mouse) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE);
 
         my_virtio_mouse_create(
             slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
@@ -608,13 +715,15 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             s->my_virtio_mouse_backend,
             s->my_virtio_mouse_evdev_path,
             s->my_virtio_ui,
-            s->my_virtio_packed);
+            s->my_virtio_packed, &dma);
     }
 
     if (s->my_virtio_tablet) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET);
 
         my_virtio_tablet_create(
             slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
@@ -622,13 +731,15 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             s->my_virtio_tablet_backend,
             s->my_virtio_tablet_evdev_path,
             s->my_virtio_ui,
-            s->my_virtio_packed);
+            s->my_virtio_packed, &dma);
     }
 
     if (s->my_virtio_genirq) {
         const XiangshanKmhMyVirtioSlot *slot =
             xiangshan_kmh_soc_my_virtio_slot(
                 s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ);
+        MyVirtioDmaConfig dma = xiangshan_kmh_soc_my_virtio_dma(
+            s, XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ);
 
         if (kvm_enabled()) {
             kvm_riscv_my_virtio_genirq_create(
@@ -639,7 +750,7 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             my_virtio_genirq_create(
                 slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
                 qdev_get_gpio_in(DEVICE(s->irqchip), slot->irq),
-                s->my_virtio_packed);
+                s->my_virtio_packed, &dma);
         }
     }
 #endif
@@ -650,6 +761,7 @@ static void xiangshan_kmh_soc_unrealize(DeviceState *dev)
     XiangshanKmhSoCState *s = XIANGSHAN_KMH_SOC(dev);
 
     s->my_virtio_ui = NULL;
+    s->my_virtio_iommu_handle = NULL;
 }
 
 static void xiangshan_kmh_soc_class_init(ObjectClass *klass, const void *data)
@@ -1013,7 +1125,8 @@ static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
 
 static void xiangshan_kmh_fdt_add_my_virtio(XiangshanKmhState *s,
                                             uint32_t slot_index,
-                                            uint32_t aplic_s_phandle)
+                                            uint32_t aplic_s_phandle,
+                                            uint32_t iommu_phandle)
 {
     MachineState *ms = MACHINE(s);
     const XiangshanKmhMyVirtioSlot *slot =
@@ -1030,6 +1143,45 @@ static void xiangshan_kmh_fdt_add_my_virtio(XiangshanKmhState *s,
     qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
     qemu_fdt_setprop_cells(fdt, name, "interrupts",
                            slot->irq, FDT_IRQ_TYPE_EDGE_RISING);
+    if (slot->device == XIANGSHAN_KMH_MY_VIRTIO_DEVICE_IOMMU) {
+        qemu_fdt_setprop_cell(fdt, name, "#iommu-cells", 1);
+        qemu_fdt_setprop_cell(fdt, name, "phandle", iommu_phandle);
+        qemu_fdt_setprop_cell(fdt, name, "device-id", 23);
+    } else if (s->my_virtio_iommu_device_mask & BIT(slot->device)) {
+        qemu_fdt_setprop_cells(
+            fdt, name, "iommus", iommu_phandle,
+            XIANGSHAN_KMH_MY_VIRTIO_ENDPOINT_BASE + slot->device);
+        if (slot->device == XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ) {
+            qemu_fdt_setprop(fdt, name, "bosc,aia-msi-dma", NULL, 0);
+        }
+    }
+    qemu_fdt_setprop_string(fdt, name, "status", "okay");
+}
+
+static void xiangshan_kmh_fdt_add_vfio_virtio_mmio(
+    XiangshanKmhState *s, uint32_t aplic_s_phandle,
+    uint32_t iommu_phandle)
+{
+    void *fdt = MACHINE(s)->fdt;
+    g_autofree char *name = g_strdup_printf(
+        "/soc/virtio-vfio@%" HWADDR_PRIx,
+        (hwaddr)XIANGSHAN_KMH_VFIO_PLATFORM_BASE);
+
+    qemu_fdt_add_subnode(fdt, name);
+    qemu_fdt_setprop_string(fdt, name, "compatible", "virtio,mmio");
+    qemu_fdt_setprop_sized_cells(fdt, name, "reg",
+                                 2, XIANGSHAN_KMH_VFIO_PLATFORM_BASE,
+                                 2, XIANGSHAN_KMH_VFIO_PLATFORM_SIZE);
+    qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", aplic_s_phandle);
+    qemu_fdt_setprop_cells(fdt, name, "interrupts",
+                           XIANGSHAN_KMH_VFIO_PLATFORM_IRQ,
+                           FDT_IRQ_TYPE_EDGE_RISING);
+    if (s->my_virtio_iommu && s->my_virtio_iommu_relay && iommu_phandle) {
+        /* The passed-through endpoint is the physical blk endpoint. */
+        qemu_fdt_setprop_cells(fdt, name, "iommus", iommu_phandle,
+                               XIANGSHAN_KMH_MY_VIRTIO_ENDPOINT_BASE +
+                               XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK);
+    }
     qemu_fdt_setprop_string(fdt, name, "status", "okay");
 }
 
@@ -1041,6 +1193,7 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
     uint32_t imsic_m_phandle = 0, imsic_s_phandle;
     uint32_t aplic_m_phandle = 0, aplic_s_phandle;
     uint32_t iommu_sys_phandle = 0;
+    uint32_t my_virtio_iommu_phandle = 0;
     g_autofree uint32_t *intc_phandles = g_new0(uint32_t, ms->smp.cpus);
     g_autofree uint32_t *clint_cells = NULL;
     g_autofree uint32_t *imsic_m_cells = NULL;
@@ -1292,9 +1445,18 @@ static void xiangshan_kmh_create_fdt(XiangshanKmhState *s)
         qemu_fdt_setprop_string(fdt, name, "status", "okay");
     }
 
+    if (s->my_virtio_iommu) {
+        my_virtio_iommu_phandle = phandle++;
+    }
+
     /* qemu_fdt_add_subnode() prepends children; add in reverse slot order. */
     for (uint32_t slot = s->my_virtio_slot_count; slot-- > 0;) {
-        xiangshan_kmh_fdt_add_my_virtio(s, slot, aplic_s_phandle);
+        xiangshan_kmh_fdt_add_my_virtio(s, slot, aplic_s_phandle,
+                                        my_virtio_iommu_phandle);
+    }
+    if (s->my_virtio_vfio_platform) {
+        xiangshan_kmh_fdt_add_vfio_virtio_mmio(s, aplic_s_phandle,
+                                               my_virtio_iommu_phandle);
     }
 
     if (kmh_is_iommu_sys_enabled(s)) {
@@ -1359,6 +1521,47 @@ static void xiangshan_kmh_create_iommu_sys(XiangshanKmhState *s)
     }
 }
 
+static HotplugHandler *xiangshan_kmh_get_hotplug_handler(
+    MachineState *machine, DeviceState *dev)
+{
+    MachineClass *mc = MACHINE_GET_CLASS(machine);
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(machine);
+
+    return s->my_virtio_vfio_platform && device_is_dynamic_sysbus(mc, dev) ?
+           HOTPLUG_HANDLER(machine) : NULL;
+}
+
+static void xiangshan_kmh_device_plug_cb(HotplugHandler *hotplug_dev,
+                                         DeviceState *dev, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(hotplug_dev);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    if (!s->my_virtio_vfio_platform ||
+        !object_dynamic_cast(OBJECT(dev), TYPE_VFIO_PLATFORM)) {
+        return;
+    }
+    if (!sysbus_has_mmio(sbd, 0) || sysbus_has_mmio(sbd, 1) ||
+        !sysbus_has_irq(sbd, 0) || sysbus_has_irq(sbd, 1)) {
+        error_setg(errp, "Kunminghu vfio-platform assignment requires "
+                   "exactly one MMIO region and one IRQ");
+        return;
+    }
+    if (memory_region_size(sysbus_mmio_get_region(sbd, 0)) !=
+        XIANGSHAN_KMH_VFIO_PLATFORM_SIZE) {
+        error_setg(errp, "Kunminghu vfio-platform MMIO region must be 0x%llx "
+                   "bytes", (unsigned long long)
+                   XIANGSHAN_KMH_VFIO_PLATFORM_SIZE);
+        return;
+    }
+
+    sysbus_mmio_map(sbd, 0, XIANGSHAN_KMH_VFIO_PLATFORM_BASE);
+    sysbus_connect_irq(
+        sbd, 0,
+        qdev_get_gpio_in(DEVICE(s->soc.irqchip),
+                         XIANGSHAN_KMH_VFIO_PLATFORM_IRQ));
+}
+
 static void xiangshan_kmh_machine_init(MachineState *machine)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(machine);
@@ -1407,7 +1610,49 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     }
 #endif
 
+#ifndef CONFIG_MY_VIRTIO_IOMMU
+    if (s->my_virtio_iommu) {
+        error_report("my-virtio-iommu requires QEMU to be configured with "
+                     "--enable-my-virtio");
+        exit(1);
+    }
+#endif
+
+    if (s->my_virtio_iommu_relay && !s->my_virtio_iommu) {
+        error_report("my-virtio-iommu-relay requires my-virtio-iommu=on");
+        exit(1);
+    }
+    if (s->my_virtio_iommu_relay && !kvm_enabled()) {
+        error_report("my-virtio-iommu-relay requires KVM acceleration");
+        exit(1);
+    }
+    if (s->my_virtio_iommu_relay && s->my_virtio_iommu_device_mask) {
+        error_report("my-virtio-iommu-relay cannot translate userspace "
+                     "my-virtio endpoints; use VFIO passthrough");
+        exit(1);
+    }
+
     xiangshan_kmh_build_my_virtio_slots(s);
+    xiangshan_kmh_parse_my_virtio_iommu_mode(s);
+    xiangshan_kmh_build_my_virtio_iommu_devices(s);
+    if (s->my_virtio_vfio_platform && s->my_virtio_slot_count > 1) {
+        error_report("my-virtio-vfio-platform reserves my-virtio slot 1");
+        exit(1);
+    }
+#ifndef CONFIG_VFIO_PLATFORM
+    if (s->my_virtio_vfio_platform) {
+        error_report("my-virtio-vfio-platform requires QEMU vfio-platform "
+                     "support");
+        exit(1);
+    }
+#endif
+    if (kvm_enabled() &&
+        (s->my_virtio_iommu_device_mask &
+         BIT(XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ))) {
+        error_report("KVM my-virtio-genirq relay cannot be attached to "
+                     "my-virtio-iommu");
+        exit(1);
+    }
 
     if (kvm_enabled()) {
         if (machine->firmware && strcmp(machine->firmware, "none")) {
@@ -1436,7 +1681,12 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_mouse = s->my_virtio_mouse;
     s->soc.my_virtio_tablet = s->my_virtio_tablet;
     s->soc.my_virtio_genirq = s->my_virtio_genirq;
+    s->soc.my_virtio_iommu = s->my_virtio_iommu;
+    s->soc.my_virtio_iommu_relay = s->my_virtio_iommu_relay;
     s->soc.my_virtio_packed = s->my_virtio_packed;
+    s->soc.my_virtio_iommu_device_mask =
+        s->my_virtio_iommu_device_mask;
+    s->soc.my_virtio_iommu_mode = s->my_virtio_iommu_mode;
     s->soc.my_virtio_slot_count = s->my_virtio_slot_count;
     memcpy(s->soc.my_virtio_slots, s->my_virtio_slots,
            sizeof(s->my_virtio_slots));
@@ -1477,7 +1727,6 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
         }
     }
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
-
 #ifdef CONFIG_KVM_NESTED
     if (kvm_nested) {
         for (int cpu = 0; cpu < machine->smp.cpus; cpu++) {
@@ -1815,6 +2064,53 @@ static void xiangshan_kmh_set_my_virtio_genirq(Object *obj, bool value,
     s->my_virtio_genirq = value;
 }
 
+static bool xiangshan_kmh_get_my_virtio_iommu(Object *obj, Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_iommu;
+}
+
+static void xiangshan_kmh_set_my_virtio_iommu(Object *obj, bool value,
+                                              Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_iommu = value;
+}
+
+static bool xiangshan_kmh_get_my_virtio_iommu_relay(Object *obj,
+                                                     Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_iommu_relay;
+}
+
+static void xiangshan_kmh_set_my_virtio_iommu_relay(Object *obj, bool value,
+                                                     Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_iommu_relay = value;
+}
+
+static bool xiangshan_kmh_get_my_virtio_vfio_platform(Object *obj,
+                                                       Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return s->my_virtio_vfio_platform;
+}
+
+static void xiangshan_kmh_set_my_virtio_vfio_platform(Object *obj, bool value,
+                                                       Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    s->my_virtio_vfio_platform = value;
+}
+
 static bool xiangshan_kmh_get_my_virtio_packed(Object *obj, Error **errp)
 {
     XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
@@ -1845,6 +2141,44 @@ static void xiangshan_kmh_set_my_virtio_devices(Object *obj,
 
     g_free(s->my_virtio_devices);
     s->my_virtio_devices = g_strdup(value ? value : "");
+}
+
+static char *xiangshan_kmh_get_my_virtio_iommu_devices(Object *obj,
+                                                        Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_iommu_devices ?
+                    s->my_virtio_iommu_devices : "");
+}
+
+static void xiangshan_kmh_set_my_virtio_iommu_devices(Object *obj,
+                                                       const char *value,
+                                                       Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_iommu_devices);
+    s->my_virtio_iommu_devices = g_strdup(value ? value : "");
+}
+
+static char *xiangshan_kmh_get_my_virtio_iommu_mode(Object *obj,
+                                                     Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    return g_strdup(s->my_virtio_iommu_mode_str ?
+                    s->my_virtio_iommu_mode_str : "s1");
+}
+
+static void xiangshan_kmh_set_my_virtio_iommu_mode(Object *obj,
+                                                    const char *value,
+                                                    Error **errp)
+{
+    XiangshanKmhState *s = XIANGSHAN_KMH_MACHINE(obj);
+
+    g_free(s->my_virtio_iommu_mode_str);
+    s->my_virtio_iommu_mode_str = g_strdup(value && *value ? value : "s1");
 }
 
 static char *xiangshan_kmh_get_my_virtio_blk_image(Object *obj, Error **errp)
@@ -2047,7 +2381,12 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_mouse = false;
     s->my_virtio_tablet = false;
     s->my_virtio_genirq = false;
+    s->my_virtio_iommu = false;
+    s->my_virtio_iommu_relay = false;
+    s->my_virtio_vfio_platform = false;
     s->my_virtio_packed = false;
+    s->my_virtio_iommu_device_mask = 0;
+    s->my_virtio_iommu_mode = XIANGSHAN_KMH_MY_VIRTIO_IOMMU_S1;
 #ifdef CONFIG_KVM_M_MODE
     s->kvm_m_mode = false;
 #endif
@@ -2055,6 +2394,8 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->kvm_nested = false;
 #endif
     s->my_virtio_devices = g_strdup("");
+    s->my_virtio_iommu_devices = g_strdup("");
+    s->my_virtio_iommu_mode_str = g_strdup("s1");
     s->my_virtio_blk_image = g_strdup("disk.img");
     s->my_virtio_net_hostfwd = g_strdup("");
     s->my_virtio_net_network = g_strdup("");
@@ -2087,6 +2428,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
 static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(klass);
+    HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(klass);
     static const char *const valid_cpu_types[] = {
         TYPE_RISCV_CPU_XIANGSHAN_KMH,
         TYPE_RISCV_CPU_HOST,
@@ -2100,6 +2442,11 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
     mc->default_cpu_type = TYPE_RISCV_CPU_XIANGSHAN_KMH;
     mc->valid_cpu_types = valid_cpu_types;
     mc->default_ram_id = "xiangshan.kunminghu.ram";
+    mc->get_hotplug_handler = xiangshan_kmh_get_hotplug_handler;
+    hc->plug = xiangshan_kmh_device_plug_cb;
+#ifdef CONFIG_VFIO_PLATFORM
+    machine_class_allow_dynamic_sysbus_dev(mc, TYPE_VFIO_PLATFORM);
+#endif
 
     object_class_property_add(klass, "iommu-sys", "OnOffAuto",
                                 xiangshan_kmh_get_iommu_sys, xiangshan_kmh_set_iommu_sys,
@@ -2197,6 +2544,26 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
     object_class_property_set_description(klass, "my-virtio-genirq",
                                           "Enable my-virtio generic IRQ test device");
 
+    object_class_property_add_bool(klass, "my-virtio-iommu",
+                                   xiangshan_kmh_get_my_virtio_iommu,
+                                   xiangshan_kmh_set_my_virtio_iommu);
+    object_class_property_set_description(klass, "my-virtio-iommu",
+                                          "Enable standard virtio-iommu backed by the RISC-V IOMMU refmodel");
+
+    object_class_property_add_bool(klass, "my-virtio-iommu-relay",
+                                   xiangshan_kmh_get_my_virtio_iommu_relay,
+                                   xiangshan_kmh_set_my_virtio_iommu_relay);
+    object_class_property_set_description(
+        klass, "my-virtio-iommu-relay",
+        "Use the in-kernel virtio-iommu relay when KVM is enabled");
+
+    object_class_property_add_bool(klass, "my-virtio-vfio-platform",
+                                   xiangshan_kmh_get_my_virtio_vfio_platform,
+                                   xiangshan_kmh_set_my_virtio_vfio_platform);
+    object_class_property_set_description(
+        klass, "my-virtio-vfio-platform",
+        "Map one vfio-platform device at my-virtio slot 1 (0x310a1000, IRQ 16)");
+
     object_class_property_add_bool(klass, "my-virtio-packed",
                                    xiangshan_kmh_get_my_virtio_packed,
                                    xiangshan_kmh_set_my_virtio_packed);
@@ -2208,7 +2575,20 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                   xiangshan_kmh_set_my_virtio_devices);
     object_class_property_set_description(
         klass, "my-virtio-devices",
-        "Ordered my-virtio MMIO slot list: blk,net,console,gpu,keyboard,mouse,tablet,genirq");
+        "Ordered my-virtio MMIO slot list: iommu,blk,net,console,gpu,keyboard,mouse,tablet,genirq");
+
+    object_class_property_add_str(klass, "my-virtio-iommu-devices",
+                                  xiangshan_kmh_get_my_virtio_iommu_devices,
+                                  xiangshan_kmh_set_my_virtio_iommu_devices);
+    object_class_property_set_description(
+        klass, "my-virtio-iommu-devices",
+        "Comma-separated my-virtio endpoints translated by the IOMMU");
+
+    object_class_property_add_str(klass, "my-virtio-iommu-mode",
+                                  xiangshan_kmh_get_my_virtio_iommu_mode,
+                                  xiangshan_kmh_set_my_virtio_iommu_mode);
+    object_class_property_set_description(
+        klass, "my-virtio-iommu-mode", "IOMMU mode: s1, s2, or two-stage");
 
     object_class_property_add_str(klass, "my-virtio-blk-image",
                                   xiangshan_kmh_get_my_virtio_blk_image,
@@ -2342,6 +2722,10 @@ static const TypeInfo xiangshan_kmh_machine_info = {
     .instance_size = sizeof(XiangshanKmhState),
     .class_init = xiangshan_kmh_machine_class_init,
     .instance_init = xiangshan_kmh_machine_instance_init,
+    .interfaces = (const InterfaceInfo[]) {
+        { TYPE_HOTPLUG_HANDLER },
+        { }
+    },
 };
 
 static void xiangshan_kmh_machine_register_types(void)

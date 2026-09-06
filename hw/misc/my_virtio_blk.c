@@ -31,6 +31,8 @@ struct MyVirtioStateBlk {
     QEMUBH *rw_bh;
     char *image_path;
     bool packed;
+    void *iommu;
+    uint32_t endpoint_id;
 };
 
 #define TYPE_MY_VIRTIO_BLK "my-virtio-blk"
@@ -169,7 +171,8 @@ static struct libvirtio_ops ops = {
 };
 
 void my_virtio_blk_create(hwaddr start, hwaddr size, qemu_irq irq,
-                          const char *image_path, bool packed)
+                          const char *image_path, bool packed,
+                          const MyVirtioDmaConfig *dma)
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(qdev_new("my-virtio-blk"));
 
@@ -177,6 +180,8 @@ void my_virtio_blk_create(hwaddr start, hwaddr size, qemu_irq irq,
     len = size;
     s->image_path = g_strdup(image_path && *image_path ? image_path : "disk.img");
     s->packed = packed;
+    s->iommu = dma ? dma->iommu : NULL;
+    s->endpoint_id = dma ? dma->endpoint_id : 0;
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, base);
@@ -191,6 +196,8 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     struct virtio_mmio_options opts = {
         .packed = s->packed,
+        .iommu = s->iommu,
+        .endpoint_id = s->endpoint_id,
     };
     struct virtio_backend_config backend_config = {
         .type = VIRTIO_BACKEND_BLK,

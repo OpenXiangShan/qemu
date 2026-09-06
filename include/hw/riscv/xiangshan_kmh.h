@@ -22,6 +22,13 @@
 #define XIANGSHAN_KMH_MY_VIRTIO_BASE 0x310A0000ULL
 #define XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE 0x1000ULL
 #define XIANGSHAN_KMH_MY_VIRTIO_IRQ_BASE 15
+#define XIANGSHAN_KMH_MY_VIRTIO_ENDPOINT_BASE 0x10
+#define XIANGSHAN_KMH_VFIO_PLATFORM_BASE \
+    (XIANGSHAN_KMH_MY_VIRTIO_BASE + XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE)
+#define XIANGSHAN_KMH_VFIO_PLATFORM_SIZE XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE
+#define XIANGSHAN_KMH_VFIO_PLATFORM_IRQ  (XIANGSHAN_KMH_MY_VIRTIO_IRQ_BASE + 1)
+#define XIANGSHAN_KMH_MY_VIRTIO_IOMMU_RELAY_BASE 0x311e0000ULL
+#define XIANGSHAN_KMH_MY_VIRTIO_IOMMU_RELAY_SIZE 0x1000ULL
 
 typedef enum XiangshanKmhMyVirtioDevice {
     XIANGSHAN_KMH_MY_VIRTIO_DEVICE_BLK,
@@ -32,8 +39,15 @@ typedef enum XiangshanKmhMyVirtioDevice {
     XIANGSHAN_KMH_MY_VIRTIO_DEVICE_MOUSE,
     XIANGSHAN_KMH_MY_VIRTIO_DEVICE_TABLET,
     XIANGSHAN_KMH_MY_VIRTIO_DEVICE_GENIRQ,
+    XIANGSHAN_KMH_MY_VIRTIO_DEVICE_IOMMU,
     XIANGSHAN_KMH_MY_VIRTIO_DEVICE_COUNT,
 } XiangshanKmhMyVirtioDevice;
+
+typedef enum XiangshanKmhMyVirtioIommuMode {
+    XIANGSHAN_KMH_MY_VIRTIO_IOMMU_S1,
+    XIANGSHAN_KMH_MY_VIRTIO_IOMMU_S2,
+    XIANGSHAN_KMH_MY_VIRTIO_IOMMU_S1_S2,
+} XiangshanKmhMyVirtioIommuMode;
 
 typedef struct XiangshanKmhMyVirtioSlot {
     XiangshanKmhMyVirtioDevice device;
@@ -64,11 +78,16 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_mouse;
     bool my_virtio_tablet;
     bool my_virtio_genirq;
+    bool my_virtio_iommu;
+    bool my_virtio_iommu_relay;
     bool my_virtio_packed;
+    uint32_t my_virtio_iommu_device_mask;
+    XiangshanKmhMyVirtioIommuMode my_virtio_iommu_mode;
     uint32_t my_virtio_slot_count;
     XiangshanKmhMyVirtioSlot
         my_virtio_slots[XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS];
     void *my_virtio_ui;
+    void *my_virtio_iommu_handle;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
     char *my_virtio_net_network;
@@ -111,7 +130,12 @@ typedef struct XiangshanKmhState {
     bool my_virtio_mouse;
     bool my_virtio_tablet;
     bool my_virtio_genirq;
+    bool my_virtio_iommu;
+    bool my_virtio_iommu_relay;
+    bool my_virtio_vfio_platform;
     bool my_virtio_packed;
+    uint32_t my_virtio_iommu_device_mask;
+    XiangshanKmhMyVirtioIommuMode my_virtio_iommu_mode;
     uint32_t my_virtio_slot_count;
     XiangshanKmhMyVirtioSlot
         my_virtio_slots[XIANGSHAN_KMH_MY_VIRTIO_MAX_SLOTS];
@@ -123,6 +147,8 @@ typedef struct XiangshanKmhState {
 #endif
     void *my_virtio_ui;
     char *my_virtio_devices;
+    char *my_virtio_iommu_devices;
+    char *my_virtio_iommu_mode_str;
     char *my_virtio_blk_image;
     char *my_virtio_net_hostfwd;
     char *my_virtio_net_network;
