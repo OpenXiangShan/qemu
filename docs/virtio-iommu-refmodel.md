@@ -235,7 +235,42 @@ kvm_riscv_aia_dma_detach()
 5. Event VQ 是异步 fault 通道，不是普通请求的错误返回替代品；请求本身
    仍必须写 response status。
 
-## 9. 相关源码
+## 9. 可选的后端异步调度接口
+
+`virtio_iommu_set_deferred(iommu, notify, opaque)` 为需要协程 DMA 的
+后端提供异步工作通知。这是库内 API，不增加 guest feature、寄存器或 VQ，
+不改变 Linux 前端驱动。默认未注册通知，保留原有同步行为。
+
+启用后，`notify(opaque, work)` 只允许安排下半部，不能立即处理队列：
+
+- `VIRTIO_IOMMU_WORK_REQUEST`：在 IOMMU 自己的执行上下文调用
+  `virtio_process_req()`，处理 Request VQ。单轮最多处理 128 个请求，
+  超出时再次通知。
+- `VIRTIO_IOMMU_WORK_EVENT`：在同一执行上下文调用
+  `virtio_iommu_drain_faults(iommu, budget)`，处理 Event VQ。
+  两种工作必须跨 yield 串行，不能在不同 endpoint 协程里并发访问 IOMMU VQ。
+
+此时 endpoint 的 `translate()` 不再顺带处理尚未完成的 MAP 请求；前端须
+按标准 Request VQ completion / IOTLB sync 顺序使用映射。
+`report_fault()` 只复制本次访问的 endpoint、地址和权限到 C 内存 FIFO，
+通知 EVENT 工作，不读写 guest VQ，也不会因 fault report 而 yield。
+故障记录由调用方提供的 endpoint、地址和权限确定，不会被旧的 native FQ
+记录覆盖。native FQ 当前也位于 C shadow RAM，读取本身不会产生 DPI DMA；
+其清理由 IOMMU drain 服务完成，即使没有 guest Event VQ buffer 也会退休
+这些诊断记录，避免积压。向 guest Event VQ 写事件才需要 DMA/yield。
+
+FIFO 容量固定为 128；无 Event VQ buffer 时保留记录，等待补充 buffer 的
+kick 或新故障再次唤醒，不自行忙循环。队列满时丢弃最新记录、返回
+`-ENOSPC` 并对丢弃数按 2 的幂次告警；`virtio_iommu_get_fault_stats()`
+可读取待报告数量与丢弃数。无效或 payload 写入失败的 buffer 以 used 长度 0
+返回，保留对应故障供后续 buffer 重试。
+
+全部库调用仍限于同一宿主线程；通知接口不使 refmodel 变为线程安全。
+reset/destroy 前，后端必须停止新工作并排空 IOMMU 和绑定 endpoint 的在途
+回调。reset 清空 backlog 和计数，但保留通知配置；后端还需取消旧 BH。
+这些约束由 XSV 等后端调度层落实，不由标准 virtio 协议表达。
+
+## 10. 相关源码
 
 - `virtio/virtio_iommu.h`：virtio-iommu 配置、请求和 fault 结构；
 - `virtio/virtio_iommu.c`：virtqueue、协议校验和 refmodel 调用；

@@ -22,6 +22,13 @@ struct virtio_iommu_dev {
 	enum virtio_iommu_stage_mode mode;
 	uint64_t features;
 	bool pending_request;
+	bool servicing;
+	virtio_iommu_work_notify_t work_notify;
+	void *work_opaque;
+	struct virtio_iommu_fault faults[VIRTIO_IOMMU_FAULT_BACKLOG];
+	unsigned int fault_head;
+	unsigned int fault_count;
+	uint64_t faults_dropped;
 };
 
 static IoVirtioIommuMode iommu_refmodel_mode(
@@ -152,6 +159,9 @@ static int virtio_iommu_notify_vq(struct virtio_device *dev, uint32_t vq)
 		return -1;
 	if (vq == VIRTIO_IOMMU_REQUEST_VQ)
 		idev->pending_request = true;
+	if (idev->work_notify &&
+	    (vq == VIRTIO_IOMMU_REQUEST_VQ || idev->fault_count))
+		idev->work_notify(idev->work_opaque, 1U << vq);
 	return 0;
 }
 
@@ -291,9 +301,17 @@ static void virtio_iommu_process_request(void *data)
 {
 	struct virtio_iommu_dev *idev = data;
 	struct virtio_queue *vq;
+	unsigned int attempted = 0;
 
 	if (!idev)
 		return;
+	if (idev->servicing) {
+		idev->pending_request = true;
+		if (idev->work_notify)
+			idev->work_notify(idev->work_opaque, VIRTIO_IOMMU_WORK_REQUEST);
+		return;
+	}
+	idev->servicing = true;
 	vq = &idev->vqs[VIRTIO_IOMMU_REQUEST_VQ];
 	idev->pending_request = false;
 	while (virtio_queue_available(vq)) {
@@ -306,6 +324,11 @@ static void virtio_iommu_process_request(void *data)
 		bool bad_order = false;
 		int status;
 
+		if (idev->work_notify && attempted++ == VIRTIO_IOMMU_QUEUE_SIZE) {
+			idev->pending_request = true;
+			idev->work_notify(idev->work_opaque, VIRTIO_IOMMU_WORK_REQUEST);
+			break;
+		}
 		if (virtio_queue_get_iovec(vq, idev->iov, &iov_cnt, &total_len,
 					   &head))
 			break;
@@ -342,6 +365,7 @@ static void virtio_iommu_process_request(void *data)
 				      write_iov_cnt, status);
 		my_free(idev->vdev, (uint64_t)(uintptr_t)req_buf, req_len);
 	}
+	idev->servicing = false;
 }
 
 static int virtio_iommu_reset(struct virtio_device *dev)
@@ -350,10 +374,15 @@ static int virtio_iommu_reset(struct virtio_device *dev)
 
 	if (!idev)
 		return 0;
+	if (idev->servicing)
+		return -EBUSY;
 	virtio_iommu_reset_vq(dev, VIRTIO_IOMMU_REQUEST_VQ);
 	virtio_iommu_reset_vq(dev, VIRTIO_IOMMU_EVENT_VQ);
 	idev->features = 0;
 	idev->pending_request = false;
+	idev->fault_head = 0;
+	idev->fault_count = 0;
+	idev->faults_dropped = 0;
 	return idev->refmodel ? io_virtio_iommu_reset(idev->refmodel) : 0;
 }
 
@@ -458,10 +487,129 @@ int virtio_iommu_translate(virtio_handle_t handle, uint32_t endpoint,
 
 	if (!idev || !idev->refmodel || !translated || !addr_mask)
 		return -1;
-	if (idev->pending_request && mdev->cb.process_req)
+	if (!idev->work_notify && idev->pending_request && mdev->cb.process_req)
 		mdev->cb.process_req(mdev->cb.data);
 	return io_virtio_iommu_translate(idev->refmodel, endpoint, addr, len,
 					 access, translated, addr_mask);
+}
+
+static int virtio_iommu_enqueue_fault(struct virtio_iommu_dev *idev,
+				     uint32_t endpoint, uint64_t addr,
+				     uint32_t access)
+{
+	struct virtio_iommu_fault *fault;
+	unsigned int tail;
+
+	/* The operation's explicit endpoint/address/access are authoritative.
+	 * Keep this path to a copied record and a wakeup; retire native shadow
+	 * diagnostics in the IOMMU service context, not in the endpoint callback.
+	 */
+	if (idev->fault_count == VIRTIO_IOMMU_FAULT_BACKLOG) {
+		uint64_t dropped = ++idev->faults_dropped;
+
+		if (!(dropped & (dropped - 1)))
+			my_print(idev->vdev, "virtio-iommu: fault backlog full, dropped=%llu\n",
+				 (unsigned long long)dropped);
+		idev->work_notify(idev->work_opaque, VIRTIO_IOMMU_WORK_EVENT);
+		return -ENOSPC;
+	}
+	tail = (idev->fault_head + idev->fault_count) % VIRTIO_IOMMU_FAULT_BACKLOG;
+	fault = &idev->faults[tail];
+	memset(fault, 0, sizeof(*fault));
+	fault->reason = VIRTIO_IOMMU_FAULT_R_MAPPING;
+	fault->flags = htole32(VIRTIO_IOMMU_FAULT_F_ADDRESS | access);
+	fault->endpoint = htole32(endpoint);
+	fault->address = htole64(addr);
+	idev->fault_count++;
+	idev->work_notify(idev->work_opaque, VIRTIO_IOMMU_WORK_EVENT);
+	return 0;
+}
+
+int virtio_iommu_set_deferred(virtio_handle_t handle,
+			    virtio_iommu_work_notify_t notify, void *opaque)
+{
+	struct virtio_iommu_dev *idev = virtio_iommu_from_handle(handle);
+
+	if (!idev)
+		return -EINVAL;
+	if (idev->servicing || idev->pending_request || idev->fault_count)
+		return -EBUSY;
+	idev->work_notify = notify;
+	idev->work_opaque = opaque;
+	return 0;
+}
+
+int virtio_iommu_get_fault_stats(virtio_handle_t handle,
+				 struct virtio_iommu_fault_stats *stats)
+{
+	struct virtio_iommu_dev *idev = virtio_iommu_from_handle(handle);
+
+	if (!idev || !stats)
+		return -EINVAL;
+	stats->pending = idev->fault_count;
+	stats->dropped = idev->faults_dropped;
+	return 0;
+}
+
+int virtio_iommu_drain_faults(virtio_handle_t handle, unsigned int budget)
+{
+	struct virtio_iommu_dev *idev = virtio_iommu_from_handle(handle);
+	IoVirtioIommuFault native;
+	struct virtio_queue *vq;
+	unsigned int attempted = 0;
+	int delivered = 0;
+
+	if (!idev || !idev->work_notify || !budget)
+		return -EINVAL;
+	if (idev->servicing)
+		return -EBUSY;
+	idev->servicing = true;
+	/* Native FQ lives in C shadow RAM, not in the guest Event VQ. Retire
+	 * its diagnostics even without guest buffers; queued wire events retain
+	 * the explicit faulting operation's identity, independent of FQ order.
+	 */
+	while (!io_virtio_iommu_pop_fault(idev->refmodel, &native))
+		;
+	vq = &idev->vqs[VIRTIO_IOMMU_EVENT_VQ];
+	while (idev->fault_count && attempted < budget) {
+		struct virtio_iommu_fault fault;
+		struct virtio_iovec iov[VIRTIO_QUEUE_MAX_DESC];
+		uint32_t iov_cnt = 0, total_len = 0;
+		uint16_t head = 0;
+		uint32_t written = 0;
+		bool valid = true;
+
+		if (!virtio_queue_available(vq))
+			break;
+		if (virtio_queue_get_iovec(vq, iov, &iov_cnt, &total_len, &head))
+			break;
+		attempted++;
+		if (total_len < sizeof(fault))
+			valid = false;
+		for (uint32_t i = 0; i < iov_cnt; i++)
+			if (!iov[i].flags)
+				valid = false;
+		/* Keep the head reserved across DMA yields while other endpoints
+		 * enqueue at the tail. Only this execution context consumes the VQ.
+		 */
+		fault = idev->faults[idev->fault_head];
+		if (valid && virtio_buf_to_iovec_write(idev->vdev, iov, iov_cnt,
+						      &fault, sizeof(fault)) == sizeof(fault))
+			written = sizeof(fault);
+		virtio_queue_set_used_elem(vq, head, written);
+		if (virtio_queue_should_signal(vq) && idev->vdev->vn &&
+		    idev->vdev->vn->notify)
+			idev->vdev->vn->notify(idev->vdev, VIRTIO_IOMMU_EVENT_VQ);
+		if (written) {
+			idev->fault_head = (idev->fault_head + 1) % VIRTIO_IOMMU_FAULT_BACKLOG;
+			idev->fault_count--;
+			delivered++;
+		}
+	}
+	idev->servicing = false;
+	if (attempted == budget && idev->fault_count)
+		idev->work_notify(idev->work_opaque, VIRTIO_IOMMU_WORK_EVENT);
+	return delivered;
 }
 
 int virtio_iommu_report_fault(virtio_handle_t handle, uint32_t endpoint,
@@ -478,6 +626,8 @@ int virtio_iommu_report_fault(virtio_handle_t handle, uint32_t endpoint,
 
 	if (!idev || !idev->refmodel)
 		return -1;
+	if (idev->work_notify)
+		return virtio_iommu_enqueue_fault(idev, endpoint, addr, access);
 	vq = &idev->vqs[VIRTIO_IOMMU_EVENT_VQ];
 	if (!virtio_queue_available(vq))
 		return -1;
