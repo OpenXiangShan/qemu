@@ -137,4 +137,31 @@ int virtio_iommu_translate(virtio_handle_t iommu, uint32_t endpoint,
 int virtio_iommu_report_fault(virtio_handle_t iommu, uint32_t endpoint,
 			      uint64_t addr, uint32_t access);
 
+#define VIRTIO_IOMMU_WORK_REQUEST (1U << VIRTIO_IOMMU_REQUEST_VQ)
+#define VIRTIO_IOMMU_WORK_EVENT   (1U << VIRTIO_IOMMU_EVENT_VQ)
+#define VIRTIO_IOMMU_FAULT_BACKLOG 128U
+
+/* Optional backend scheduling, not a change to the guest wire protocol.
+ * A non-NULL notifier opts into deferred mode: translate/report_fault never
+ * access a guest VQ. The notifier MUST only schedule work, never drain it
+ * inline. Run virtio_process_req() and drain_faults() in the IOMMU's own
+ * serialized execution context, which may yield through guest_mem_*().
+ * All library calls still belong to one host thread. Reset, destroy and
+ * changing this hook require quiesced IOMMU and endpoint callbacks.
+ * NULL keeps the legacy synchronous behavior. The hook survives reset.
+ */
+typedef void (*virtio_iommu_work_notify_t)(void *opaque, uint32_t work);
+int virtio_iommu_set_deferred(virtio_handle_t iommu,
+			    virtio_iommu_work_notify_t notify, void *opaque);
+/* At most budget descriptors per call. No-buffer faults remain queued until
+ * an Event VQ kick or new fault. A full backlog drops the newest fault.
+ */
+int virtio_iommu_drain_faults(virtio_handle_t iommu, unsigned int budget);
+struct virtio_iommu_fault_stats {
+	uint32_t pending;
+	uint64_t dropped;
+};
+int virtio_iommu_get_fault_stats(virtio_handle_t iommu,
+				 struct virtio_iommu_fault_stats *stats);
+
 #endif
