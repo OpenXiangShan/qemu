@@ -78,6 +78,7 @@ typedef struct XiangshanKmhSoCState {
     bool my_virtio_mouse;
     bool my_virtio_tablet;
     bool my_virtio_genirq;
+    uint64_t my_virtio_genirq_relay_delay_ms;
     bool my_virtio_iommu;
     bool my_virtio_iommu_relay;
     bool my_virtio_packed;
@@ -130,6 +131,7 @@ typedef struct XiangshanKmhState {
     bool my_virtio_mouse;
     bool my_virtio_tablet;
     bool my_virtio_genirq;
+    uint64_t my_virtio_genirq_relay_delay_ms;
     bool my_virtio_iommu;
     bool my_virtio_iommu_relay;
     bool my_virtio_vfio_platform;

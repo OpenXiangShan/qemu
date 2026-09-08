@@ -30,7 +30,8 @@ void kvm_riscv_aia_create(MachineState *machine, uint64_t group_shift,
 void kvm_riscv_my_virtio_genirq_create(uint64_t dev_addr, uint64_t dev_size,
                                        uint64_t backing_addr,
                                        uint64_t backing_size,
-                                       uint32_t irq);
+                                       uint32_t irq,
+                                       uint64_t relay_delay_ms);
 void kvm_riscv_my_virtio_iommu_create(uint64_t dev_addr, uint64_t dev_size,
                                       uint64_t backing_addr,
                                       uint64_t backing_size, uint32_t irq,

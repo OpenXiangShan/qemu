@@ -745,7 +745,7 @@ static void xiangshan_kmh_soc_realize(DeviceState *dev, Error **errp)
             kvm_riscv_my_virtio_genirq_create(
                 slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
                 slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
-                slot->irq);
+                slot->irq, s->my_virtio_genirq_relay_delay_ms);
         } else {
             my_virtio_genirq_create(
                 slot->base, XIANGSHAN_KMH_MY_VIRTIO_SLOT_SIZE,
@@ -1681,6 +1681,8 @@ static void xiangshan_kmh_machine_init(MachineState *machine)
     s->soc.my_virtio_mouse = s->my_virtio_mouse;
     s->soc.my_virtio_tablet = s->my_virtio_tablet;
     s->soc.my_virtio_genirq = s->my_virtio_genirq;
+    s->soc.my_virtio_genirq_relay_delay_ms =
+        s->my_virtio_genirq_relay_delay_ms;
     s->soc.my_virtio_iommu = s->my_virtio_iommu;
     s->soc.my_virtio_iommu_relay = s->my_virtio_iommu_relay;
     s->soc.my_virtio_packed = s->my_virtio_packed;
@@ -2381,6 +2383,7 @@ static void xiangshan_kmh_machine_instance_init(Object *obj)
     s->my_virtio_mouse = false;
     s->my_virtio_tablet = false;
     s->my_virtio_genirq = false;
+    s->my_virtio_genirq_relay_delay_ms = 0;
     s->my_virtio_iommu = false;
     s->my_virtio_iommu_relay = false;
     s->my_virtio_vfio_platform = false;
@@ -2543,6 +2546,12 @@ static void xiangshan_kmh_machine_class_init(ObjectClass *klass, const void *dat
                                    xiangshan_kmh_set_my_virtio_genirq);
     object_class_property_set_description(klass, "my-virtio-genirq",
                                           "Enable my-virtio generic IRQ test device");
+
+    XIANGSHAN_KMH_UINT64_PROP(
+        "my-virtio-genirq-relay-delay-ms",
+        my_virtio_genirq_relay_delay_ms,
+        "Defer KVM genirq physical VQ relay submissions by this many "
+        "milliseconds");
 
     object_class_property_add_bool(klass, "my-virtio-iommu",
                                    xiangshan_kmh_get_my_virtio_iommu,

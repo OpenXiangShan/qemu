@@ -246,6 +246,11 @@ Machine options
    KVM 路径中 QEMU 创建 in-kernel genirq bridge，由 host KVM 把 L2 IMSIC
    GPA 转换成真实 VS interrupt file PA 后写入外层 genirq 寄存器。
 
+``my-virtio-genirq-relay-delay-ms=N``
+   仅用于 KVM genirq relay。非零值使 inner QueueNotify 先进入 KVM delayed
+   work，再延迟 N 毫秒向 physical virtqueue 下发请求。TCG 设备模型和 outer
+   QEMU/PLDM backend 不受影响；默认值为 0，保持同步 relay。
+
 ``my-virtio-keyboard-backend=vnc|evdev|ui``、``my-virtio-mouse-backend=vnc|evdev|ui``、``my-virtio-tablet-backend=vnc|evdev|ui``
    my-virtio input 的宿主输入来源，默认都是 ``vnc``。``vnc`` 和 ``ui``
    都表示从 my-virtio GPU backend VNC server 读取输入事件；``evdev``
