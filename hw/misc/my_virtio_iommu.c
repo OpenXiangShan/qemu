@@ -5,6 +5,7 @@
 #include "hw/irq.h"
 #include "hw/sysbus.h"
 #include "virtio_wrapper.h"
+#include "virtio_iommu.h"
 #include "hw/misc/my_virtio.h"
 
 typedef struct MyVirtioIommuState {
@@ -13,6 +14,7 @@ typedef struct MyVirtioIommuState {
     MemoryRegion relay_iomem;
     qemu_irq irq;
     QEMUBH *request_bh;
+    QEMUBH *event_bh;
     virtio_handle_t handle;
     hwaddr base;
     hwaddr size;
@@ -47,10 +49,7 @@ static void my_virtio_iommu_mmio_write(void *opaque, hwaddr offset,
     MyVirtioIommuState *s = opaque;
     int doorbell = 0;
 
-    if (!virtio_mmio_write(s->handle, s->base + offset, value, size,
-                           &doorbell) && doorbell) {
-        qemu_bh_schedule(s->request_bh);
-    }
+    virtio_mmio_write(s->handle, s->base + offset, value, size, &doorbell);
 }
 
 static const MemoryRegionOps my_virtio_iommu_mmio_ops = {
@@ -277,6 +276,25 @@ static void my_virtio_iommu_request_bh(void *opaque)
     virtio_process_req(s->handle);
 }
 
+static void my_virtio_iommu_event_bh(void *opaque)
+{
+    MyVirtioIommuState *s = opaque;
+
+    virtio_iommu_drain_faults(s->handle, 32);
+}
+
+static void my_virtio_iommu_work_notify(void *opaque, uint32_t work)
+{
+    MyVirtioIommuState *s = opaque;
+
+    if (work & VIRTIO_IOMMU_WORK_REQUEST) {
+        qemu_bh_schedule(s->request_bh);
+    }
+    if (work & VIRTIO_IOMMU_WORK_EVENT) {
+        qemu_bh_schedule(s->event_bh);
+    }
+}
+
 static void my_virtio_iommu_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioIommuState *s = MY_VIRTIO_IOMMU(dev);
@@ -297,11 +315,27 @@ static void my_virtio_iommu_realize(DeviceState *dev, Error **errp)
     sysbus_init_mmio(sbd, &s->relay_iomem);
     sysbus_init_irq(sbd, &s->irq);
     s->request_bh = qemu_bh_new(my_virtio_iommu_request_bh, s);
+    s->event_bh = qemu_bh_new(my_virtio_iommu_event_bh, s);
     s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_IOMMU, s->base,
                                       s->size, &my_virtio_iommu_ops, s,
                                       &options);
     if (!s->handle) {
+        qemu_bh_delete(s->request_bh);
+        s->request_bh = NULL;
+        qemu_bh_delete(s->event_bh);
+        s->event_bh = NULL;
         error_setg(errp, "failed to create virtio-iommu protocol device");
+        return;
+    }
+    if (virtio_iommu_set_deferred(s->handle,
+                                  my_virtio_iommu_work_notify, s)) {
+        virtio_mmio_destroy(s->handle);
+        s->handle = NULL;
+        qemu_bh_delete(s->request_bh);
+        s->request_bh = NULL;
+        qemu_bh_delete(s->event_bh);
+        s->event_bh = NULL;
+        error_setg(errp, "failed to enable deferred virtio-iommu service");
     }
 }
 
@@ -309,12 +343,16 @@ static void my_virtio_iommu_unrealize(DeviceState *dev)
 {
     MyVirtioIommuState *s = MY_VIRTIO_IOMMU(dev);
 
-    virtio_mmio_destroy(s->handle);
-    s->handle = NULL;
     if (s->request_bh) {
         qemu_bh_delete(s->request_bh);
         s->request_bh = NULL;
     }
+    if (s->event_bh) {
+        qemu_bh_delete(s->event_bh);
+        s->event_bh = NULL;
+    }
+    virtio_mmio_destroy(s->handle);
+    s->handle = NULL;
 }
 
 static void my_virtio_iommu_class_init(ObjectClass *klass, const void *data)
