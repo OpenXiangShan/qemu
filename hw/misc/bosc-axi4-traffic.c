@@ -97,39 +97,6 @@ static void bosc_axi4_traffic_decode_req(const uint32_t cfg[static 6],
     req->translated = extract64(user, 53, 1);
 }
 
-static int bosc_axi4_traffic_find_slot(BoscAxi4TrafficState *s, uint64_t addr)
-{
-    int i;
-
-    for (i = 0; i < BOSC_AXI4_TRAFFIC_NR_SLOTS; i++) {
-        if (addr >= s->start[i] && addr < s->end[i]) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-static void bosc_axi4_traffic_apply_mapper(BoscAxi4TrafficState *s,
-                                           BoscAxi4TrafficReq *req)
-{
-    int slot;
-
-    if (!(s->mux & BOSC_AXI4_TRAFFIC_MUX_DID_PID_EN)) {
-        return;
-    }
-
-    slot = bosc_axi4_traffic_find_slot(s, req->addr);
-    if (slot < 0) {
-        return;
-    }
-
-    req->did = s->did[slot] & 0xffffff;
-    req->pid = s->pid[slot] & BOSC_AXI4_TRAFFIC_PID_MASK;
-    req->pid_valid = s->pid[slot] & BOSC_AXI4_TRAFFIC_PID_VALID;
-    req->translated = s->pid[slot] & BOSC_AXI4_TRAFFIC_PID_TRANSLATED;
-}
-
 static AddressSpace *bosc_axi4_traffic_get_as(BoscAxi4TrafficState *s,
                                               const BoscAxi4TrafficReq *req)
 {
@@ -195,7 +162,6 @@ static bool bosc_axi4_traffic_run_write(BoscAxi4TrafficState *s)
         eff_req.addr = req.addr +
                        (uint64_t)burst * req.beats *
                        BOSC_AXI4_TRAFFIC_BEAT_BYTES;
-        bosc_axi4_traffic_apply_mapper(s, &eff_req);
         as = bosc_axi4_traffic_get_as(s, &eff_req);
 
         for (beat = 0; beat < req.beats; beat++) {
@@ -239,7 +205,6 @@ static bool bosc_axi4_traffic_run_read(BoscAxi4TrafficState *s)
         eff_req.addr = req.addr +
                        (uint64_t)burst * req.beats *
                        BOSC_AXI4_TRAFFIC_BEAT_BYTES;
-        bosc_axi4_traffic_apply_mapper(s, &eff_req);
         as = bosc_axi4_traffic_get_as(s, &eff_req);
 
         for (beat = 0; beat < req.beats; beat++) {

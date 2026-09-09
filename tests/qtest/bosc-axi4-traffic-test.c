@@ -222,17 +222,13 @@ static void traffic_write_pdt_entry(QTestState *qts, uint64_t pdt,
 }
 
 static void traffic_prepare_iommu_tables(QTestState *qts, uint64_t iova,
-                                         uint64_t end_iova, uint64_t pid_iova)
+                                         uint64_t pid_iova)
 {
-    const uint32_t did_raw = 3;
-    const uint32_t did_slot0 = 4;
-    const uint32_t did_slot1 = 5;
+    const uint32_t did_mapper = 4;
+    const uint32_t did_user = 5;
     const uint32_t did_pid = 6;
     const uint32_t pid_a = 0x11;
     const uint32_t pid_b = 0x22;
-    uint64_t raw_root = BOSC_AXI4_TRAFFIC_TABLE_BASE + 0x0000;
-    uint64_t raw_l1 = BOSC_AXI4_TRAFFIC_TABLE_BASE + 0x1000;
-    uint64_t raw_l0 = BOSC_AXI4_TRAFFIC_TABLE_BASE + 0x2000;
     uint64_t slot0_root = BOSC_AXI4_TRAFFIC_TABLE_BASE + 0x3000;
     uint64_t slot0_l1 = BOSC_AXI4_TRAFFIC_TABLE_BASE + 0x4000;
     uint64_t slot0_l0 = BOSC_AXI4_TRAFFIC_TABLE_BASE + 0x5000;
@@ -250,17 +246,13 @@ static void traffic_prepare_iommu_tables(QTestState *qts, uint64_t iova,
     traffic_zero_page(qts, BOSC_AXI4_TRAFFIC_DDT_BASE);
     traffic_zero_page(qts, pdt);
 
-    traffic_map_sv39_page(qts, raw_root, raw_l1, raw_l0, end_iova,
-                          BOSC_AXI4_TRAFFIC_PA_BASE + 0x2000);
-    traffic_write_sv39_device(qts, did_raw, 0x30, raw_root);
-
     traffic_map_sv39_page(qts, slot0_root, slot0_l1, slot0_l0, iova,
                           BOSC_AXI4_TRAFFIC_PA_BASE + 0x0000);
-    traffic_write_sv39_device(qts, did_slot0, 0x40, slot0_root);
+    traffic_write_sv39_device(qts, did_mapper, 0x40, slot0_root);
 
     traffic_map_sv39_page(qts, slot1_root, slot1_l1, slot1_l0, iova,
                           BOSC_AXI4_TRAFFIC_PA_BASE + 0x1000);
-    traffic_write_sv39_device(qts, did_slot1, 0x50, slot1_root);
+    traffic_write_sv39_device(qts, did_user, 0x50, slot1_root);
 
     traffic_map_sv39_page(qts, pid_a_root, pid_a_l1, pid_a_l0, pid_iova,
                           BOSC_AXI4_TRAFFIC_PA_BASE + 0x3000);
@@ -429,28 +421,24 @@ static void test_bare_traffic_windows(void)
     qtest_quit(qts);
 }
 
-static void test_mapper_translation_selection(void)
+static void test_user_requester_selection(void)
 {
     QTestState *qts = bosc_axi4_traffic_start_qtest();
     uint64_t base = traffic_bases[0];
     uint64_t iova = 0x1000;
-    uint64_t end_iova = iova + BOSC_AXI4_TRAFFIC_BEAT_BYTES;
     uint64_t pid_iova = 0x4000;
-    uint64_t pa_slot0 = BOSC_AXI4_TRAFFIC_PA_BASE + 0x0000;
-    uint64_t pa_slot1 = BOSC_AXI4_TRAFFIC_PA_BASE + 0x1000;
-    uint64_t pa_raw = BOSC_AXI4_TRAFFIC_PA_BASE + 0x2000;
+    uint64_t pa_mapper = BOSC_AXI4_TRAFFIC_PA_BASE + 0x0000;
+    uint64_t pa_user = BOSC_AXI4_TRAFFIC_PA_BASE + 0x1000;
     uint64_t pa_pid_a = BOSC_AXI4_TRAFFIC_PA_BASE + 0x3000;
     uint64_t pa_pid_b = BOSC_AXI4_TRAFFIC_PA_BASE + 0x4000;
     uint8_t expected[BOSC_AXI4_TRAFFIC_BEAT_BYTES];
     uint32_t status;
 
     traffic_pattern_init(expected);
-    traffic_prepare_iommu_tables(qts, iova, end_iova, pid_iova);
+    traffic_prepare_iommu_tables(qts, iova, pid_iova);
 
-    traffic_init_target(qts, pa_slot0, sizeof(expected));
-    traffic_init_target(qts, pa_slot1, sizeof(expected));
-    traffic_init_target(qts, pa_raw + BOSC_AXI4_TRAFFIC_BEAT_BYTES,
-                        sizeof(expected));
+    traffic_init_target(qts, pa_mapper, sizeof(expected));
+    traffic_init_target(qts, pa_user, sizeof(expected));
 
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_MUX,
                  BOSC_AXI4_TRAFFIC_MUX_DID_PID_EN |
@@ -458,44 +446,25 @@ static void test_mapper_translation_selection(void)
     traffic_write64_regs(qts, base, BOSC_AXI4_TRAFFIC_START_BASE + 0 * 8,
                          iova);
     traffic_write64_regs(qts, base, BOSC_AXI4_TRAFFIC_END_BASE + 0 * 8,
-                         end_iova);
+                         iova + BOSC_AXI4_TRAFFIC_BEAT_BYTES);
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_DID_BASE + 0 * 4, 4);
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_PID_BASE + 0 * 4, 0);
 
-    traffic_write64_regs(qts, base, BOSC_AXI4_TRAFFIC_START_BASE + 1 * 8,
-                         iova);
-    traffic_write64_regs(qts, base, BOSC_AXI4_TRAFFIC_END_BASE + 1 * 8,
-                         end_iova);
-    qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_DID_BASE + 1 * 4, 5);
-    qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_PID_BASE + 1 * 4, 0);
-
     traffic_program_channel(qts, base, BOSC_AXI4_TRAFFIC_AW_CFG_BASE,
-                            iova, 1, 1, 3, 0x12345, true);
+                            iova, 1, 1, 5, 0, false);
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_START,
                  BOSC_AXI4_TRAFFIC_START_AW);
     status = qtest_readl(qts, base + BOSC_AXI4_TRAFFIC_STATUS);
     g_assert_cmphex(status & BOSC_AXI4_TRAFFIC_STATUS_AW_DONE,
                     ==, BOSC_AXI4_TRAFFIC_STATUS_AW_DONE);
-    g_assert_true(traffic_target_matches(qts, pa_slot0, expected,
-                                         sizeof(expected)));
-    g_assert_false(traffic_target_matches(qts, pa_slot1, expected,
+    g_assert_false(traffic_target_matches(qts, pa_mapper, expected,
                                           sizeof(expected)));
-
-    traffic_program_channel(qts, base, BOSC_AXI4_TRAFFIC_AW_CFG_BASE,
-                            end_iova, 1, 1, 3, 0, false);
-    qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_START,
-                 BOSC_AXI4_TRAFFIC_START_AW);
-    status = qtest_readl(qts, base + BOSC_AXI4_TRAFFIC_STATUS);
-    g_assert_cmphex(status & BOSC_AXI4_TRAFFIC_STATUS_AW_DONE,
-                    ==, BOSC_AXI4_TRAFFIC_STATUS_AW_DONE);
-    g_assert_true(traffic_target_matches(qts,
-                                         pa_raw +
-                                         BOSC_AXI4_TRAFFIC_BEAT_BYTES,
-                                         expected, sizeof(expected)));
+    g_assert_true(traffic_target_matches(qts, pa_user, expected,
+                                         sizeof(expected)));
 
     traffic_init_target(qts, pa_pid_a, sizeof(expected));
     traffic_init_target(qts, pa_pid_b, sizeof(expected));
-    qtest_memwrite(qts, pa_pid_a, expected, sizeof(expected));
+    qtest_memwrite(qts, pa_pid_b, expected, sizeof(expected));
 
     traffic_write64_regs(qts, base, BOSC_AXI4_TRAFFIC_START_BASE + 0 * 8,
                          pid_iova);
@@ -514,7 +483,7 @@ static void test_mapper_translation_selection(void)
                     ==, BOSC_AXI4_TRAFFIC_STATUS_AR_DONE);
     g_assert_cmpuint((status >> 8) & 0xfffff, ==, 1);
     g_assert_cmpuint(status & 0xff, ==, 0);
-    g_assert_false(traffic_target_matches(qts, pa_pid_b, expected,
+    g_assert_false(traffic_target_matches(qts, pa_pid_a, expected,
                                           sizeof(expected)));
 
     qtest_quit(qts);
@@ -554,8 +523,8 @@ int main(int argc, char **argv)
                    test_reset_and_readback);
     qtest_add_func("/riscv64/bosc_axi4_traffic/bare_traffic_windows",
                    test_bare_traffic_windows);
-    qtest_add_func("/riscv64/bosc_axi4_traffic/mapper_translation_selection",
-                   test_mapper_translation_selection);
+    qtest_add_func("/riscv64/bosc_axi4_traffic/user_requester_selection",
+                   test_user_requester_selection);
     qtest_add_func("/riscv64/bosc_axi4_traffic/error_dma_has_no_done",
                    test_error_dma_has_no_done);
 
