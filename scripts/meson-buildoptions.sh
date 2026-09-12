@@ -40,8 +40,6 @@ meson_options_help() {
   printf "%s\n" '  --enable-gcov            Enable coverage tracking.'
   printf "%s\n" '  --enable-io-system-iommu-rtl'
   printf "%s\n" '                           build picker-backed RTL IOMMU API'
-  printf "%s\n" '  --disable-io-system-iommu-rtl'
-  printf "%s\n" '                           build picker-backed RTL IOMMU API'
   printf "%s\n" '  --enable-io-system-rtl-arena'
   printf "%s\n" '                           build the Arena E6 + RA RTL io-system model'
   printf "%s\n" '  --enable-io-system-rtl-system'
