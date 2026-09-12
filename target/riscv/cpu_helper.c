@@ -2196,7 +2196,12 @@ void riscv_cpu_do_interrupt(CPUState *cs)
         if (cause == RISCV_EXCP_ILLEGAL_INST &&
             env->bins == 0x0005006b &&
             riscv_cpu_cfg(env)->bosc_debug_inst) {
-            qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
+            /* XiangShan test firmware places the result in a0: zero is a
+             * passing test, one is a failing test. Preserve that status as
+             * QEMU's process exit code while retaining normal shutdown. */
+            const int exit_code = env->gpr[xA0] ? EXIT_FAILURE : EXIT_SUCCESS;
+            qemu_system_shutdown_request_with_code(
+                SHUTDOWN_CAUSE_GUEST_SHUTDOWN, exit_code);
             cpu_stop_current();
             return;
         }

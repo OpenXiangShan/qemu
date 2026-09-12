@@ -67,9 +67,10 @@ device. It applies to the QEMU host CPU; the E6 CPU executes inside RTL.
 
 An Arena host test must wait for E6's completion register, inspect the shared
 report and finish printing its verdict before executing this instruction.
-The instruction does not read ``a0`` or encode PASS/FAIL in the QEMU process
-exit code. Automation must check the test verdict as well as normal process
-exit. Older firmware that ends in WFI still needs an external shutdown request.
+The instruction reads ``a0``: zero requests process exit status 0 (PASS),
+and nonzero requests status 1 (FAIL). Automation must check the test verdict
+as well as process exit. Older firmware that ends in WFI still needs an
+external shutdown request.
 
 E6/AME AXI-only acceptance test
 -----------------------------
