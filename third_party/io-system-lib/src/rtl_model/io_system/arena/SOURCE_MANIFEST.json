@@ -1266,9 +1266,9 @@
     {
       "source_path": "src/RA/src/soc/E6x.sv",
       "source_sha256": "ffef4eef14341b0143d9df92dfb243eb808b4ef8c62de0febd552739daa7960a",
-      "imported_sha256": "ffef4eef14341b0143d9df92dfb243eb808b4ef8c62de0febd552739daa7960a",
-      "bytes": 90154,
-      "modified": false
+      "imported_sha256": "a020fdab3cc454ca71f1acb442b85c7d96f7adee5ab75809b222dfb2910ecd40",
+      "bytes": 90291,
+      "modified": true
     },
     {
       "source_path": "src/RA/src/soc/ame_aicb_wrapper.sv",

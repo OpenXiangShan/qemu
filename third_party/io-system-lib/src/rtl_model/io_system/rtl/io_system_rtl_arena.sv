@@ -90,9 +90,9 @@ module io_system_rtl_arena (
     assign narrow_ddr_resp = ddr_resp_i;
 
     axi_dw_converter #(
-        // Keep DDR read responses in request order for the Arena 64->512
-        // bridge, whose response lane metadata is held in an ordered FIFO.
-        .AxiMaxReads(1), .AxiSlvPortDataWidth(512), .AxiMstPortDataWidth(64),
+        // E6 AXIM now matches read lane metadata by RID, so distinct read
+        // contexts may complete out of order through the shared DDR port.
+        .AxiMaxReads(16), .AxiSlvPortDataWidth(512), .AxiMstPortDataWidth(64),
         .AxiAddrWidth(64), .AxiIdWidth(8),
         .aw_chan_t(a512i8_aw_chan_t), .ar_chan_t(a512i8_ar_chan_t), .b_chan_t(a512i8_b_chan_t),
         .slv_w_chan_t(a512i8_w_chan_t), .mst_w_chan_t(a64i8_w_chan_t),

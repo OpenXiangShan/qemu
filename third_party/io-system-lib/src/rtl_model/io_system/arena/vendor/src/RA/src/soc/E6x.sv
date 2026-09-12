@@ -1156,7 +1156,12 @@ module E6x #(
 assign io_axim_w_utid_o = 10'b0;
 
 
+// Preserve the board bridge; co-simulation uses per-RID read contexts.
+`ifdef IO_SYSTEM_RTL_ARENA
+io_system_rtl_e6_width #
+`else
 AXIAXI_64T512 #
+`endif
 (
     .IDW(4)                          ,   //ID 位宽设定.
     .STD(1)                          ,   //是否完全按照AXI窄传输:0=多周期窄传输适配为满传输;1=按标准窄传输适配.

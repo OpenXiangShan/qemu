@@ -7,8 +7,8 @@ peripherals. No LinkNan, FPGA DDR controller or board testbench is imported.
 The `vendor/` paths retain their upstream repository-relative names.
 
 `SOURCE_MANIFEST.json` records upstream and imported SHA256 for every file.
-`cosim.patch` is the complete local adaptation of the handwritten mini top and
-SYSCTRL. The generated cores are byte-identical to the pinned Git objects.
+`cosim.patch` is the complete local adaptation of the handwritten mini top,
+SYSCTRL and E6x integration. The generated cores are byte-identical to the pinned Git objects.
 Original copyright and license notices are retained; the AXI project license
 is at `vendor/src/axi/LICENSE`.
 
@@ -61,3 +61,20 @@ The DDR AXI master is 64-bit address / 512-bit data / 8-bit ID. The config AXI
 slave is 64-bit address / 512-bit data / 4-bit ID. These are the original full
 AXI interfaces, not picker-exported independent peripheral models. The parent
 io-system integration owns the external width conversion, mux and runtime.
+
+## E6 AXIM read ordering
+
+With `IO_SYSTEM_RTL_ARENA`, the handwritten E6x integration selects
+`io_system_rtl_e6_width` for its AXIM port. This retains the original input
+and output channel buffers, and uses a PULP upsizer with per-RID read contexts
+instead of the legacy global lane/beat FIFO. The shared DDR converter now
+allows 16 read contexts. Without this define the board still uses its original
+bridge; generated E6, RVV and AME sources are unchanged.
+
+A guard before the new upsizer normalizes supported aligned-start read WRAPs.
+Arbitrary-start WRAP, FIXED and exclusive accesses remain unsupported by this
+co-simulation path. Modifiable INCR bursts may be merged by the upsizer; the
+original narrow-side transfer semantics are retained. Same-ID requests are
+backpressured while their context is occupied, and different IDs can progress
+concurrently. See `tests/arena/E6_WIDTH_BRIDGE.md` from the library root for
+scope, reproduction and validation details.

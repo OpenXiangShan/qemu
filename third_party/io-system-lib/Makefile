@@ -89,6 +89,7 @@ ifeq ($(IO_SYSTEM_RTL_ARENA),1)
 RTL_SYSTEM_RTL_SRCS += $(shell python3 src/rtl_model/io_system/scripts/arena-filelist.py | sed -n '/^\//p')
 RTL_SYSTEM_RTL_SRCS += $(RTL_SYSTEM_RTL_DIR)/io_system_rtl_arena_pkg.sv \
 	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_axi_guard.sv \
+	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_e6_width.sv \
 	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_arena.sv
 RTL_SYSTEM_RTL_SRCS += $(shell python3 -c 'import pathlib; print(" ".join(str(p) for p in pathlib.Path("src/rtl_model/io_system/arena/vendor").rglob("*.svh")))')
 RTL_SYSTEM_ARENA_MANIFESTS := src/rtl_model/io_system/arena/sources.json \

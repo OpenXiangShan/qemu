@@ -22,6 +22,7 @@ for source in (rtl / 'io_system_rtl_filelist.f').read_text().splitlines():
         continue
     if args.arena and source.endswith('/io_system_rtl_wrapper.sv'):
         for name in ('io_system_rtl_arena_pkg.sv', 'io_system_rtl_axi_guard.sv',
+                     'io_system_rtl_e6_width.sv',
                      'io_system_rtl_arena.sv'):
             print(rtl / name)
     print(root / source)

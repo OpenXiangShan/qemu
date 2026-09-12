@@ -54,7 +54,7 @@ MODULES += ["src/axi/src/" + x + ".sv" for x in [
 
 
 def patch_source(path: str, data: bytes) -> bytes:
-    # Only these two handwritten integration files are changed. Generated E6,
+    # Only these handwritten integration files are changed. Generated E6,
     # RVV and AME sources are copied byte-for-byte from the pinned Git object.
     if path == RA + "soc/arena_soc_mini.sv":
         text = data.decode()
@@ -110,6 +110,21 @@ generate if (COSIM) begin : gen_cosim_clint
         text = text[:clint_start] + clint_bridge + text[clint_end:]
         text = '`include "axi/typedef.svh"\n' + text
         return text.encode()
+    if path == RA + "soc/E6x.sv":
+        text = data.decode()
+        old = "AXIAXI_64T512 #"
+        instance = re.search(r"AXIAXI_64T512\s*#\s*\(.*?\)\s*u_AXIAXI_axim\b", text, re.S)
+        if not instance or instance.group().count(old) != 1:
+            raise ValueError("unexpected E6 AXIM width bridge instance")
+        newline = "\r\n" if "\r\n" in text else "\n"
+        replacement = """// Preserve the board bridge; co-simulation uses per-RID read contexts.
+`ifdef IO_SYSTEM_RTL_ARENA
+io_system_rtl_e6_width #
+`else
+AXIAXI_64T512 #
+`endif""".replace("\n", newline)
+        start = instance.start()
+        return (text[:start] + text[start:].replace(old, replacement, 1)).encode()
     if path == RA + "IP/sysctrl/sysctrl.sv":
         text = data.decode()
         text = text.replace("module sysctrl (", """module sysctrl #(
