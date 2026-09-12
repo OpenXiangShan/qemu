@@ -104,8 +104,11 @@ if count != 1:
 p.write_text(s)
 PY
 
-make -C "$picker_abs" install \
+make -C "$picker_abs" build \
     NPROC="${IO_SYSTEM_BUILD_JOBS:-8}" \
+    INSTALL_XSPCOMM_LIB="$xspcomm_abs"
+
+make -C "$picker_abs" install \
     INSTALL_PREFIX="$picker_abs" \
     INSTALL_XSPCOMM_LIB="$xspcomm_abs"
 

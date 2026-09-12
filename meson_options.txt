@@ -59,6 +59,20 @@ option('io_system_iommu_rtl', type : 'boolean', value : false,
        description: 'build picker-backed RTL IOMMU API')
 option('io_system_iommu_picker_out', type : 'string', value : '',
        description: 'picker output used by the RTL IOMMU API build')
+option('io_system_rtl_system', type : 'boolean', value : false,
+       description: 'build picker-backed RTL io-system API')
+option('io_system_rtl_system_picker_out', type : 'string', value : '',
+       description: 'picker output used by the RTL io-system API build')
+option('io_system_rtl_arena', type : 'boolean', value : false,
+       description: 'build the Arena E6 + RA RTL io-system model')
+option('io_system_picker', type : 'string', value : '',
+       description: 'Picker executable used by io-system RTL builds')
+option('io_system_picker_template', type : 'string', value : '',
+       description: 'Picker template directory used by io-system RTL builds')
+option('io_system_picker_xspcomm_include', type : 'string', value : '',
+       description: 'XSPComm include directory used by io-system RTL builds')
+option('io_system_picker_xspcomm_lib', type : 'string', value : '',
+       description: 'XSPComm library used by io-system RTL builds')
 option('kvm_m_mode', type : 'feature', value : 'disabled',
        description: 'RISC-V KVM software M-mode support')
 option('kvm_nested', type : 'feature', value : 'disabled',

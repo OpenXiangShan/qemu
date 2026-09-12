@@ -68,6 +68,7 @@ RTL_SYSTEM_RTL_DIR := src/rtl_model/io_system/rtl
 RTL_SYSTEM_RTL_FILE := $(RTL_SYSTEM_RTL_DIR)/io_system_rtl_wrapper.sv
 RTL_SYSTEM_FILELIST_SOURCE := $(RTL_SYSTEM_RTL_DIR)/io_system_rtl_filelist.f
 RTL_SYSTEM_FILELIST := $(BUILD_DIR)/rtl-system-picker/io_system_rtl_filelist.f
+RTL_SYSTEM_CONFIG := $(BUILD_DIR)/rtl-system-picker/build-config.txt
 RTL_SYSTEM_RTL_SRCS := \
 	src/rtl_model/io_system/rtl/aplic/vendor/axi_pkg.sv \
 	src/rtl_model/io_system/rtl/aplic/vendor/ariane_axi_pkg.sv \
@@ -91,7 +92,7 @@ RTL_SYSTEM_RTL_SRCS += $(RTL_SYSTEM_RTL_DIR)/io_system_rtl_arena_pkg.sv \
 	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_axi_guard.sv \
 	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_e6_width.sv \
 	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_arena.sv
-RTL_SYSTEM_RTL_SRCS += $(shell python3 -c 'import pathlib; print(" ".join(str(p) for p in pathlib.Path("src/rtl_model/io_system/arena/vendor").rglob("*.svh")))')
+RTL_SYSTEM_RTL_SRCS += $(shell python3 -c 'import pathlib; print(" ".join(str(p) for p in pathlib.Path("src/rtl_model/io_system/arena/vendor").rglob("*") if p.suffix in (".svh", ".vh")))')
 RTL_SYSTEM_ARENA_MANIFESTS := src/rtl_model/io_system/arena/sources.json \
 	src/rtl_model/io_system/arena/SOURCE_MANIFEST.json \
 	src/rtl_model/io_system/scripts/arena-filelist.py
@@ -255,7 +256,22 @@ $(IOMMU_RTL_STAGE_STAMP): $(IOMMU_RTL_API_SO) \
 	cp -a $(IOMMU_RTL_PICKER_DAIDIR) $(IOMMU_RTL_STAGE_DIR)/
 	@touch $@
 
-$(RTL_SYSTEM_FILELIST): $(RTL_SYSTEM_FILELIST_SOURCE) $(RTL_SYSTEM_ARENA_MANIFESTS) Makefile \
+.PHONY: rtl-system-config-force
+rtl-system-config-force:
+
+# Make variables are not timestamp dependencies. Invalidate the generated
+# filelist/model when menuconfig changes its mode or toolchain in one O= tree.
+$(RTL_SYSTEM_CONFIG): rtl-system-config-force
+	@mkdir -p $(dir $@)
+	@printf '%s\n' 'ARENA=$(IO_SYSTEM_RTL_ARENA)' \
+		'PICKER=$(PICKER)' 'TEMPLATE=$(PICKER_TEMPLATE)' \
+		'XSPCOMM_INCLUDE=$(PICKER_XSPCOMM_INCLUDE)' \
+		'XSPCOMM_LIB=$(PICKER_XSPCOMM_LIB)' 'VCS_HOME=$(VCS_HOME)' \
+		'WAVE=$(IO_SYSTEM_RTL_WAVE)' 'COVERAGE=$(IO_SYSTEM_RTL_COVERAGE)' > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+	@rm -f $@.tmp
+
+$(RTL_SYSTEM_FILELIST): $(RTL_SYSTEM_CONFIG) $(RTL_SYSTEM_FILELIST_SOURCE) $(RTL_SYSTEM_ARENA_MANIFESTS) Makefile \
 		src/rtl_model/io_system/scripts/system-filelist.py
 	@mkdir -p $(dir $@)
 	python3 src/rtl_model/io_system/scripts/system-filelist.py \

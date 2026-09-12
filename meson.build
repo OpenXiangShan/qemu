@@ -3798,6 +3798,9 @@ target_common_system_arch = {}
 # that is filled in by qapi/.
 subdir('qapi')
 
+if get_option('io_system_rtl_arena') and not get_option('io_system').enabled()
+  error('io_system_rtl_arena requires io_system')
+endif
 if get_option('io_system').enabled()
   io_system_workspace_root = join_paths(meson.project_source_root(), '..')
   io_system_lib_dir = join_paths(meson.project_source_root(), 'third_party',
@@ -3807,6 +3810,12 @@ if get_option('io_system').enabled()
   io_system_lib_output_dir = meson.current_build_dir()
   io_system_iommu_rtl = get_option('io_system_iommu_rtl')
   io_system_iommu_picker_out = get_option('io_system_iommu_picker_out')
+  io_system_rtl_system = get_option('io_system_rtl_system')
+  io_system_rtl_system_picker_out = get_option('io_system_rtl_system_picker_out')
+  io_system_rtl_arena = get_option('io_system_rtl_arena')
+  if io_system_rtl_arena and not io_system_rtl_system
+    error('io_system_rtl_arena requires io_system_rtl_system')
+  endif
   io_system_iommu_rtl_arg = '0'
   if io_system_iommu_rtl
     if io_system_iommu_picker_out == ''
@@ -3814,8 +3823,25 @@ if get_option('io_system').enabled()
     endif
     io_system_iommu_rtl_arg = '1'
   endif
-  io_system_unitychip_dir = join_paths(meson.project_build_root(), '..',
-                                       'unitychip', 'share', 'picker')
+  io_system_rtl_system_arg = '0'
+  if io_system_rtl_system
+    if io_system_rtl_system_picker_out == ''
+      error('io_system_rtl_system_picker_out is required with io_system_rtl_system')
+    endif
+    io_system_rtl_system_arg = '1'
+  endif
+  io_system_picker = get_option('io_system_picker')
+  io_system_picker_template = get_option('io_system_picker_template')
+  io_system_picker_xspcomm_include = get_option('io_system_picker_xspcomm_include')
+  io_system_picker_xspcomm_lib = get_option('io_system_picker_xspcomm_lib')
+  if io_system_iommu_rtl or io_system_rtl_system
+    if io_system_picker == '' or io_system_picker_template == '' or \
+       io_system_picker_xspcomm_include == '' or io_system_picker_xspcomm_lib == ''
+      error('io-system RTL builds require io_system_picker, ' +
+            'io_system_picker_template, io_system_picker_xspcomm_include, ' +
+            'and io_system_picker_xspcomm_lib')
+    endif
+  endif
   io_system_glib_cflags = run_command('pkg-config', '--cflags', 'glib-2.0',
                                       check: true).stdout().strip().split()
   io_system_qemu_cflags = [
@@ -3839,12 +3865,15 @@ if get_option('io_system').enabled()
       'OUTPUT_DIR=' + io_system_lib_output_dir,
       'WORKSPACE_ROOT=' + io_system_workspace_root,
       'IO_SYSTEM_QEMU_BACKEND=1',
+      'IO_SYSTEM_RTL_SYSTEM=' + io_system_rtl_system_arg,
+      'IO_SYSTEM_RTL_ARENA=' + (io_system_rtl_arena ? '1' : '0'),
+      'RTL_SYSTEM_PICKER_OUT=' + io_system_rtl_system_picker_out,
       'IO_SYSTEM_IOMMU_RTL=' + io_system_iommu_rtl_arg,
       'IOMMU_RTL_PICKER_OUT=' + io_system_iommu_picker_out,
-      'PICKER_XSPCOMM_INCLUDE=' + join_paths(io_system_unitychip_dir,
-                                              'include'),
-      'PICKER_XSPCOMM_LIB=' + join_paths(io_system_unitychip_dir, 'lib',
-                                         'libxspcomm.so'),
+      'PICKER=' + io_system_picker,
+      'PICKER_TEMPLATE=' + io_system_picker_template,
+      'PICKER_XSPCOMM_INCLUDE=' + io_system_picker_xspcomm_include,
+      'PICKER_XSPCOMM_LIB=' + io_system_picker_xspcomm_lib,
       'QEMU_CFLAGS_LIST=' + '|'.join(io_system_qemu_cflags),
       'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
       'all',
@@ -3853,6 +3882,15 @@ if get_option('io_system').enabled()
     build_by_default: true,
     build_always_stale: true,
   )
+  if io_system_rtl_system
+    io_system_rtl_system_api = custom_target('io-system-rtl-system-api',
+      output: 'libio_rtl_system_api.so',
+      command: [find_program('test'), '-f', '@OUTPUT@'],
+      depends: io_system_libs,
+      build_by_default: true,
+      build_always_stale: true,
+    )
+  endif
   io_system_backend = declare_dependency(
     include_directories: include_directories('third_party/io-system-lib/include'),
     sources: io_system_libs,

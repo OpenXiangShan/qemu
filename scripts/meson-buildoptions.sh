@@ -17,8 +17,6 @@ meson_options_help() {
   printf "%s\n" '                           use idef-parser to automatically generate TCG'
   printf "%s\n" '                           code for the Hexagon frontend'
   printf "%s\n" '  --disable-install-blobs  install provided firmware blobs'
-  printf "%s\n" '  --disable-io-system-iommu-rtl'
-  printf "%s\n" '                           build picker-backed RTL IOMMU API'
   printf "%s\n" '  --disable-qom-cast-debug cast debugging support'
   printf "%s\n" '  --disable-relocatable    toggle relocatable install'
   printf "%s\n" '  --docdir=VALUE           Base directory for documentation installation'
@@ -40,6 +38,14 @@ meson_options_help() {
   printf "%s\n" '                           (choices: auto/disabled/enabled/internal/system)'
   printf "%s\n" '  --enable-fuzzing         build fuzzing targets'
   printf "%s\n" '  --enable-gcov            Enable coverage tracking.'
+  printf "%s\n" '  --enable-io-system-iommu-rtl'
+  printf "%s\n" '                           build picker-backed RTL IOMMU API'
+  printf "%s\n" '  --disable-io-system-iommu-rtl'
+  printf "%s\n" '                           build picker-backed RTL IOMMU API'
+  printf "%s\n" '  --enable-io-system-rtl-arena'
+  printf "%s\n" '                           build the Arena E6 + RA RTL io-system model'
+  printf "%s\n" '  --enable-io-system-rtl-system'
+  printf "%s\n" '                           build picker-backed RTL io-system API'
   printf "%s\n" '  --enable-lto             Use link time optimization'
   printf "%s\n" '  --enable-malloc=CHOICE   choose memory allocator to use [system] (choices:'
   printf "%s\n" '                           jemalloc/system/tcmalloc)'
@@ -66,6 +72,17 @@ meson_options_help() {
   printf "%s\n" '                           cpu name [/usr/gnemul/qemu-%M]'
   printf "%s\n" '  --io-system-iommu-picker-out=VALUE'
   printf "%s\n" '                           picker output used by the RTL IOMMU API build'
+  printf "%s\n" '  --io-system-picker=VALUE Picker executable used by io-system RTL builds'
+  printf "%s\n" '  --io-system-picker-template=VALUE'
+  printf "%s\n" '                           Picker template directory used by io-system RTL'
+  printf "%s\n" '                           builds'
+  printf "%s\n" '  --io-system-picker-xspcomm-include=VALUE'
+  printf "%s\n" '                           XSPComm include directory used by io-system RTL'
+  printf "%s\n" '                           builds'
+  printf "%s\n" '  --io-system-picker-xspcomm-lib=VALUE'
+  printf "%s\n" '                           XSPComm library used by io-system RTL builds'
+  printf "%s\n" '  --io-system-rtl-system-picker-out=VALUE'
+  printf "%s\n" '                           picker output used by the RTL io-system API build'
   printf "%s\n" '  --libdir=VALUE           Library directory [system default]'
   printf "%s\n" '  --libexecdir=VALUE       Library executable directory [libexec]'
   printf "%s\n" '  --localedir=VALUE        Locale data directory [share/locale]'
@@ -370,6 +387,15 @@ _meson_option_parse() {
     --io-system-iommu-picker-out=*) quote_sh "-Dio_system_iommu_picker_out=$2" ;;
     --enable-io-system-iommu-rtl) printf "%s" -Dio_system_iommu_rtl=true ;;
     --disable-io-system-iommu-rtl) printf "%s" -Dio_system_iommu_rtl=false ;;
+    --io-system-picker=*) quote_sh "-Dio_system_picker=$2" ;;
+    --io-system-picker-template=*) quote_sh "-Dio_system_picker_template=$2" ;;
+    --io-system-picker-xspcomm-include=*) quote_sh "-Dio_system_picker_xspcomm_include=$2" ;;
+    --io-system-picker-xspcomm-lib=*) quote_sh "-Dio_system_picker_xspcomm_lib=$2" ;;
+    --enable-io-system-rtl-arena) printf "%s" -Dio_system_rtl_arena=true ;;
+    --disable-io-system-rtl-arena) printf "%s" -Dio_system_rtl_arena=false ;;
+    --enable-io-system-rtl-system) printf "%s" -Dio_system_rtl_system=true ;;
+    --disable-io-system-rtl-system) printf "%s" -Dio_system_rtl_system=false ;;
+    --io-system-rtl-system-picker-out=*) quote_sh "-Dio_system_rtl_system_picker_out=$2" ;;
     --enable-jack) printf "%s" -Djack=enabled ;;
     --disable-jack) printf "%s" -Djack=disabled ;;
     --enable-keyring) printf "%s" -Dkeyring=enabled ;;
