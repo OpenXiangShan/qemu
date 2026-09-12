@@ -56,6 +56,21 @@ QEMU 暂停时停止连续推进，恢复时重新调度；正常 shutdown 将 V
 推进并输出诊断，自动化测试还必须设置外部墙钟超时。这是功能协同仿真，
 128 周期批次不表示 QEMU 主核与 RTL 的真实频率比例。
 
+Bare-metal test exit instruction
+-------------------------------
+
+QEMU host harts enable the XiangShan ``0x0005006b`` debug instruction. In TCG,
+executing ``.word 0x0005006b`` requests normal guest shutdown, including the
+io-system shutdown notifier that closes picker/VCS on its owning thread.
+This uses the existing RISC-V CPU implementation and requires no extra MMIO
+device. It applies to the QEMU host CPU; the E6 CPU executes inside RTL.
+
+An Arena host test must wait for E6's completion register, inspect the shared
+report and finish printing its verdict before executing this instruction.
+The instruction does not read ``a0`` or encode PASS/FAIL in the QEMU process
+exit code. Automation must check the test verdict as well as normal process
+exit. Older firmware that ends in WFI still needs an external shutdown request.
+
 E6/AME AXI-only acceptance test
 -----------------------------
 

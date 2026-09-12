@@ -1463,6 +1463,11 @@ static void qti_machine_init(MachineState *machine)
     qdev_prop_set_string(DEVICE(&s->cpus), "cpu-type", machine->cpu_type);
     sysbus_realize(SYS_BUS_DEVICE(&s->cpus), &error_fatal);
 
+    /* Match XiangShan's 0x0005006b test-completion instruction. */
+    for (uint32_t i = 0; i < machine->smp.cpus; i++) {
+        s->cpus.harts[i].cfg.bosc_debug_inst = true;
+    }
+
     qti_create_imsics(machine->smp.cpus);
 
     if (s->dw_pcie &&
