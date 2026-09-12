@@ -150,6 +150,8 @@ IoSystem *io_system_create(const IoSystemConfig *config,
         .max_beat_bytes = system->config.io2q_max_beat_bytes,
         .outstanding_depth = io_system_outstanding_depth(system),
         .async_enabled = system->config.io2q_async_enabled,
+        .faults_as_responses =
+            system->config.backend_kind == IO_SYSTEM_BACKEND_RTL_SYSTEM,
         .completion = io_system_scheduler_completion,
     });
     if (!system->scheduler) {
@@ -208,6 +210,9 @@ IoSystemStatus io_system_reset(IoSystem *system)
         return IO_SYSTEM_ERR_INVALID;
     }
 
+    /* Drop callbacks before the model can reuse an AXI ID after reset. */
+    io_scheduler_reset(system->scheduler);
+    system->scheduler_completion_status = IO_SYSTEM_OK;
     status = system->backend->ops->reset(system->backend);
     if (status != IO_SYSTEM_OK) {
         return status;

@@ -39,8 +39,8 @@ module aplic_domain_top #(
    /** interface for MSI mode */
    `elsif MSI_MODE
    output  logic                        o_busy,
-   output  ariane_axi::req_t            o_req,
-   input   ariane_axi::resp_t           i_resp
+   output  io_aplic_axi::req_t            o_req,
+   input   io_aplic_axi::resp_t           i_resp
    `endif
 );
 // ================== INTERCONNECTION SIGNALS =====================

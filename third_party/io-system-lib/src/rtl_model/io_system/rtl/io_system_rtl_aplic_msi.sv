@@ -73,8 +73,8 @@ module io_system_rtl_aplic_msi #(
 
     reg_intf::reg_intf_req_a32_d64 top_req;
     reg_intf::reg_intf_resp_d64    top_resp;
-    ariane_axi::req_t              msi_req;
-    ariane_axi::resp_t             msi_resp;
+    io_aplic_axi::req_t              msi_req;
+    io_aplic_axi::resp_t             msi_resp;
 
     function automatic logic [31:0] apply_wstrb32(
         input logic [31:0] old_value,
@@ -161,9 +161,9 @@ module io_system_rtl_aplic_msi #(
 
         msi_resp.aw_ready = m_axi_awready;
         msi_resp.ar_ready = 1'b0;
-        msi_resp.w_ready = m_axi_awready & m_axi_wready;
+        msi_resp.w_ready = m_axi_wready;
         msi_resp.b_valid = m_axi_bvalid;
-        msi_resp.b.id = m_axi_bid[ariane_axi::IdWidth-1:0];
+        msi_resp.b.id = m_axi_bid[io_aplic_axi::IdWidth-1:0];
         msi_resp.b.resp = m_axi_bresp;
         msi_resp.b.user = '0;
         msi_resp.r_valid = 1'b0;

@@ -43,7 +43,9 @@
 #define APLIC_TARGET_BASE     0x3004
 
 #define APLIC_DOMAINCFG_IE    (1u << 8)
+#define APLIC_DOMAINCFG_DM    (1u << 2)
 #define APLIC_SOURCECFG_EDGE_RISE 0x4
+#define APLIC_SOURCECFG_DELEGATED (1u << 10)
 
 #define VIRTIO_MMIO_MAGIC_VALUE        0x000
 #define VIRTIO_MMIO_VERSION            0x004
@@ -159,11 +161,14 @@ static void qti_configure_aplic_for_blk(QTestState *qts)
     qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SMSICFGADDR,
                  QTI_MSI_ADDR >> 12);
     qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SMSICFGADDRH, 0);
+    qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SOURCECFG_BASE +
+                 (QTI_BLK_IRQ - 1) * 4, APLIC_SOURCECFG_DELEGATED);
     qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_SOURCECFG_BASE +
                  (QTI_BLK_IRQ - 1) * 4, APLIC_SOURCECFG_EDGE_RISE);
     qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_TARGET_BASE +
                  (QTI_BLK_IRQ - 1) * 4, QTI_BLK_EIID);
-    qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG, APLIC_DOMAINCFG_IE);
+    qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG,
+                 APLIC_DOMAINCFG_IE | APLIC_DOMAINCFG_DM);
     qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_SETIENUM, QTI_BLK_IRQ);
 }
 
@@ -373,14 +378,19 @@ static void test_machine_rtl_system_virtio_blk(void)
                     ==, 1u << (QTI_BLK_IRQ % 32));
 
     qtest_writel(qts, QTI_APLIC_S_BASE + APLIC_SETIPNUM, QTI_BLK_IRQ);
-    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_SETIP_BASE) &
-                    (1u << QTI_BLK_IRQ),
-                    ==, 0);
+    /* The RTL notifier, AXI arbitration and B response take several cycles. */
     for (int i = 0; i < 32 && qtest_readl(qts, QTI_MSI_ADDR) != QTI_BLK_EIID;
          i++) {
         qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG);
     }
     g_assert_cmphex(qtest_readl(qts, QTI_MSI_ADDR), ==, QTI_BLK_EIID);
+    for (int i = 0; i < 32 &&
+         (qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_SETIP_BASE) &
+          (1u << QTI_BLK_IRQ)); i++) {
+        qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_DOMAINCFG);
+    }
+    g_assert_cmphex(qtest_readl(qts, QTI_APLIC_S_BASE + APLIC_SETIP_BASE) &
+                    (1u << QTI_BLK_IRQ), ==, 0);
     qtest_writel(qts, QTI_MSI_ADDR, 0);
 
     qtest_writel(qts, QTI_APLIC_M_BASE + APLIC_SMSICFGADDR,

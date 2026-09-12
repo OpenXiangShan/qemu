@@ -1,5 +1,8 @@
 build/
 output/
+build-arena/
+output-arena/
+__pycache__/
 *.fsdb
 novas_dump.log
 ucli.key

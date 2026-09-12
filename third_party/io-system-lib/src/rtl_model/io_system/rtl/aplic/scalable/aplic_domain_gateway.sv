@@ -88,9 +88,15 @@ end
 for (genvar i = 1; i < NR_SRC; i++) begin
     assign rectified_src_i[i] = i_sources[i] ^ i_sourcecfg[i][0];
 end
+assign rectified_src_i[0] = 1'b0;
 /** Converts the rectified 1D array into a 2D array format */
 for (genvar i = 0; i <= NR_REG; i++) begin
-    assign o_rectified_src[i] = rectified_src_i[NR_BITS_SRC*i +: NR_BITS_SRC];
+    for (genvar j = 0; j < NR_BITS_SRC; j++) begin
+        if (NR_BITS_SRC*i + j < NR_SRC)
+            assign o_rectified_src[i][j] = rectified_src_i[NR_BITS_SRC*i + j];
+        else
+            assign o_rectified_src[i][j] = 1'b0;
+    end
 end
 
 /** Select the new interrupt */
@@ -101,8 +107,11 @@ end
 /** Choose logic to set pend */
 /** TODO: Needs refactoring */
 always_comb begin
+    // Source zero and unused tail bits are reserved and always read zero.
+    o_intp_pen = '0;
    for(int j = 0; j <= NR_REG; j++) begin
-        for (int i = (j == 0) ? 1 : 0; i < NR_BITS_SRC; i++) begin
+        for (int i = (j == 0) ? 1 : 0;
+             i < NR_BITS_SRC && (j*NR_BITS_SRC + i) < NR_SRC; i++) begin
             case (intp_pen_src_i[(j*NR_BITS_SRC) + i])
                 DETACHED_C: begin
                     o_intp_pen[j][i] = i_sugg_setip[j][i] & i_active[j][i] & ~(i_claimed[j][i]);

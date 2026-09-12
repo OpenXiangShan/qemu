@@ -37,6 +37,8 @@ typedef struct IoSystemRtlSystemApi {
     int (*step)(io_rtl_system_handle_t *handle, uint64_t cycles);
     int (*poll)(io_rtl_system_handle_t *handle);
     int (*needs_service)(io_rtl_system_handle_t *handle);
+    int (*set_service_callback)(io_rtl_system_handle_t *handle,
+                                io_rtl_system_service_cb callback, void *opaque);
     const char *(*last_error)(io_rtl_system_handle_t *handle);
 } IoSystemRtlSystemApi;
 
@@ -178,6 +180,11 @@ static bool io_rtl_system_bind_symbols(IoSystemRtlSystemBackend *rtl,
     IO_RTL_SYSTEM_BIND(poll, "io_rtl_system_poll");
     IO_RTL_SYSTEM_BIND(needs_service, "io_rtl_system_needs_service");
     IO_RTL_SYSTEM_BIND(last_error, "io_rtl_system_last_error");
+    /* Older picker APIs remain loadable; new APIs can service DDR while a
+     * blocking MMIO call is in progress. This callback never clocks the DUT. */
+    *(void **)(&rtl->api.set_service_callback) =
+        dlsym(rtl->api_so, "io_rtl_system_set_service_callback");
+    dlerror();
     return true;
 
 #undef IO_RTL_SYSTEM_BIND
@@ -303,6 +310,25 @@ static IoSystemStatus io_rtl_system_service_m_axi(
         }
     }
     return IO_SYSTEM_OK;
+}
+
+static int io_rtl_system_mmio_service(void *opaque)
+{
+    IoSystemRtlSystemBackend *rtl = opaque;
+    IoSystem *system = rtl->base.system;
+    IoSystemStatus status = io_scheduler_service(system->scheduler, 16, NULL);
+
+    if (status == IO_SYSTEM_OK) {
+        status = io_rtl_system_service_m_axi(rtl, 16);
+    }
+    if (status == IO_SYSTEM_OK) {
+        status = io_scheduler_service(system->scheduler, 16, NULL);
+    }
+    if (status == IO_SYSTEM_OK) {
+        status = system->scheduler_completion_status;
+    }
+    system->scheduler_completion_status = IO_SYSTEM_OK;
+    return status == IO_SYSTEM_OK ? 0 : -1;
 }
 
 static uint64_t io_rtl_system_virtio_alloc(int size)
@@ -569,6 +595,12 @@ static bool io_rtl_system_load(IoSystemRtlSystemBackend *rtl)
         return false;
     }
     rtl->owner_tid = io_rtl_system_current_tid();
+
+    if (rtl->api.set_service_callback &&
+        rtl->api.set_service_callback(rtl->handle, io_rtl_system_mmio_service,
+                                      rtl) != IO_RTL_SYSTEM_OK) {
+        return false;
+    }
 
     if (!io_rtl_system_create_blk(rtl)) {
         return false;

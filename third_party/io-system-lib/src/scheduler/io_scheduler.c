@@ -113,6 +113,10 @@ static IoSystemStatus io_scheduler_execute(IoScheduler *scheduler,
     }
 
     txn->data = entry->size ? entry->data : NULL;
+    if (status == IO_SYSTEM_ERR_IO && scheduler->config.faults_as_responses &&
+        scheduler->config.completion) {
+        return IO_SYSTEM_OK;
+    }
     return status;
 }
 

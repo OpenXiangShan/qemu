@@ -33,6 +33,17 @@ void io_rtl_system_close(io_rtl_system_handle_t *handle)
     delete handle;
 }
 
+int io_rtl_system_set_service_callback(io_rtl_system_handle_t *handle,
+                                      io_rtl_system_service_cb callback,
+                                      void *opaque)
+{
+    if (!handle) {
+        return IO_RTL_SYSTEM_ERR_INVALID;
+    }
+    handle->runtime.SetServiceCallback(callback, opaque);
+    return IO_RTL_SYSTEM_OK;
+}
+
 int io_rtl_system_reset(io_rtl_system_handle_t *handle)
 {
     if (!handle) {

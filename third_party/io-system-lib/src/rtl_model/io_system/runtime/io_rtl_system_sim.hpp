@@ -2,12 +2,12 @@
 #pragma once
 
 #include "io_rtl_system_api.h"
+#include "io_axi_master_engine.hpp"
 #include "UT_io_system_rtl_wrapper.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <optional>
 
 namespace io_rtl_system {
@@ -35,44 +35,12 @@ public:
     int CompleteMasterTransaction(const IoAxiTransaction *txn);
     int Step(uint64_t cycles);
     int Poll();
+    void SetServiceCallback(io_rtl_system_service_cb callback, void *opaque)
+    { service_callback_ = callback; service_opaque_ = opaque; }
     bool NeedsService() const;
     const char *LastError() const { return last_error_.data(); }
 
 private:
-    struct MasterReadResponse {
-        bool valid = false;
-        uint16_t id = 0;
-        uint8_t resp = 0;
-        bool last = false;
-        uint64_t data = 0;
-    };
-
-    struct MasterWriteResponse {
-        bool valid = false;
-        uint16_t id = 0;
-        uint8_t resp = 0;
-    };
-
-    struct PendingMasterWrite {
-        uint16_t id = 0;
-        uint64_t addr = 0;
-        uint8_t len = 0;
-        uint8_t size = 0;
-        uint8_t burst = 0;
-    };
-
-    struct PendingMasterWriteData {
-        uint64_t data = 0;
-        uint8_t strb = 0;
-        bool last = false;
-    };
-
-    struct MasterTransaction {
-        IoAxiTransaction txn = {};
-        std::array<uint8_t, IO_AXI_MAX_BEAT_BYTES> data = {};
-        std::array<uint8_t, IO_AXI_MAX_BEAT_BYTES> strobe = {};
-    };
-
     struct StepResult {
         bool s_aw_hs = false;
         bool s_w_hs = false;
@@ -97,9 +65,9 @@ private:
     void InitializeDut();
     void DriveIdleInputs();
     StepResult StepOne();
+    StepResult StepMmio();
     void PlanAndApplyMasterInputs();
     void CommitMasterHandshakes();
-    void QueueMasterWriteTransactions();
     void ClearSlaveRequestInputs();
 
     static uint64_t LoadLe(const void *data, std::size_t size);
@@ -107,14 +75,7 @@ private:
     static unsigned AxiSizeForBytes(std::size_t size);
     static uint64_t LowMask(unsigned bits);
 
-    std::size_t MasterOutstandingCount() const;
-    bool CanAcceptMasterAddress() const;
-    bool CanAcceptMasterWriteData() const;
-    void QueueMasterRead(uint16_t id, uint64_t addr, uint8_t len,
-                         uint8_t size, uint8_t burst);
-    void QueueMasterWrite(const PendingMasterWrite &addr);
-    void QueueMasterReadError(uint16_t id, uint8_t resp);
-    void QueueMasterWriteError(uint16_t id, uint8_t resp);
+    AxiMasterEngine::Inputs MasterInputs();
 
     bool WaitSlaveAw();
     bool WaitSlaveW();
@@ -127,14 +88,10 @@ private:
     std::optional<UTio_system_rtl_wrapper> dut_;
     std::array<char, 512> last_error_ = {};
     uint16_t next_slave_id_ = 1;
-    std::size_t master_outstanding_limit_ = 1;
+    AxiMasterEngine master_;
+    io_rtl_system_service_cb service_callback_ = nullptr;
+    void *service_opaque_ = nullptr;
 
-    std::deque<MasterReadResponse> read_responses_;
-    std::deque<MasterWriteResponse> write_responses_;
-    std::deque<PendingMasterWrite> pending_write_addrs_;
-    std::deque<PendingMasterWriteData> pending_write_data_;
-    std::deque<MasterTransaction> master_txn_queue_;
-    std::deque<MasterTransaction> inflight_txns_;
 };
 
 } // namespace io_rtl_system

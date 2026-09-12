@@ -26,6 +26,8 @@ typedef struct IoSchedulerConfig {
     uint32_t max_beat_bytes;
     uint32_t outstanding_depth;
     bool async_enabled;
+    /* RTL consumes failed memory operations through RRESP/BRESP. */
+    bool faults_as_responses;
     IoSchedulerCompletion completion;
 } IoSchedulerConfig;
 

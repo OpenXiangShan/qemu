@@ -17,6 +17,7 @@
 #include "qemu/timer.h"
 #include "qemu/units.h"
 #include "system/address-spaces.h"
+#include "system/cpus.h"
 #include "system/device_tree.h"
 #include "system/kvm.h"
 #include "system/runstate.h"
@@ -74,10 +75,20 @@
 #define FDT_IRQ_TYPE_EDGE_RISING 4
 #define FDT_IRQ_TYPE_LEVEL_HIGH 4
 #define QTI_IO_SYSTEM_SERVICE_BUDGET 16
+#define QTI_IO_SYSTEM_CONTINUOUS_CYCLES 128
 
 static void qti_schedule_io_system_service(QemuToIoSystemState *s);
 static void qti_posted_msi_bh(void *opaque);
 static void qti_trace_dump_new(QemuToIoSystemState *s);
+
+static void qti_destroy_io_system_on_cpu(CPUState *cpu, run_on_cpu_data data)
+{
+    QemuToIoSystemState *s = data.host_ptr;
+
+    qti_trace_dump_new(s);
+    io_system_destroy(s->io_system);
+    s->io_system = NULL;
+}
 
 static void qti_destroy_io_system(QemuToIoSystemState *s)
 {
@@ -106,6 +117,26 @@ static void qti_io_system_shutdown_notify(Notifier *notifier, void *data)
     bool dropped_bql = false;
 
     (void)data;
+
+    s->io_system_service_stopping = true;
+    qemu_bh_cancel(s->io_system_service_bh);
+    if (s->io_system_rtl_continuous && s->io_system_service_cpu &&
+        s->io_system) {
+        bool need_lock = !bql_locked();
+
+        /* vCPU threads still exist here; close VCS on its constructor thread. */
+        if (need_lock) {
+            bql_lock();
+        }
+        /* Prevent another guest MMIO after the owner has destroyed the model. */
+        pause_all_vcpus();
+        run_on_cpu(s->io_system_service_cpu, qti_destroy_io_system_on_cpu,
+                   RUN_ON_CPU_HOST_PTR(s));
+        if (need_lock) {
+            bql_unlock();
+        }
+        return;
+    }
 
     qti_trace_dump_new(s);
     if (bql_locked()) {
@@ -682,19 +713,28 @@ static int qti_guest_memory_atomic(void *opaque, uint64_t gpa, void *value,
 static bool qti_io_system_service_once(QemuToIoSystemState *s)
 {
     IoSystemStatus status;
+    unsigned cycles;
 
-    if (!s || !s->io_system) {
+    if (!s || !s->io_system || s->io_system_service_stopping ||
+        (s->io_system_rtl_continuous && !runstate_is_running())) {
         return false;
     }
-    status = io_system_service(s->io_system, QTI_IO_SYSTEM_SERVICE_BUDGET);
-    if (status != IO_SYSTEM_OK) {
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "qemu-to-iosystem: async service failed status=%d\n",
-                      status);
-        return false;
+    cycles = s->io_system_rtl_continuous ?
+             QTI_IO_SYSTEM_CONTINUOUS_CYCLES : 1;
+    for (unsigned i = 0; i < cycles; i++) {
+        /* One RTL clock, followed by bounded memory request service. */
+        status = io_system_service(s->io_system, QTI_IO_SYSTEM_SERVICE_BUDGET);
+        if (status != IO_SYSTEM_OK) {
+            error_report("qemu-to-iosystem: async service failed status=%d",
+                         status);
+            s->io_system_service_stopping = s->io_system_rtl_continuous;
+            return false;
+        }
     }
+    qti_trace_dump_new(s);
 
-    return io_system_needs_service(s->io_system);
+    return s->io_system_rtl_continuous ||
+           io_system_needs_service(s->io_system);
 }
 
 static void qti_io_system_service_on_cpu(CPUState *cpu,
@@ -715,7 +755,9 @@ static void qti_io_system_service_bh(void *opaque)
 {
     QemuToIoSystemState *s = opaque;
 
-    if (!s || !s->io_system) {
+    if (!s || !s->io_system || s->io_system_service_stopping ||
+        (s->io_system_rtl_continuous &&
+         (!runstate_is_running() || !s->io_system_service_cpu))) {
         return;
     }
 
@@ -741,10 +783,26 @@ static void qti_schedule_io_system_service(QemuToIoSystemState *s)
         current_cpu && !s->io_system_service_cpu) {
         s->io_system_service_cpu = current_cpu;
     }
-    if (s && s->service_mode == IO_SYSTEM_SERVICE_BH &&
+    if (s && !s->io_system_service_stopping &&
+        s->service_mode == IO_SYSTEM_SERVICE_BH &&
         s->io_system_service_bh && s->io_system &&
-        io_system_needs_service(s->io_system)) {
+        ((s->io_system_rtl_continuous && s->io_system_service_cpu &&
+          runstate_is_running()) || io_system_needs_service(s->io_system))) {
         qemu_bh_schedule(s->io_system_service_bh);
+    }
+}
+
+static void qti_io_system_vmstate(void *opaque, bool running, RunState state)
+{
+    QemuToIoSystemState *s = opaque;
+
+    if (!s->io_system_rtl_continuous) {
+        return;
+    }
+    if (running) {
+        qti_schedule_io_system_service(s);
+    } else {
+        qemu_bh_cancel(s->io_system_service_bh);
     }
 }
 
@@ -1385,6 +1443,15 @@ static void qti_machine_init(MachineState *machine)
         exit(1);
     }
 
+    if (s->io_system_rtl_continuous &&
+        (!qti_backend_uses_rtl_system(s->io_system_backend_kind) ||
+         s->service_mode != IO_SYSTEM_SERVICE_BH || machine->smp.cpus != 1)) {
+        error_report("io-system-rtl-continuous=on requires "
+                     "io-system-backend=rtl-system, "
+                     "io-system-service-mode=bh and -smp 1");
+        exit(1);
+    }
+
     qti_validate_io_system_iommu(s);
 
     if (!s->io_system) {
@@ -1813,6 +1880,16 @@ static void qti_set_service_mode(Object *obj, const char *value, Error **errp)
                       IO_SYSTEM_SERVICE_INLINE;
 }
 
+static bool qti_get_rtl_continuous(Object *obj, Error **errp)
+{
+    return QEMU_TO_IOSYSTEM_MACHINE(obj)->io_system_rtl_continuous;
+}
+
+static void qti_set_rtl_continuous(Object *obj, bool value, Error **errp)
+{
+    QEMU_TO_IOSYSTEM_MACHINE(obj)->io_system_rtl_continuous = value;
+}
+
 static void qti_get_uint64(Object *obj, Visitor *v, const char *name,
                            void *opaque, Error **errp)
 {
@@ -1875,6 +1952,9 @@ static void qti_machine_instance_init(Object *obj)
     s->io_system_service_bh = qemu_bh_new(qti_io_system_service_bh, s);
     s->io_system_service_cpu = NULL;
     s->io_system_service_work_pending = 0;
+    s->io_system_rtl_continuous = false;
+    s->io_system_vmstate =
+        qemu_add_vm_change_state_handler(qti_io_system_vmstate, s);
     s->fw_jump_fdt_addr = QTI_FW_JUMP_FDT_ADDR;
 }
 
@@ -1883,6 +1963,8 @@ static void qti_machine_instance_finalize(Object *obj)
     QemuToIoSystemState *s = QEMU_TO_IOSYSTEM_MACHINE(obj);
 
     qti_remove_io_system_shutdown_notifier(s);
+    s->io_system_service_stopping = true;
+    qemu_del_vm_change_state_handler(s->io_system_vmstate);
     qti_trace_dump_new(s);
     if (s->io_system_posted_msi_bh) {
         qemu_bh_delete(s->io_system_posted_msi_bh);
@@ -2044,6 +2126,12 @@ static void qti_machine_class_init(ObjectClass *klass, const void *data)
                                   qti_get_service_mode, qti_set_service_mode);
     object_class_property_set_description(klass, "io-system-service-mode",
                                           "Service io-system inline or through a BH");
+
+    object_class_property_add_bool(klass, "io-system-rtl-continuous",
+                                   qti_get_rtl_continuous,
+                                   qti_set_rtl_continuous);
+    object_class_property_set_description(klass, "io-system-rtl-continuous",
+        "Continuously clock RTL on its vCPU thread (requires rtl-system, bh, one vCPU)");
 
     QTI_UINT64_PROP("io2q-outstanding", io2q_outstanding,
                     "Max outstanding io2q transactions for the RTL runtime");

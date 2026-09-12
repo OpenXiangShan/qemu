@@ -46,6 +46,13 @@ static void complete(void *opaque, const IoAxiTransaction *txn)
     }
 }
 
+static void complete_fault(void *opaque, const IoAxiTransaction *txn)
+{
+    TestSchedulerMemory *mem = opaque;
+    assert(txn->response == IO_AXI_RESPONSE_SLVERR);
+    mem->completion_count++;
+}
+
 int main(void)
 {
     TestSchedulerMemory mem = { .bytes = { 0, 1, 2, 3, 4, 5, 6, 7 } };
@@ -147,5 +154,26 @@ int main(void)
     assert(io_scheduler_submit_sync(scheduler, &txn) == IO_SYSTEM_ERR_IO);
     assert(txn.response == IO_AXI_RESPONSE_SLVERR);
     io_scheduler_destroy(scheduler);
+
+    for (int async = 0; async < 2; async++) {
+        mem.completion_count = 0;
+        scheduler = io_scheduler_create(&(IoSchedulerConfig) {
+            .opaque = &mem, .guest_read = test_read, .guest_write = test_write,
+            .max_beat_bytes = 8, .outstanding_depth = 1,
+            .async_enabled = async, .faults_as_responses = true,
+            .completion = complete_fault,
+        });
+        assert(scheduler);
+        for (int write = 0; write < 2; write++) {
+            io_axi_transaction_init(&txn, write ? IO_AXI_DIRECTION_IO2Q_WRITE :
+                                    IO_AXI_DIRECTION_IO2Q_READ, 254, 4);
+            txn.data = data;
+            assert(io_scheduler_submit_async(scheduler, &txn) == IO_SYSTEM_OK);
+            assert(io_scheduler_service(scheduler, 1, NULL) == IO_SYSTEM_OK);
+            assert(!io_scheduler_needs_service(scheduler));
+        }
+        assert(mem.completion_count == 2);
+        io_scheduler_destroy(scheduler);
+    }
     return 0;
 }

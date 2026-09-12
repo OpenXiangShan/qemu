@@ -18,8 +18,8 @@ module axi_lite_write_master #(
     output logic                     busy_o ,
     input logic [AXI_ADDR_WIDTH-1:0] addr_i ,
     input logic [AXI_DATA_WIDTH-1:0] data_i ,
-    output ariane_axi::req_t         req_o  ,
-    input ariane_axi::resp_t         resp_i
+    output io_aplic_axi::req_t         req_o  ,
+    input io_aplic_axi::resp_t         resp_i
 );
 
     typedef enum logic [1:0] {
@@ -64,14 +64,19 @@ module axi_lite_write_master #(
                     end
                 end
                 AWAIT_RESPONSE: begin
-                    if (resp_i.w_ready) begin
+                    if (req_o.aw_valid && resp_i.aw_ready) begin
                         req_o.aw_valid  <= '0;
+                    end
+                    if (req_o.w_valid && resp_i.w_ready) begin
                         busy_o          <= 1'b1;
                         req_o.w.last    <= '0;
                         req_o.w_valid   <= '0;
                         req_o.aw.prot   <= '0;
                         req_o.w.data    <= '0;
                         req_o.w.strb    <= '0;
+                    end
+                    if ((!req_o.aw_valid || resp_i.aw_ready) &&
+                        (!req_o.w_valid || resp_i.w_ready)) begin
                         req_o.b_ready   <= '1;
                         state           <= FINISH_TRANSACTION;
                     end

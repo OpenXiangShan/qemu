@@ -43,6 +43,53 @@ Q2IO MMIO 后立即 service。对于具有线程亲和性的 picker/VCS RTL back
 会把有限 budget 的 service 投递回首次处理 Q2IO MMIO 的 vCPU 线程，避免从
 QEMU 主循环线程跨线程进入同一个 VCS runtime；该模式不创建额外 worker thread。
 
+``io-system-rtl-continuous=on`` 用于包含自主执行 CPU/NPU 的 RTL SoC。
+默认关闭；开启时必须同时使用 ``io-system-backend=rtl-system``、
+``io-system-service-mode=bh`` 和 ``-smp 1``。首次 Q2IO MMIO 在 vCPU
+线程构造 picker/VCS 后，每次 BH 投递最多 128 次单周期 service，每次
+最多处理 16 个内存请求。即使当前没有 AXI 请求，下一批 RTL 时钟仍会
+继续推进，因此主核 WFI 或停止轮询不会冻结 E6/AME。该选项不改变
+``io_system_needs_service()`` 的事务语义。
+
+QEMU 暂停时停止连续推进，恢复时重新调度；正常 shutdown 将 VCS
+销毁工作投递到其所属 vCPU 线程。连续模式中的 service 错误会停止后续
+推进并输出诊断，自动化测试还必须设置外部墙钟超时。这是功能协同仿真，
+128 周期批次不表示 QEMU 主核与 RTL 的真实频率比例。
+
+E6/AME AXI-only acceptance test
+-----------------------------
+
+RA 版本动态库构建完成后，从 QEMU 源码目录运行：
+
+.. code-block:: bash
+
+   python3 third_party/io-system-lib/tests/arena/run_qemu.py \
+     --library third_party/io-system-lib/output-arena/libio_rtl_system_api.so \
+     --suite --pause-resume
+
+测试将主核、E6 和矩阵编译进同一个裸机 ELF，分别放在
+``0x80000000``、``0x80010000``、``0x80020000``。QEMU 使用
+``-bios none -device loader,file=ELF,cpu-num=0`` 将其装入唯一一份 RAM。
+主核通过 ``0x50000000`` SYSCTRL 配置并启动 RTL E6，E6 发射原始 AME
+指令，经 io-system AXI master 读写 QEMU RAM。第一组 GEMM 结果为
+``[16, -18, 26, -2, 35, -17]``，第二组为 ``[-2, 1, -10, 7, 9, 6]``。
+
+``--suite`` 覆盖两组输入和 outstanding 深度 1/4/16，另验证 30 秒不访问
+RA、通过 QEMU 原生 CLINT 定时唤醒的 WFI，以及 E6 非法指令诊断。
+``--pause-resume`` 在静默阶段暂停一秒后恢复。``--quiet-ticks`` 可调整
+静默长度，CLINT 频率为 1 MHz；静默结束后的第一笔 RA 读取必须已经看到
+完成状态。慢速仿真环境应明确增大该间隔，不能通过恢复轮询掩盖后台停钟。
+
+运行脚本默认墙钟超时为 600 秒；结果检查包含六个数值、128 字节输出
+哨兵及 E6 对主核判定的确认。成功标记来自 QEMU UART，不依赖 RA UART
+或原 testbench mailbox。脚本用 QMP 退出，保存 ELF/BIN、编译和运行命令、
+AXI trace、UART 日志、SHA256 与 JSON 结果；没有最终标记的进程退出不会
+被判为成功。单独构建 ELF 可运行 ``tests/arena/build.py --output DIR``。
+
+``tests/arena/test_continuous.py`` 可在 RA 动态库构建前单独验证 QEMU 调度。
+它使用只计数的测试库检查默认模式、无轮询、WFI、暂停/恢复和销毁线程，
+测试库不模拟 E6/AME，不能替代上述真实 RTL 数值验收。
+
 io-system IOMMU
 ---------------
 

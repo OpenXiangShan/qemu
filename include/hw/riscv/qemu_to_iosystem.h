@@ -77,6 +77,9 @@ typedef struct QemuToIoSystemState {
     QEMUBH *io_system_service_bh;
     CPUState *io_system_service_cpu;
     uint32_t io_system_service_work_pending;
+    bool io_system_rtl_continuous;
+    bool io_system_service_stopping;
+    VMChangeStateEntry *io_system_vmstate;
     uint64_t fw_jump_fdt_addr;
     int fdt_size;
 } QemuToIoSystemState;

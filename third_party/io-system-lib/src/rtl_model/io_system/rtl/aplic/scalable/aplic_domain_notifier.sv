@@ -57,8 +57,8 @@ module aplic_domain_notifier #(
     output  logic                                   o_forwarded_valid,
     output  logic [10:0]                            o_intp_forwd_id  ,
     output  logic                                   o_busy           ,
-    output  ariane_axi::req_t                       o_req            ,
-    input   ariane_axi::resp_t                      i_resp
+    output  io_aplic_axi::req_t                       o_req            ,
+    input   io_aplic_axi::resp_t                      i_resp
     `endif
 );
 

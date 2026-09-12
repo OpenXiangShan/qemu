@@ -1,112 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "io_rtl_system_sim.hpp"
 
-#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
-#include <vector>
 
 namespace io_rtl_system {
 
 namespace {
 
 constexpr uint8_t kAxiRespOkay = 0;
-constexpr uint8_t kAxiRespSlvErr = 2;
 constexpr uint8_t kAxiRespDecErr = 3;
 constexpr uint8_t kAxiBurstIncr = 1;
-constexpr std::size_t kAxiMaxBurstBeats = 256;
-
-std::size_t MasterBeatBytes(uint8_t size)
-{
-    return size <= 3 ? std::size_t(1) << size : 0;
-}
-
-std::size_t MasterBeatCount(uint8_t len)
-{
-    return std::size_t(len) + 1;
-}
-
-bool MasterBurstSupported(uint8_t burst)
-{
-    return burst == kAxiBurstIncr;
-}
-
-IoAxiBurstType MasterBurstType(uint8_t burst)
-{
-    return burst == kAxiBurstIncr ? IO_AXI_BURST_INCR : IO_AXI_BURST_FIXED;
-}
-
-uint64_t MasterBeatAddress(uint64_t addr, std::size_t beat_index,
-                           std::size_t beat_size, uint8_t burst)
-{
-    if (burst == kAxiBurstIncr) {
-        return addr + beat_index * beat_size;
-    }
-    return addr;
-}
-
-uint64_t MasterTxnBeatAddress(uint64_t addr, std::size_t beat_index,
-                              std::size_t beat_size, IoAxiBurstType burst)
-{
-    if (burst == IO_AXI_BURST_INCR) {
-        return addr + beat_index * beat_size;
-    }
-    return addr;
-}
-
-bool MasterBurstParamsValid(uint64_t addr, uint8_t len, uint8_t size,
-                            uint8_t burst, std::size_t *beat_count,
-                            std::size_t *beat_size,
-                            std::size_t *total_size)
-{
-    const std::size_t beats = MasterBeatCount(len);
-    const std::size_t bytes = MasterBeatBytes(size);
-    const std::size_t total = beats * bytes;
-
-    if (!bytes || !MasterBurstSupported(burst) ||
-        total > IO_AXI_MAX_BEAT_BYTES) {
-        return false;
-    }
-
-    for (std::size_t i = 0; i < beats; i++) {
-        const uint64_t beat_addr = MasterBeatAddress(addr, i, bytes, burst);
-        const unsigned lane = unsigned(beat_addr & (kAxiDataBytes - 1));
-
-        if (lane + bytes > kAxiDataBytes) {
-            return false;
-        }
-    }
-
-    if (beat_count) {
-        *beat_count = beats;
-    }
-    if (beat_size) {
-        *beat_size = bytes;
-    }
-    if (total_size) {
-        *total_size = total;
-    }
-    return true;
-}
-
-uint64_t PackReadBeat(const uint8_t *data, uint64_t beat_addr,
-                      std::size_t beat_size)
-{
-    const unsigned lane = unsigned(beat_addr & (kAxiDataBytes - 1));
-    uint64_t packed = 0;
-
-    for (std::size_t i = 0; i < beat_size && lane + i < kAxiDataBytes; i++) {
-        packed |= uint64_t(data[i]) << ((lane + i) * 8);
-    }
-    return packed;
-}
-
 } // namespace
 
 Runtime::Runtime(const io_rtl_system_config_t *config,
                  const io_rtl_system_callbacks_t *callbacks)
+    : master_(config ? config->io2q_outstanding : 1)
 {
     config_.mmio_base_hint = kDefaultMmioBaseHint;
     config_.mmio_size_hint = kDefaultMmioSizeHint;
@@ -120,8 +31,6 @@ Runtime::Runtime(const io_rtl_system_config_t *config,
             config_.mmio_size_hint = kDefaultMmioSizeHint;
         }
     }
-    master_outstanding_limit_ = config_.io2q_outstanding ?
-                                config_.io2q_outstanding : 1;
     if (callbacks) {
         callbacks_ = *callbacks;
     }
@@ -130,7 +39,9 @@ Runtime::Runtime(const io_rtl_system_config_t *config,
         throw std::runtime_error("missing guest memory callbacks");
     }
 
-    dut_.emplace();
+    // This is an embedded model, so VCS must not re-exec the host process to
+    // disable ASLR for its optional save/restore facility.
+    dut_.emplace(std::initializer_list<const char *>{"-no_save"});
     InitializeDut();
     Reset();
 }
@@ -280,12 +191,7 @@ void Runtime::DriveIdleInputs()
 int Runtime::Reset()
 {
     DriveIdleInputs();
-    read_responses_.clear();
-    write_responses_.clear();
-    pending_write_addrs_.clear();
-    pending_write_data_.clear();
-    master_txn_queue_.clear();
-    inflight_txns_.clear();
+    master_.Reset();
     next_slave_id_ = 1;
     last_error_[0] = '\0';
 
@@ -296,245 +202,61 @@ int Runtime::Reset()
     return IO_RTL_SYSTEM_OK;
 }
 
+AxiMasterEngine::Inputs Runtime::MasterInputs()
+{
+    auto &dut = *dut_;
+    AxiMasterEngine::Inputs in;
+    in.aw = {uint16_t(dut.m_axi_awid.U()), dut.m_axi_awaddr.U(),
+             uint8_t(dut.m_axi_awlen.U()), uint8_t(dut.m_axi_awsize.U()),
+             uint8_t(dut.m_axi_awburst.U())};
+    in.ar = {uint16_t(dut.m_axi_arid.U()), dut.m_axi_araddr.U(),
+             uint8_t(dut.m_axi_arlen.U()), uint8_t(dut.m_axi_arsize.U()),
+             uint8_t(dut.m_axi_arburst.U())};
+    in.w = {dut.m_axi_wdata.U(), uint8_t(dut.m_axi_wstrb.U()),
+            dut.m_axi_wlast.U() != 0};
+    in.awvalid = dut.m_axi_awvalid.U() != 0;
+    in.arvalid = dut.m_axi_arvalid.U() != 0;
+    in.wvalid = dut.m_axi_wvalid.U() != 0;
+    in.bready = dut.m_axi_bready.U() != 0;
+    in.rready = dut.m_axi_rready.U() != 0;
+    return in;
+}
+
 void Runtime::PlanAndApplyMasterInputs()
 {
     auto &dut = *dut_;
-    const bool addr_ready = CanAcceptMasterAddress();
-
-    dut.m_axi_awready = addr_ready ? 1 : 0;
-    dut.m_axi_wready = CanAcceptMasterWriteData() ? 1 : 0;
-    dut.m_axi_arready = addr_ready ? 1 : 0;
-
-    dut.m_axi_bvalid = write_responses_.empty() ? 0 : 1;
-    dut.m_axi_bid = write_responses_.empty() ? 0 : write_responses_.front().id;
-    dut.m_axi_bresp = write_responses_.empty() ? kAxiRespOkay :
-                      write_responses_.front().resp;
-
-    dut.m_axi_rvalid = read_responses_.empty() ? 0 : 1;
-    dut.m_axi_rid = read_responses_.empty() ? 0 : read_responses_.front().id;
-    dut.m_axi_rdata = read_responses_.empty() ? 0 :
-                      read_responses_.front().data;
-    dut.m_axi_rresp = read_responses_.empty() ? kAxiRespOkay :
-                      read_responses_.front().resp;
-    dut.m_axi_rlast = read_responses_.empty() ? 1 :
-                      read_responses_.front().last;
-}
-
-std::size_t Runtime::MasterOutstandingCount() const
-{
-    return pending_write_addrs_.size() + master_txn_queue_.size() +
-           inflight_txns_.size() + read_responses_.size() +
-           write_responses_.size();
-}
-
-bool Runtime::CanAcceptMasterAddress() const
-{
-    return MasterOutstandingCount() < master_outstanding_limit_;
-}
-
-bool Runtime::CanAcceptMasterWriteData() const
-{
-    if (!pending_write_addrs_.empty()) {
-        const PendingMasterWrite &addr = pending_write_addrs_.front();
-        std::size_t beat_count;
-        std::size_t beat_size;
-        std::size_t total_size;
-
-        if (!MasterBurstParamsValid(addr.addr, addr.len, addr.size,
-                                    addr.burst, &beat_count, &beat_size,
-                                    &total_size)) {
-            return pending_write_data_.size() < MasterBeatCount(addr.len);
-        }
-        return pending_write_data_.size() < beat_count;
-    }
-    return pending_write_data_.size() < kAxiMaxBurstBeats;
-}
-
-void Runtime::QueueMasterReadError(uint16_t id, uint8_t resp)
-{
-    MasterReadResponse entry;
-
-    entry.valid = true;
-    entry.id = id;
-    entry.resp = resp;
-    entry.last = true;
-    entry.data = 0;
-    read_responses_.push_back(entry);
-}
-
-void Runtime::QueueMasterWriteError(uint16_t id, uint8_t resp)
-{
-    MasterWriteResponse entry;
-
-    entry.valid = true;
-    entry.id = id;
-    entry.resp = resp;
-    write_responses_.push_back(entry);
-}
-
-void Runtime::QueueMasterRead(uint16_t id, uint64_t addr, uint8_t len,
-                              uint8_t size, uint8_t burst)
-{
-    MasterTransaction txn = {};
-    std::size_t beat_count;
-    std::size_t beat_size;
-    std::size_t total_size;
-
-    if (!MasterBurstParamsValid(addr, len, size, burst, &beat_count,
-                                &beat_size, &total_size)) {
-        QueueMasterReadError(id, kAxiRespSlvErr);
-        return;
-    }
-
-    txn.txn.direction = IO_AXI_DIRECTION_IO2Q_READ;
-    txn.txn.transaction_id = id;
-    txn.txn.address = addr;
-    txn.txn.beat_count = uint16_t(beat_count);
-    txn.txn.beat_size = uint8_t(beat_size);
-    txn.txn.burst_type = MasterBurstType(burst);
-    txn.txn.last = true;
-    txn.txn.response = IO_AXI_RESPONSE_OKAY;
-    txn.txn.translated = true;
-    master_txn_queue_.push_back(txn);
-}
-
-void Runtime::QueueMasterWrite(const PendingMasterWrite &addr)
-{
-    MasterTransaction txn = {};
-    std::size_t beat_count;
-    std::size_t beat_size;
-    std::size_t total_size;
-
-    if (!MasterBurstParamsValid(addr.addr, addr.len, addr.size, addr.burst,
-                                &beat_count, &beat_size, &total_size)) {
-        QueueMasterWriteError(addr.id, kAxiRespSlvErr);
-        return;
-    }
-
-    if (pending_write_data_.size() < beat_count) {
-        return;
-    }
-
-    for (std::size_t beat = 0; beat < beat_count; beat++) {
-        const PendingMasterWriteData &data = pending_write_data_[beat];
-        const bool expected_last = beat + 1 == beat_count;
-        const uint64_t beat_addr = MasterBeatAddress(addr.addr, beat,
-                                                     beat_size, addr.burst);
-        const unsigned lane = unsigned(beat_addr & (kAxiDataBytes - 1));
-        const std::size_t out_base = beat * beat_size;
-
-        if (data.last != expected_last) {
-            QueueMasterWriteError(addr.id, kAxiRespSlvErr);
-            pending_write_data_.erase(pending_write_data_.begin(),
-                                      pending_write_data_.begin() +
-                                      beat_count);
-            return;
-        }
-
-        for (std::size_t i = 0; i < beat_size; i++) {
-            const unsigned bus_lane = lane + unsigned(i);
-
-            txn.data[out_base + i] =
-                uint8_t(data.data >> (bus_lane * 8));
-            txn.strobe[out_base + i] =
-                (data.strb & (1u << bus_lane)) ? 0xff : 0;
-        }
-    }
-
-    txn.txn.direction = IO_AXI_DIRECTION_IO2Q_WRITE;
-    txn.txn.transaction_id = addr.id;
-    txn.txn.address = addr.addr;
-    txn.txn.beat_count = uint16_t(beat_count);
-    txn.txn.beat_size = uint8_t(beat_size);
-    txn.txn.burst_type = MasterBurstType(addr.burst);
-    txn.txn.data = txn.data.data();
-    txn.txn.byte_strobe = txn.strobe.data();
-    txn.txn.last = true;
-    txn.txn.response = IO_AXI_RESPONSE_OKAY;
-    txn.txn.translated = true;
-    master_txn_queue_.push_back(txn);
-    pending_write_data_.erase(pending_write_data_.begin(),
-                              pending_write_data_.begin() + beat_count);
-}
-
-void Runtime::QueueMasterWriteTransactions()
-{
-    while (!pending_write_addrs_.empty()) {
-        PendingMasterWrite addr = pending_write_addrs_.front();
-        std::size_t beat_count;
-        std::size_t beat_size;
-        std::size_t total_size;
-
-        if (!MasterBurstParamsValid(addr.addr, addr.len, addr.size,
-                                    addr.burst, &beat_count, &beat_size,
-                                    &total_size)) {
-            beat_count = MasterBeatCount(addr.len);
-            if (pending_write_data_.size() < beat_count) {
-                return;
-            }
-            pending_write_data_.erase(pending_write_data_.begin(),
-                                      pending_write_data_.begin() +
-                                      beat_count);
-            QueueMasterWriteError(addr.id, kAxiRespSlvErr);
-            pending_write_addrs_.pop_front();
-            continue;
-        }
-        if (pending_write_data_.size() < beat_count) {
-            return;
-        }
-        pending_write_addrs_.pop_front();
-        QueueMasterWrite(addr);
-    }
+    const auto out = master_.Drive(MasterInputs());
+    dut.m_axi_awready = out.awready;
+    dut.m_axi_arready = out.arready;
+    dut.m_axi_wready = out.wready;
+    dut.m_axi_bvalid = out.bvalid;
+    dut.m_axi_bid = out.bid;
+    dut.m_axi_bresp = out.bresp;
+    dut.m_axi_rvalid = out.rvalid;
+    dut.m_axi_rid = out.rid;
+    dut.m_axi_rdata = out.rdata;
+    dut.m_axi_rresp = out.rresp;
+    dut.m_axi_rlast = out.rlast;
 }
 
 void Runtime::CommitMasterHandshakes()
 {
+    const auto in = MasterInputs();
+    // Use the actually driven pins: a combinational RTL master may have
+    // changed VALID since Drive(), but handshakes use the current READY.
+    AxiMasterEngine::Outputs out;
     auto &dut = *dut_;
-    const bool ar_hs = dut.m_axi_arvalid.U() != 0 &&
-                       dut.m_axi_arready.U() != 0;
-    const bool aw_hs = dut.m_axi_awvalid.U() != 0 &&
-                       dut.m_axi_awready.U() != 0;
-    const bool w_hs = dut.m_axi_wvalid.U() != 0 &&
-                      dut.m_axi_wready.U() != 0;
-    const bool r_hs = dut.m_axi_rvalid.U() != 0 &&
-                      dut.m_axi_rready.U() != 0;
-    const bool b_hs = dut.m_axi_bvalid.U() != 0 &&
-                      dut.m_axi_bready.U() != 0;
-
-    if (r_hs) {
-        read_responses_.pop_front();
+    out.awready = dut.m_axi_awready.U() != 0;
+    out.arready = dut.m_axi_arready.U() != 0;
+    out.wready = dut.m_axi_wready.U() != 0;
+    out.rvalid = dut.m_axi_rvalid.U() != 0;
+    out.bvalid = dut.m_axi_bvalid.U() != 0;
+    const auto errors = master_.ProtocolErrors();
+    master_.Commit(in, out);
+    if (master_.ProtocolErrors() != errors) {
+        SetError(master_.LastProtocolError().c_str());
+        throw std::runtime_error(master_.LastProtocolError());
     }
-    if (b_hs) {
-        write_responses_.pop_front();
-    }
-
-    if (ar_hs) {
-        QueueMasterRead(uint16_t(dut.m_axi_arid.U()),
-                        dut.m_axi_araddr.U(),
-                        uint8_t(dut.m_axi_arlen.U()),
-                        uint8_t(dut.m_axi_arsize.U()),
-                        uint8_t(dut.m_axi_arburst.U()));
-    }
-
-    if (aw_hs) {
-        PendingMasterWrite entry;
-
-        entry.id = uint16_t(dut.m_axi_awid.U());
-        entry.addr = dut.m_axi_awaddr.U();
-        entry.len = uint8_t(dut.m_axi_awlen.U());
-        entry.size = uint8_t(dut.m_axi_awsize.U());
-        entry.burst = uint8_t(dut.m_axi_awburst.U());
-        pending_write_addrs_.push_back(entry);
-    }
-    if (w_hs) {
-        PendingMasterWriteData entry;
-
-        entry.data = dut.m_axi_wdata.U();
-        entry.strb = uint8_t(dut.m_axi_wstrb.U());
-        entry.last = dut.m_axi_wlast.U() != 0;
-        pending_write_data_.push_back(entry);
-    }
-    QueueMasterWriteTransactions();
 }
 
 Runtime::StepResult Runtime::StepOne()
@@ -578,6 +300,17 @@ Runtime::StepResult Runtime::StepOne()
     return result;
 }
 
+Runtime::StepResult Runtime::StepMmio()
+{
+    // The scheduler callback only moves memory transactions, never clocks RTL.
+    // This lets E6/AME complete DDR traffic while software waits on SYSCTRL.
+    if (service_callback_ && service_callback_(service_opaque_) != 0) {
+        SetError("memory service failed during blocking MMIO");
+        throw std::runtime_error(LastError());
+    }
+    return StepOne();
+}
+
 int Runtime::Step(uint64_t cycles)
 {
     for (uint64_t i = 0; i < cycles; i++) {
@@ -588,78 +321,12 @@ int Runtime::Step(uint64_t cycles)
 
 int Runtime::NextMasterTransaction(IoAxiTransaction *txn)
 {
-    if (!txn) {
-        return IO_RTL_SYSTEM_ERR_INVALID;
-    }
-    if (master_txn_queue_.empty()) {
-        return IO_RTL_SYSTEM_ERR_NO_TRANSACTION;
-    }
-
-    inflight_txns_.push_back(master_txn_queue_.front());
-    master_txn_queue_.pop_front();
-
-    auto &entry = inflight_txns_.back();
-    entry.txn.data = entry.txn.direction == IO_AXI_DIRECTION_IO2Q_WRITE ?
-                     entry.data.data() : nullptr;
-    entry.txn.byte_strobe = entry.txn.direction == IO_AXI_DIRECTION_IO2Q_WRITE ?
-                            entry.strobe.data() : nullptr;
-    *txn = entry.txn;
-    return IO_RTL_SYSTEM_OK;
+    return master_.Next(txn);
 }
 
 int Runtime::CompleteMasterTransaction(const IoAxiTransaction *txn)
 {
-    if (!txn) {
-        return IO_RTL_SYSTEM_ERR_INVALID;
-    }
-
-    for (auto it = inflight_txns_.begin(); it != inflight_txns_.end(); ++it) {
-        if (it->txn.transaction_id != txn->transaction_id ||
-            it->txn.direction != txn->direction ||
-            it->txn.address != txn->address ||
-            it->txn.beat_count != txn->beat_count ||
-            it->txn.beat_size != txn->beat_size ||
-            it->txn.burst_type != txn->burst_type) {
-            continue;
-        }
-
-        if (txn->direction == IO_AXI_DIRECTION_IO2Q_READ) {
-            const auto *bytes = txn->data;
-            const std::size_t beat_count = txn->beat_count ?
-                                           txn->beat_count : 1;
-            const std::size_t beat_size = txn->beat_size ?
-                                          txn->beat_size : kAxiDataBytes;
-
-            for (std::size_t beat = 0; beat < beat_count; beat++) {
-                MasterReadResponse resp = {};
-                const uint64_t beat_addr = MasterTxnBeatAddress(
-                    txn->address, beat, beat_size, txn->burst_type);
-
-                resp.valid = true;
-                resp.id = txn->transaction_id;
-                resp.resp = static_cast<uint8_t>(txn->response);
-                resp.last = beat + 1 == beat_count;
-                if (bytes && txn->response == IO_AXI_RESPONSE_OKAY) {
-                    resp.data = PackReadBeat(bytes + beat * beat_size,
-                                             beat_addr, beat_size);
-                }
-                read_responses_.push_back(resp);
-            }
-        } else if (txn->direction == IO_AXI_DIRECTION_IO2Q_WRITE) {
-            MasterWriteResponse resp = {};
-            resp.valid = true;
-            resp.id = txn->transaction_id;
-            resp.resp = static_cast<uint8_t>(txn->response);
-            write_responses_.push_back(resp);
-        } else {
-            return IO_RTL_SYSTEM_ERR_INVALID;
-        }
-
-        inflight_txns_.erase(it);
-        return IO_RTL_SYSTEM_OK;
-    }
-
-    return IO_RTL_SYSTEM_ERR_INVALID;
+    return master_.Complete(txn);
 }
 
 int Runtime::Poll()
@@ -669,9 +336,7 @@ int Runtime::Poll()
 
 bool Runtime::NeedsService() const
 {
-    return !master_txn_queue_.empty() || !inflight_txns_.empty() ||
-           !pending_write_addrs_.empty() || !pending_write_data_.empty() ||
-           !read_responses_.empty() || !write_responses_.empty();
+    return master_.NeedsService();
 }
 
 void Runtime::ClearSlaveRequestInputs()
@@ -706,17 +371,20 @@ int Runtime::GbusRead(uint32_t addr, uint32_t *value)
         return IO_RTL_SYSTEM_ERR_INVALID;
     }
 
+    const uint16_t id = next_slave_id_++;
+    bool ar_done = false;
     for (int i = 0; i < kDefaultTimeoutCycles; i++) {
-        dut.gbus_axi_arid = next_slave_id_++;
+        dut.gbus_axi_arid = id;
         dut.gbus_axi_araddr = addr;
         dut.gbus_axi_arlen = 0;
         dut.gbus_axi_arsize = 2;
         dut.gbus_axi_arburst = kAxiBurstIncr;
-        dut.gbus_axi_arvalid = 1;
+        dut.gbus_axi_arvalid = ar_done ? 0 : 1;
         dut.gbus_axi_rready = 1;
 
-        StepResult result = StepOne();
+        StepResult result = StepMmio();
         if (result.gbus_ar_hs) {
+            ar_done = true;
             dut.gbus_axi_arvalid = 0;
         }
         if (result.gbus_r_hs) {
@@ -746,8 +414,9 @@ int Runtime::GbusWrite(uint32_t addr, uint32_t value)
         return IO_RTL_SYSTEM_ERR_INVALID;
     }
 
+    const uint16_t id = next_slave_id_++;
     for (int i = 0; i < kDefaultTimeoutCycles; i++) {
-        dut.gbus_axi_awid = next_slave_id_++;
+        dut.gbus_axi_awid = id;
         dut.gbus_axi_awaddr = addr;
         dut.gbus_axi_awlen = 0;
         dut.gbus_axi_awsize = 2;
@@ -759,7 +428,7 @@ int Runtime::GbusWrite(uint32_t addr, uint32_t value)
         dut.gbus_axi_wvalid = w_done ? 0 : 1;
         dut.gbus_axi_bready = 1;
 
-        StepResult result = StepOne();
+        StepResult result = StepMmio();
         if (result.gbus_aw_hs) {
             aw_done = true;
             dut.gbus_axi_awvalid = 0;
@@ -789,7 +458,7 @@ int Runtime::GbusWrite(uint32_t addr, uint32_t value)
 bool Runtime::WaitSlaveAw()
 {
     for (int i = 0; i < kDefaultTimeoutCycles; i++) {
-        if (StepOne().s_aw_hs) {
+        if (StepMmio().s_aw_hs) {
             return true;
         }
     }
@@ -799,7 +468,7 @@ bool Runtime::WaitSlaveAw()
 bool Runtime::WaitSlaveW()
 {
     for (int i = 0; i < kDefaultTimeoutCycles; i++) {
-        if (StepOne().s_w_hs) {
+        if (StepMmio().s_w_hs) {
             return true;
         }
     }
@@ -809,7 +478,7 @@ bool Runtime::WaitSlaveW()
 int Runtime::WaitSlaveB()
 {
     for (int i = 0; i < kDefaultTimeoutCycles; i++) {
-        StepResult result = StepOne();
+        StepResult result = StepMmio();
         if (result.s_b_hs) {
             const uint8_t resp = result.s_bresp;
             return resp == kAxiRespOkay ? IO_RTL_SYSTEM_OK :
@@ -824,7 +493,7 @@ int Runtime::WaitSlaveB()
 bool Runtime::WaitSlaveAr()
 {
     for (int i = 0; i < kDefaultTimeoutCycles; i++) {
-        if (StepOne().s_ar_hs) {
+        if (StepMmio().s_ar_hs) {
             return true;
         }
     }
@@ -834,7 +503,7 @@ bool Runtime::WaitSlaveAr()
 int Runtime::WaitSlaveR(uint64_t &value)
 {
     for (int i = 0; i < kDefaultTimeoutCycles; i++) {
-        StepResult result = StepOne();
+        StepResult result = StepMmio();
         if (result.s_r_hs) {
             const uint8_t resp = result.s_rresp;
             value = result.s_rdata;

@@ -29,8 +29,8 @@ module aplic_top #(
    output logic [(NR_IDCs*2)-1:0]          o_Xeip_targets
    /** interface for MSI mode */
    `elsif MSI_MODE
-   output  ariane_axi::req_t               o_req_msi,
-   input   ariane_axi::resp_t              i_resp_msi
+   output  io_aplic_axi::req_t               o_req_msi,
+   input   io_aplic_axi::resp_t              i_resp_msi
    `endif
 ); /** End of APLIC top interface */
 
@@ -85,10 +85,10 @@ always_comb begin
 end
 
 `ifdef MSI_MODE
-ariane_axi::req_t               axi_req_m_domain;
-ariane_axi::resp_t              axi_resp_m_domain;
-ariane_axi::req_t               axi_req_s_domain;
-ariane_axi::resp_t              axi_resp_s_domain;
+io_aplic_axi::req_t               axi_req_m_domain;
+io_aplic_axi::resp_t              axi_resp_m_domain;
+io_aplic_axi::req_t               axi_req_s_domain;
+io_aplic_axi::resp_t              axi_resp_s_domain;
 logic                           axi_1_busy;
 
 always_comb begin : basic_interconnect

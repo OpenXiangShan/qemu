@@ -19,6 +19,9 @@ typedef int (*io_rtl_system_guest_write_cb)(void *opaque, uint64_t gpa,
                                           const void *src, uint32_t len);
 typedef void (*io_rtl_system_log_cb)(void *opaque, int level,
                                    const char *msg);
+/* Called between clock edges during blocking MMIO only. May drain/complete
+ * master transactions; must never step or re-enter MMIO on this model. */
+typedef int (*io_rtl_system_service_cb)(void *opaque);
 
 typedef struct io_rtl_system_callbacks {
     void *opaque;
@@ -55,6 +58,10 @@ io_rtl_system_handle_t *io_rtl_system_open(
     const io_rtl_system_config_t *config,
     const io_rtl_system_callbacks_t *callbacks);
 void io_rtl_system_close(io_rtl_system_handle_t *handle);
+/* Optional extension symbol: preserves the existing callback/config ABI. */
+int io_rtl_system_set_service_callback(io_rtl_system_handle_t *handle,
+                                      io_rtl_system_service_cb callback,
+                                      void *opaque);
 int io_rtl_system_reset(io_rtl_system_handle_t *handle);
 int io_rtl_system_mmio_read(io_rtl_system_handle_t *handle, uint64_t addr,
                           void *data, size_t size);

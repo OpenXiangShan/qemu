@@ -7,9 +7,19 @@ QEMU_CFLAGS ?=
 QEMU_CFLAGS_LIST ?=
 IO_SYSTEM_QEMU_BACKEND ?= 0
 IO_SYSTEM_RTL_SYSTEM ?= 0
+IO_SYSTEM_RTL_ARENA ?= 0
 IO_SYSTEM_IOMMU_RTL ?= 0
 BUILD_DIR ?= build
 OUTPUT_DIR ?= output
+ifeq ($(IO_SYSTEM_RTL_ARENA),1)
+ifeq ($(origin BUILD_DIR),file)
+BUILD_DIR := build-arena
+endif
+ifeq ($(origin OUTPUT_DIR),file)
+OUTPUT_DIR := output-arena
+endif
+IO_SYSTEM_RTL_SYSTEM := 1
+endif
 IO_SYSTEM_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 BUILD_PATHS_FILE ?= $(IO_SYSTEM_ROOT)/config/paths.mk
 include $(BUILD_PATHS_FILE)
@@ -75,6 +85,16 @@ RTL_SYSTEM_RTL_SRCS := \
 	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_mmio_mux.sv \
 	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_wrapper.sv
 RTL_SYSTEM_PICKER_OUT ?= $(OUTPUT_DIR)/rtl-system-picker
+ifeq ($(IO_SYSTEM_RTL_ARENA),1)
+RTL_SYSTEM_RTL_SRCS += $(shell python3 src/rtl_model/io_system/scripts/arena-filelist.py | sed -n '/^\//p')
+RTL_SYSTEM_RTL_SRCS += $(RTL_SYSTEM_RTL_DIR)/io_system_rtl_arena_pkg.sv \
+	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_axi_guard.sv \
+	$(RTL_SYSTEM_RTL_DIR)/io_system_rtl_arena.sv
+RTL_SYSTEM_RTL_SRCS += $(shell python3 -c 'import pathlib; print(" ".join(str(p) for p in pathlib.Path("src/rtl_model/io_system/arena/vendor").rglob("*.svh")))')
+RTL_SYSTEM_ARENA_MANIFESTS := src/rtl_model/io_system/arena/sources.json \
+	src/rtl_model/io_system/arena/SOURCE_MANIFEST.json \
+	src/rtl_model/io_system/scripts/arena-filelist.py
+endif
 RTL_SYSTEM_PICKER_STAMP := $(RTL_SYSTEM_PICKER_OUT)/.picker-vcs.ready.stamp
 RTL_SYSTEM_API_SO := $(OUTPUT_DIR)/libio_rtl_system_api.so
 ifeq ($(IO_SYSTEM_RTL_SYSTEM),1)
@@ -118,7 +138,8 @@ MODEL_SRCS += \
 endif
 RTL_SYSTEM_SRCS := \
 	src/rtl_model/io_system/runtime/io_rtl_system_api.cpp \
-	src/rtl_model/io_system/runtime/io_rtl_system_sim.cpp
+	src/rtl_model/io_system/runtime/io_rtl_system_sim.cpp \
+	src/rtl_model/io_system/runtime/io_axi_master_engine.cpp
 RTL_SYSTEM_GEN_SRCS := \
 	$(RTL_SYSTEM_PICKER_OUT)/UT_io_system_rtl_wrapper.cpp
 RTL_SYSTEM_GEN_OBJS := \
@@ -139,6 +160,8 @@ TEST_SRCS += \
 	tests/rtl_system_smoke.c \
 	tests/rtl_system_packed_smoke.c
 endif
+
+ARENA_ENGINE_TEST := $(BUILD_DIR)/tests/arena/axi_master_engine_test
 
 CORE_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))
 IOMMU_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(IOMMU_SRCS))
@@ -166,7 +189,7 @@ else
 IOMMU_RTL_TARGETS :=
 endif
 
-.PHONY: all clean test iommu-rtl-api
+.PHONY: all clean test iommu-rtl-api arena-engine-test
 
 all: $(TARGET) $(MODEL_TARGET) $(RTL_SYSTEM_TARGETS) $(IOMMU_RTL_TARGETS)
 
@@ -191,7 +214,7 @@ $(MODEL_TARGET): $(MODEL_OBJS) $(MY_VIRTIO_STAGE_STAMP)
 	$(AR) -M < $@.mri
 
 $(BUILD_DIR)/%.o: %.c $(wildcard include/*.h) $(wildcard src/core/*.h) \
-		$(wildcard src/cmodel/*.h) $(wildcard src/iommu/*.h) \
+		$(wildcard src/cmodel/*.h) $(wildcard src/iommu/*.h) $(wildcard src/scheduler/*.h) \
 		$(wildcard src/cmodel/include/*.h) \
 		$(IOMMU_REFMODEL_HEADERS) \
 		$(MY_VIRTIO_STAGE_STAMP)
@@ -231,9 +254,11 @@ $(IOMMU_RTL_STAGE_STAMP): $(IOMMU_RTL_API_SO) \
 	cp -a $(IOMMU_RTL_PICKER_DAIDIR) $(IOMMU_RTL_STAGE_DIR)/
 	@touch $@
 
-$(RTL_SYSTEM_FILELIST): $(RTL_SYSTEM_FILELIST_SOURCE) Makefile
+$(RTL_SYSTEM_FILELIST): $(RTL_SYSTEM_FILELIST_SOURCE) $(RTL_SYSTEM_ARENA_MANIFESTS) Makefile \
+		src/rtl_model/io_system/scripts/system-filelist.py
 	@mkdir -p $(dir $@)
-	cp -f $< $@
+	python3 src/rtl_model/io_system/scripts/system-filelist.py \
+		$(if $(filter 1,$(IO_SYSTEM_RTL_ARENA)),--arena,) > $@
 
 $(RTL_SYSTEM_PICKER_STAMP): $(RTL_SYSTEM_FILELIST) $(RTL_SYSTEM_RTL_SRCS) \
 		src/rtl_model/io_system/scripts/build-picker-vcs.sh
@@ -249,13 +274,14 @@ $(RTL_SYSTEM_PICKER_OUT)/UT_io_system_rtl_wrapper.cpp: $(RTL_SYSTEM_PICKER_STAMP
 
 $(BUILD_DIR)/%.o: %.cpp $(RTL_SYSTEM_PICKER_STAMP) \
 		$(wildcard src/rtl_model/io_system/include/*.h) \
-		$(wildcard src/rtl_model/io_system/runtime/*.hpp)
+		$(wildcard src/rtl_model/io_system/runtime/*.hpp) Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -I$(RTL_SYSTEM_PICKER_OUT) -I$(PICKER_XSPCOMM_INCLUDE) -I$(VCS_INCLUDE) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -std=c++20 -fcoroutines -DENABLE_XCOROUTINE=true \
+		$(INCLUDES) -I$(RTL_SYSTEM_PICKER_OUT) -I$(PICKER_XSPCOMM_INCLUDE) -I$(VCS_INCLUDE) -c $< -o $@
 
 $(BUILD_DIR)/rtl-system-picker/%.o: $(RTL_SYSTEM_PICKER_OUT)/%.cpp $(RTL_SYSTEM_PICKER_STAMP) Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) -O3 -g -Wall -Wextra -std=gnu++20 -fcoroutines -fPIC -DUSE_VCS \
+	$(CXX) -O3 -g -Wall -Wextra -std=gnu++20 -fcoroutines -fPIC -DUSE_VCS -DENABLE_XCOROUTINE=true \
 		-I$(RTL_SYSTEM_PICKER_OUT) \
 		-I$(RTL_SYSTEM_PICKER_OUT)/build \
 		-I$(PICKER_XSPCOMM_INCLUDE) \
@@ -265,7 +291,7 @@ $(BUILD_DIR)/rtl-system-picker/%.o: $(RTL_SYSTEM_PICKER_OUT)/%.cpp $(RTL_SYSTEM_
 $(MY_VIRTIO_STAGE_STAMP): $(MY_VIRTIO_LIB_DIR)/Makefile \
 		$(wildcard $(MY_VIRTIO_LIB_DIR)/virtio/*) \
 		$(wildcard $(MY_VIRTIO_LIB_DIR)/backend/*) \
-		$(BUILD_PATHS_FILE)
+		$(BUILD_PATHS_FILE) tests/arena/stage_myvirtio.py
 	$(MAKE) -C $(MY_VIRTIO_LIB_DIR) \
 		IO_SYSTEM_DIR=$(IO_SYSTEM_ROOT) \
 		BUILD_DIR=$(MY_VIRTIO_SOURCE_BUILD_DIR) \
@@ -273,10 +299,7 @@ $(MY_VIRTIO_STAGE_STAMP): $(MY_VIRTIO_LIB_DIR)/Makefile \
 		BACKEND_BLK=y BACKEND_NET=n BACKEND_CONSOLE=n BACKEND_GPU=n BACKEND_INPUT=n BACKEND_UI_VNC=n \
 		all
 	@mkdir -p $(MY_VIRTIO_OUTPUT_DIR)
-	cp -f $(MY_VIRTIO_SOURCE_OUTPUT_DIR)/libMyVirtio.a $(MY_VIRTIO_OUTPUT_DIR)/
-	cp -f $(MY_VIRTIO_SOURCE_OUTPUT_DIR)/libMyVirtio_backend.a $(MY_VIRTIO_OUTPUT_DIR)/
-	cp -f $(MY_VIRTIO_SOURCE_OUTPUT_DIR)/virtio_backend.h $(MY_VIRTIO_OUTPUT_DIR)/
-	cp -f $(MY_VIRTIO_SOURCE_OUTPUT_DIR)/virtio_wrapper.h $(MY_VIRTIO_OUTPUT_DIR)/
+	python3 tests/arena/stage_myvirtio.py $(MY_VIRTIO_SOURCE_OUTPUT_DIR) $(MY_VIRTIO_OUTPUT_DIR)
 	@touch $@
 
 $(RTL_SYSTEM_API_SO): $(RTL_SYSTEM_OBJS) $(RTL_SYSTEM_GEN_OBJS) $(RTL_SYSTEM_PICKER_STAMP) $(MY_VIRTIO_STAGE_STAMP) Makefile
@@ -308,12 +331,22 @@ $(BUILD_DIR)/tests/iommu_external_smoke: tests/iommu_external_smoke.c \
 		$< $(TARGET) $(MODEL_TARGET) -ldl -o $@
 
 test: all $(TEST_BINS)
-	@for test_bin in $(TEST_BINS); do \
+	@set -e; for test_bin in $(TEST_BINS); do \
 		$(RTL_SYSTEM_TEST_ENV) \
 		IO_RTL_SYSTEM_API_SO="$(abspath $(RTL_SYSTEM_API_SO))" \
 		IO_RTL_SYSTEM_VCS_LIBDIR="$(VCS_LIBDIR)" \
 		"$$test_bin"; \
-	done
+	 done
+
+arena-engine-test: tests/arena/axi_master_engine_test.cpp \
+		src/rtl_model/io_system/runtime/io_axi_master_engine.cpp
+	@mkdir -p $(dir $(ARENA_ENGINE_TEST))
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \
+		-Iinclude -Isrc/rtl_model/io_system/include \
+		-Isrc/rtl_model/io_system/runtime \
+		src/rtl_model/io_system/runtime/io_axi_master_engine.cpp \
+		tests/arena/axi_master_engine_test.cpp -o $(ARENA_ENGINE_TEST)
+	$(ARENA_ENGINE_TEST)
 
 clean:
 	rm -rf $(BUILD_DIR) $(OUTPUT_DIR)

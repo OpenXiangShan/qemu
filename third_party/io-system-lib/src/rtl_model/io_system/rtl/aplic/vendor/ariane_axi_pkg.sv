@@ -15,7 +15,7 @@
  * Description: Contains Ariane's AXI ports, does not contain user ports
  */
 
-package ariane_axi;
+package io_aplic_axi;
 
     // used in axi_adapter.sv
     typedef enum logic { SINGLE_REQ, CACHE_LINE_REQ } ad_req_t;
