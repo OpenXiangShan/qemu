@@ -1,9 +1,10 @@
 QEMU to io-system machine
 =========================
 
-``qemu_to_iosystem`` 是 XiangShan/Kunminghu RISC-V machine 的一个
-io-system C-model bring-up 入口。CPU、DRAM、CLINT、UART 和 IMSIC 仍由
-QEMU 创建；APLIC 和首版 ``my-virtio-blk`` 由
+``qemu_to_iosystem`` 是 XiangShan/Kunminghu RISC-V machine 的
+io-system 协同仿真入口，支持 C-model 和 Picker/VCS RTL-system backend。
+CPU、DRAM、CLINT、UART 和 IMSIC 仍由 QEMU 创建。默认 C-model 配置中，
+APLIC 和首版 ``my-virtio-blk`` 由
 ``third_party/io-system-lib`` 静态库实现，并通过 Q2IO/IO2Q
 transaction-level AXI 接口和 QEMU 交互。
 
@@ -30,6 +31,115 @@ Build
 ``third_party/io-system-lib/src/cmodel/adapters/qemu``，因此 QEMU
 generated headers 由 QEMU Meson 在 configure/setup 后传给该 optional
 adapter 编译。
+
+RTL-system build and run
+-----------------------
+
+QEMU 在构建过程中调用 Picker/VCS，生成 RTL 模型和
+``libio_rtl_system_api.so``，不需要先单独执行 io-system-lib 的 make。
+
+准备 QEMU 的常规编译依赖、CMake、支持 C++20 的宿主编译器、配套的
+Picker/模板/XSPComm，以及可用的 VCS/Verdi 和 license 环境。Picker 模板
+必须支持 ``make build`` 和 ``make install``；开启 FSDB 时 Picker 还需
+支持 ``-W fsdb``。先在当前 shell source 工具环境脚本，保证
+``VCS_HOME``、``VERDI_HOME``、``LM_LICENSE_FILE`` 已设置。Arena 使用
+VCS 2023.12 工具链，Verdi 应选择与之匹配的版本。
+
+下面编译包含 E6 + RA 的 RTL-system。将示例中的 ``/path/to/...`` 替换为
+实际绝对路径；``QEMU_BUILD`` 是使用者自行选择的构建输出目录，名称和
+位置没有固定要求，不能与源码目录相同。示例通过 ``mkdir -p`` 创建它：
+
+.. code-block:: bash
+
+   QEMU_SRC=/path/to/qemu
+   QEMU_BUILD=/path/to/build
+   UC_ROOT=/path/to/unitychip
+
+   mkdir -p "$QEMU_BUILD"
+   cd "$QEMU_BUILD"
+   "$QEMU_SRC/configure" \
+       --target-list=riscv64-softmmu \
+       --enable-io-system --enable-my-virtio \
+       --disable-rust --disable-docs \
+       -Dio_system_rtl_system=true \
+       -Dio_system_rtl_arena=true \
+       -Dio_system_iommu_rtl=false \
+       -Dio_system_rtl_system_picker_out="$QEMU_BUILD/rtl-system-picker" \
+       -Dio_system_picker="$UC_ROOT/bin/picker" \
+       -Dio_system_picker_template="$UC_ROOT/share/picker/template" \
+       -Dio_system_picker_xspcomm_include="$UC_ROOT/share/picker/include" \
+       -Dio_system_picker_xspcomm_lib="$UC_ROOT/share/picker/lib/libxspcomm.so" \
+       -Dio_system_rtl_wave=false \
+       -Dio_system_rtl_wave_file="$QEMU_BUILD/arena.fsdb"
+   IO_SYSTEM_BUILD_JOBS=8 make -j16 qemu-system-riscv64
+
+``UC_ROOT`` 指向已安装的 Picker、模板和 XSPComm 所在目录。
+QEMU 和生成的 RTL 模型写入 ``QEMU_BUILD``。四个 ``io_system_picker*``
+路径也可以分别指定，不要求工具安装一定采用上述目录布局。
+
+``io_system_rtl_system=true`` 启用 RTL-system 动态库构建；
+``io_system_rtl_arena=true`` 在模型中加入 E6 + RA。只需要不含 Arena 的
+基础 RTL-system 时，将后者改为 ``false``。``io_system_iommu_rtl`` 是
+另一项独立构建选择，运行 E6 + RA 算子并不需要开启它。
+``IO_SYSTEM_BUILD_JOBS`` 控制 Picker 内部并行度，外层 ``make -j16``
+控制 QEMU 构建并行度。
+
+主要产物位于：
+
+.. code-block:: text
+
+   $QEMU_BUILD/qemu-system-riscv64
+   $QEMU_BUILD/libio_rtl_system_api.so
+   $QEMU_BUILD/rtl-system-picker/libDPIio_system_rtl_wrapper.so
+   $QEMU_BUILD/rtl-system-picker/libUTio_system_rtl_wrapper.so
+   $QEMU_BUILD/rtl-system-picker/libxspcomm.so
+   $QEMU_BUILD/rtl-system-picker/libDPIio_system_rtl_wrapper.so.daidir/
+
+运行时保留 API 库及整个 ``rtl-system-picker`` 目录。编译启用 RTL-system
+不会自动改变 machine 的默认 backend，启动时仍须选择
+``io-system-backend=rtl-system``。
+
+以下示例直接运行已编译的 Add 联合 ELF。``RA_ELF`` 必须同时包含 QEMU
+主核启动程序和 E6 程序，不能填只有 E6 代码的子镜像。在当前算子工程中
+对应 ``e6_ra_subsystem/rvv_operator_cases/build/add_rvv/rvv_add_hardware.elf``。
+若更换 shell，先重新加载相同工具环境，并设置 ``QEMU_BUILD``。
+
+.. code-block:: bash
+
+   RA_ELF=/path/to/rvv_add_hardware.elf
+   RTL_PICKER="$QEMU_BUILD/rtl-system-picker"
+
+   LD_LIBRARY_PATH="$RTL_PICKER:$QEMU_BUILD:$VCS_HOME/linux64/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+   LD_PRELOAD="$RTL_PICKER/libDPIio_system_rtl_wrapper.so:$RTL_PICKER/libUTio_system_rtl_wrapper.so${LD_PRELOAD:+:$LD_PRELOAD}" \
+   "$QEMU_BUILD/qemu-system-riscv64" \
+       -M "qemu_to_iosystem,generated-dtb=off,io-system-backend=rtl-system,io-system-iommu=none,io-system-backend-lib=$QEMU_BUILD/libio_rtl_system_api.so,io-system-service-mode=bh,io-system-rtl-continuous=on,io2q-outstanding=16" \
+       -smp 1 -m 128M -accel tcg,thread=single \
+       -display none -monitor none -serial stdio \
+       -bios none -kernel "$RA_ELF"
+
+``io-system-backend-lib`` 指定要 ``dlopen`` 的 API 库；省略时也可通过
+``IO_RTL_SYSTEM_API_SO`` 指定。QEMU 当前不会自动按可执行文件
+目录查找这个库，因此以上示例显式给出路径。Picker 的 DPI/UT 库需要在
+QEMU 创建 vCPU 线程前通过 ``LD_PRELOAD`` 加载，以满足 VCS 的 TLS 要求。
+
+``io-system-vcs-libdir`` machine 属性当前只被保存并传入
+``IoSystemConfig.backend_vcs_libdir``，RTL-system loader 未使用它来加载
+VCS 依赖，也不会据此设置 ``LD_LIBRARY_PATH``。启动 QEMU 前需要像上例
+一样设置动态库环境。如果
+source 的脚本已加入 ``$VCS_HOME/linux64/lib``，该目录无需重复添加，
+但仍需要 Picker 库路径及 DPI/UT preload。只传这个 machine 属性不能
+替代动态库搜索路径。
+
+Add 应输出 ``RVV HOST START``、``RVV WAIT RA_DONE`` 和
+``RVV PASS case=rvv_add_hardware``。该联合 ELF 的主核检查 E6 完成状态和
+共享报告后执行 ``0x0005006b``，成功时 QEMU 自动退出且状态码为 0；
+同时检查 PASS 日志和退出码。其他 ELF 是否自动退出取决于其主核程序。
+
+需要 FSDB 时，把上述 configure 中的 ``io_system_rtl_wave=false`` 改为
+``true`` 并重新构建。波形在运行期间写入 ``$QEMU_BUILD/arena.fsdb``，
+正常 shutdown 时关闭；再次运行会覆盖同一路径。修改波形开关或路径会
+触发模型重建。当前配置指纹记录 ``VCS_HOME``，尚未记录 ``VERDI_HOME``；
+仅切换 Verdi 时应使用新的构建目录，确保重新链接所选版本的 PLI/dumper。
 
 Scheduler/service properties
 ----------------------------
@@ -75,12 +185,17 @@ external shutdown request.
 E6/AME AXI-only acceptance test
 -----------------------------
 
-RA 版本动态库构建完成后，从 QEMU 源码目录运行：
+按上述流程构建 RA 版本动态库后，保留工具环境和 ``QEMU_BUILD``，从
+QEMU 源码目录运行内置 GEMM 验收。脚本编译测试 ELF，需要
+``riscv64-unknown-elf-gcc`` 等交叉工具，可通过 ``CROSS_COMPILE`` 指定前缀：
 
 .. code-block:: bash
 
    python3 third_party/io-system-lib/tests/arena/run_qemu.py \
-     --library third_party/io-system-lib/output-arena/libio_rtl_system_api.so \
+     --qemu "$QEMU_BUILD/qemu-system-riscv64" \
+     --library "$QEMU_BUILD/libio_rtl_system_api.so" \
+     --vcs-libdir "$VCS_HOME/linux64/lib" \
+     --output "$QEMU_BUILD/acceptance/arena" \
      --suite --pause-resume
 
 测试将主核、E6 和矩阵编译进同一个裸机 ELF，分别放在
@@ -140,7 +255,7 @@ RTL IOMMU 仍通过 ``.so`` 动态加载。RTL IP、``iommu-api`` 源码和 pick
 
 也可以不设置 ``VCS_ENV``，直接由调用环境提供 ``VCS_HOME``、license 和
 ``PATH``。picker、模板、xspcomm 和 ``iommu-api`` 源码默认都来自
-``bosc-iommu-v2/third_party``，不再依赖旧 XSV 源树。
+``bosc-iommu-v2/third_party``。
 
 这会生成 ``bosc-iommu-v2/output/iommu-api/lib/libiommu_api.so`` 以及配套
 ``libUTiommu_wrap.so``、``libDPIiommu_wrap.so`` 和 ``libxspcomm.so``。
