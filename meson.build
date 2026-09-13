@@ -3813,8 +3813,13 @@ if get_option('io_system').enabled()
   io_system_rtl_system = get_option('io_system_rtl_system')
   io_system_rtl_system_picker_out = get_option('io_system_rtl_system_picker_out')
   io_system_rtl_arena = get_option('io_system_rtl_arena')
+  io_system_rtl_wave = get_option('io_system_rtl_wave')
+  io_system_rtl_wave_file = get_option('io_system_rtl_wave_file')
   if io_system_rtl_arena and not io_system_rtl_system
     error('io_system_rtl_arena requires io_system_rtl_system')
+  endif
+  if io_system_rtl_wave and not io_system_rtl_system
+    error('io_system_rtl_wave requires io_system_rtl_system')
   endif
   io_system_iommu_rtl_arg = '0'
   if io_system_iommu_rtl
@@ -3867,6 +3872,8 @@ if get_option('io_system').enabled()
       'IO_SYSTEM_QEMU_BACKEND=1',
       'IO_SYSTEM_RTL_SYSTEM=' + io_system_rtl_system_arg,
       'IO_SYSTEM_RTL_ARENA=' + (io_system_rtl_arena ? '1' : '0'),
+      'IO_SYSTEM_RTL_WAVE=' + (io_system_rtl_wave ? '1' : '0'),
+      'IO_SYSTEM_RTL_WAVE_FILE=' + io_system_rtl_wave_file,
       'RTL_SYSTEM_PICKER_OUT=' + io_system_rtl_system_picker_out,
       'IO_SYSTEM_IOMMU_RTL=' + io_system_iommu_rtl_arg,
       'IOMMU_RTL_PICKER_OUT=' + io_system_iommu_picker_out,

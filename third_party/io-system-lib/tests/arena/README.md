@@ -61,8 +61,17 @@ make -j8 IO_SYSTEM_RTL_ARENA=1 all
 中的变量覆盖。波形与覆盖率默认关闭；构建时可设置 `IO_SYSTEM_RTL_WAVE=1`、
 `IO_SYSTEM_RTL_COVERAGE=1`。`IO_SYSTEM_BUILD_JOBS` 默认 8。
 
+启用波形时使用 FSDB，`IO_SYSTEM_RTL_WAVE_FILE=/absolute/path/arena.fsdb`
+指定输出路径，父目录自动创建。不指定时文件名为
+`io_system_rtl_wrapper.fsdb`，相对运行进程的工作目录。文件在仿真期间写入，
+QEMU 正常退出时完成 FSDB 收尾；每次运行会覆盖同一路径。通过 QEMU Meson
+构建时对应选项为 `-Dio_system_rtl_wave=true` 和
+`-Dio_system_rtl_wave_file=/absolute/path/arena.fsdb`。修改开关或路径会重新编译
+Picker 模型。
+
 `-no_save` 禁止 VCS 重执行宿主进程。picker 的 close 已适配嵌入式进程生命周期：
-释放 host 对象但不执行会退出 QEMU 的 `$finish`；VCS 上下文保留至进程退出。
+先完成 FSDB 收尾，再释放 host 对象，不执行会退出 QEMU 的 `$finish`；
+VCS 上下文保留至进程退出。
 支持同一个 handle 的全局 reset 和复用；一个进程只初始化一个 VCS 模型。
 MMIO 等待通过可选的 service callback 推进已有 scheduler 事务，不递归时钟步进。
 

@@ -267,7 +267,8 @@ $(RTL_SYSTEM_CONFIG): rtl-system-config-force
 		'PICKER=$(PICKER)' 'TEMPLATE=$(PICKER_TEMPLATE)' \
 		'XSPCOMM_INCLUDE=$(PICKER_XSPCOMM_INCLUDE)' \
 		'XSPCOMM_LIB=$(PICKER_XSPCOMM_LIB)' 'VCS_HOME=$(VCS_HOME)' \
-		'WAVE=$(IO_SYSTEM_RTL_WAVE)' 'COVERAGE=$(IO_SYSTEM_RTL_COVERAGE)' > $@.tmp
+		'WAVE=$(IO_SYSTEM_RTL_WAVE)' 'WAVE_FILE=$(IO_SYSTEM_RTL_WAVE_FILE)' \
+		'COVERAGE=$(IO_SYSTEM_RTL_COVERAGE)' > $@.tmp
 	@cmp -s $@.tmp $@ || cp $@.tmp $@
 	@rm -f $@.tmp
 
@@ -277,8 +278,10 @@ $(RTL_SYSTEM_FILELIST): $(RTL_SYSTEM_CONFIG) $(RTL_SYSTEM_FILELIST_SOURCE) $(RTL
 	python3 src/rtl_model/io_system/scripts/system-filelist.py \
 		$(if $(filter 1,$(IO_SYSTEM_RTL_ARENA)),--arena,) > $@
 
-$(RTL_SYSTEM_PICKER_STAMP): $(RTL_SYSTEM_FILELIST) $(RTL_SYSTEM_RTL_SRCS) \
+$(RTL_SYSTEM_PICKER_STAMP): $(RTL_SYSTEM_CONFIG) $(RTL_SYSTEM_FILELIST) $(RTL_SYSTEM_RTL_SRCS) \
 		src/rtl_model/io_system/scripts/build-picker-vcs.sh
+	IO_SYSTEM_RTL_WAVE='$(IO_SYSTEM_RTL_WAVE)' \
+	IO_SYSTEM_RTL_WAVE_FILE='$(IO_SYSTEM_RTL_WAVE_FILE)' \
 	bash src/rtl_model/io_system/scripts/build-picker-vcs.sh \
 		$(RTL_SYSTEM_FILELIST) \
 		$(RTL_SYSTEM_PICKER_OUT) \

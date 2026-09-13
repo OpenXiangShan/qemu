@@ -44,6 +44,8 @@ meson_options_help() {
   printf "%s\n" '                           build the Arena E6 + RA RTL io-system model'
   printf "%s\n" '  --enable-io-system-rtl-system'
   printf "%s\n" '                           build picker-backed RTL io-system API'
+  printf "%s\n" '  --enable-io-system-rtl-wave'
+  printf "%s\n" '                           dump FSDB waveform for the RTL io-system model'
   printf "%s\n" '  --enable-lto             Use link time optimization'
   printf "%s\n" '  --enable-malloc=CHOICE   choose memory allocator to use [system] (choices:'
   printf "%s\n" '                           jemalloc/system/tcmalloc)'
@@ -81,6 +83,8 @@ meson_options_help() {
   printf "%s\n" '                           XSPComm library used by io-system RTL builds'
   printf "%s\n" '  --io-system-rtl-system-picker-out=VALUE'
   printf "%s\n" '                           picker output used by the RTL io-system API build'
+  printf "%s\n" '  --io-system-rtl-wave-file=VALUE'
+  printf "%s\n" '                           FSDB waveform path for the RTL io-system model'
   printf "%s\n" '  --libdir=VALUE           Library directory [system default]'
   printf "%s\n" '  --libexecdir=VALUE       Library executable directory [libexec]'
   printf "%s\n" '  --localedir=VALUE        Locale data directory [share/locale]'
@@ -394,6 +398,9 @@ _meson_option_parse() {
     --enable-io-system-rtl-system) printf "%s" -Dio_system_rtl_system=true ;;
     --disable-io-system-rtl-system) printf "%s" -Dio_system_rtl_system=false ;;
     --io-system-rtl-system-picker-out=*) quote_sh "-Dio_system_rtl_system_picker_out=$2" ;;
+    --enable-io-system-rtl-wave) printf "%s" -Dio_system_rtl_wave=true ;;
+    --disable-io-system-rtl-wave) printf "%s" -Dio_system_rtl_wave=false ;;
+    --io-system-rtl-wave-file=*) quote_sh "-Dio_system_rtl_wave_file=$2" ;;
     --enable-jack) printf "%s" -Djack=enabled ;;
     --disable-jack) printf "%s" -Djack=disabled ;;
     --enable-keyring) printf "%s" -Dkeyring=enabled ;;

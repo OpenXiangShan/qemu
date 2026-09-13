@@ -65,6 +65,10 @@ option('io_system_rtl_system_picker_out', type : 'string', value : '',
        description: 'picker output used by the RTL io-system API build')
 option('io_system_rtl_arena', type : 'boolean', value : false,
        description: 'build the Arena E6 + RA RTL io-system model')
+option('io_system_rtl_wave', type : 'boolean', value : false,
+       description: 'dump FSDB waveform for the RTL io-system model')
+option('io_system_rtl_wave_file', type : 'string', value : '',
+       description: 'FSDB waveform path for the RTL io-system model')
 option('io_system_picker', type : 'string', value : '',
        description: 'Picker executable used by io-system RTL builds')
 option('io_system_picker_template', type : 'string', value : '',

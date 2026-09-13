@@ -53,7 +53,9 @@ esac
 
 trace_args=()
 if [[ ${IO_SYSTEM_RTL_WAVE:-0} == 1 ]]; then
-    trace_args=(-w "${IO_SYSTEM_RTL_WAVE_FILE:-io_system_rtl_wrapper.fsdb}")
+    wave_file=${IO_SYSTEM_RTL_WAVE_FILE:-io_system_rtl_wrapper.fsdb}
+    mkdir -p "$(dirname "$wave_file")"
+    trace_args=(-W fsdb -w "$wave_file" --vflag "-debug_access+all")
 fi
 coverage_args=()
 if [[ ${IO_SYSTEM_RTL_COVERAGE:-0} == 1 ]]; then
@@ -86,18 +88,27 @@ sed -i 's/-LDFLAGS "-shared/-LDFLAGS "-shared -Wl,--no-as-needed/' \
     "$picker_abs/cmake/vcs.cmake"
 
 # Picker's VCS destructor invokes an exported SV task containing $finish,
-# which exits the embedding QEMU process. Keep the VCS context resident until
-# process exit while releasing the picker host objects normally. Reset/reuse
+# which exits the embedding QEMU process. Preserve FSDB finalization, but keep
+# the VCS context resident while releasing the picker host objects. Reset/reuse
 # is supported through the existing handle; opening a second VCS instance is
 # not supported by this package.
-python3 - "$picker_abs/dut_base.cpp" <<'PY'
+python3 - "$picker_abs/dut_base.cpp" "${IO_SYSTEM_RTL_WAVE:-0}" <<'PY'
 from pathlib import Path
 import re
 import sys
 p = Path(sys.argv[1])
 s = p.read_text()
+def embedded_finish(match):
+    wave_finish = re.search(r'\bvcs_fsdb_finish_waveform_\w+\(\);',
+                            match.group())
+    if sys.argv[2] == '1' and not wave_finish:
+        raise SystemExit('missing picker FSDB finalization')
+    body = '    ' + wave_finish.group() + '\n' if wave_finish else ''
+    return ('int DutVcsBase::Finish()\n{\n' + body +
+            '    return 0; // Embedded host owns process lifetime.\n};')
+
 s, count = re.subn(r'int DutVcsBase::Finish\(\)\s*\{.*?\n\};',
-                  'int DutVcsBase::Finish()\n{\n    return 0; // Embedded host owns process lifetime.\n};',
+                  embedded_finish,
                   s, count=1, flags=re.S)
 if count != 1:
     raise SystemExit('unrecognized picker VCS Finish implementation')
