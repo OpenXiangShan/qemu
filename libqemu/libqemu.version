@@ -1,0 +1,4 @@
+LIBQEMU_1 {
+    global: libqemu_get_api;
+    local: *;
+};

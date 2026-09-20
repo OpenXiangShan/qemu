@@ -918,7 +918,11 @@ void qemu_remove_exit_notifier(Notifier *notify)
     notifier_remove(notify);
 }
 
+#ifdef CONFIG_LIBQEMU
+void qemu_run_exit_notifiers(void)
+#else
 static void qemu_run_exit_notifiers(void)
+#endif
 {
     BQL_LOCK_GUARD();
     notifier_list_notify(&exit_notifiers, NULL);
@@ -936,7 +940,9 @@ void qemu_init_subsystems(void)
     qemu_init_cpu_loop();
     bql_lock();
 
+#ifndef CONFIG_LIBQEMU
     atexit(qemu_run_exit_notifiers);
+#endif
 
     module_call_init(MODULE_INIT_QOM);
     module_call_init(MODULE_INIT_MIGRATION);

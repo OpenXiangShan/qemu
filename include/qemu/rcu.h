@@ -1,6 +1,10 @@
 #ifndef QEMU_RCU_H
 #define QEMU_RCU_H
 
+#ifdef CONFIG_LIBQEMU
+void qemu_lib_rcu_init(void);
+#endif
+
 /*
  * urcu-mb.h
  *

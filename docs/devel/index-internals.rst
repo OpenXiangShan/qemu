@@ -17,6 +17,7 @@ Details about QEMU's various subsystems including how to add features to them.
    ebpf_rss
    migration/index
    multi-process
+   libqemu
    reset
    s390-cpu-topology
    s390-dasd-ipl

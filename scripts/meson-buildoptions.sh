@@ -46,6 +46,7 @@ meson_options_help() {
   printf "%s\n" '                           build picker-backed RTL io-system API'
   printf "%s\n" '  --enable-io-system-rtl-wave'
   printf "%s\n" '                           dump FSDB waveform for the RTL io-system model'
+  printf "%s\n" '  --enable-libqemu         build an embeddable RISC-V system QEMU library'
   printf "%s\n" '  --enable-lto             Use link time optimization'
   printf "%s\n" '  --enable-malloc=CHOICE   choose memory allocator to use [system] (choices:'
   printf "%s\n" '                           jemalloc/system/tcmalloc)'
@@ -429,6 +430,8 @@ _meson_option_parse() {
     --disable-libnfs) printf "%s" -Dlibnfs=disabled ;;
     --enable-libpmem) printf "%s" -Dlibpmem=enabled ;;
     --disable-libpmem) printf "%s" -Dlibpmem=disabled ;;
+    --enable-libqemu) printf "%s" -Dlibqemu=true ;;
+    --disable-libqemu) printf "%s" -Dlibqemu=false ;;
     --enable-libssh) printf "%s" -Dlibssh=enabled ;;
     --disable-libssh) printf "%s" -Dlibssh=disabled ;;
     --enable-libudev) printf "%s" -Dlibudev=enabled ;;

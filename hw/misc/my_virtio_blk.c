@@ -10,6 +10,9 @@
 #include "virtio_wrapper.h"
 #include "virtio_backend.h"
 #include "hw/misc/my_virtio.h"
+#ifdef CONFIG_LIBQEMU
+#include "system/system.h"
+#endif
 
 struct myBlkRequest {
     uint64_t sector;
@@ -29,6 +32,10 @@ struct MyVirtioStateBlk {
     virtio_handle_t handle;
     virtio_backend_handle_t backend;
     QEMUBH *rw_bh;
+#ifdef CONFIG_LIBQEMU
+    Notifier exit_notifier;
+    bool exit_registered;
+#endif
     char *image_path;
     bool packed;
     void *iommu;
@@ -190,6 +197,27 @@ void my_virtio_blk_create(hwaddr start, hwaddr size, qemu_irq irq,
     sysbus_connect_irq(SYS_BUS_DEVICE(s), 0, irq);
 }
 
+static void my_virtio_blk_release(MyVirtioStateBlk *s)
+{
+    if (s->rw_bh) {
+        qemu_bh_delete(s->rw_bh);
+        s->rw_bh = NULL;
+    }
+    if (s->backend) {
+        virtio_backend_destroy(s->backend);
+        s->backend = NULL;
+    }
+}
+
+#ifdef CONFIG_LIBQEMU
+static void my_virtio_blk_exit(Notifier *notifier, void *data)
+{
+    MyVirtioStateBlk *s = container_of(notifier, MyVirtioStateBlk,
+                                     exit_notifier);
+    my_virtio_blk_release(s);
+}
+#endif
+
 static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(dev);
@@ -223,6 +251,11 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
     s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_BLK, base, len, &ops,
                                       (void *)s, &opts);
     if (s->handle) {
+#ifdef CONFIG_LIBQEMU
+        s->exit_notifier.notify = my_virtio_blk_exit;
+        qemu_add_exit_notifier(&s->exit_notifier);
+        s->exit_registered = true;
+#endif
         return;
     }
 
@@ -233,12 +266,13 @@ static void my_virtio_blk_unrealize(DeviceState *dev)
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(dev);
 
-    if (s->rw_bh) {
-        qemu_bh_delete(s->rw_bh);
-        s->rw_bh = NULL;
+#ifdef CONFIG_LIBQEMU
+    if (s->exit_registered) {
+        qemu_remove_exit_notifier(&s->exit_notifier);
+        s->exit_registered = false;
     }
-    virtio_backend_destroy(s->backend);
-    s->backend = NULL;
+#endif
+    my_virtio_blk_release(s);
     g_free(s->image_path);
     s->image_path = NULL;
 }

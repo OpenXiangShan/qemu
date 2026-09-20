@@ -462,7 +462,12 @@ static void rcu_init_child(void)
 }
 #endif
 
+#ifdef CONFIG_LIBQEMU
+/* A dlopen caller is not the QEMU I/O thread. Initialize RCU on the worker. */
+void qemu_lib_rcu_init(void)
+#else
 static void __attribute__((__constructor__)) rcu_init(void)
+#endif
 {
     smp_mb_global_init();
 #ifdef CONFIG_POSIX

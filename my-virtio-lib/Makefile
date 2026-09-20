@@ -2,6 +2,11 @@ CC := gcc
 AR := ar
 CMAKE := cmake
 CFLAGS := -Wall -g -O0 -std=gnu99
+PIC ?= n
+ifeq ($(PIC),y)
+override CFLAGS += -fPIC
+LIBQEMU_SLIRP_ARGS := CFLAGS="$(CFLAGS)"
+endif
 GLIB_CFLAGS := $(shell pkg-config --cflags glib-2.0 2>/dev/null)
 LIBVNCSERVER_DIR := third_party/libvncserver
 LIBSLIRP_DIR := third_party/libslirp
@@ -15,6 +20,7 @@ BACKEND_MRI := $(BUILD_DIR)/libMyVirtio_backend.mri
 LIBVNCSERVER_CFLAGS := -I$(LIBVNCSERVER_DIR)/include -I$(LIBVNCSERVER_BUILD_DIR)/include
 LIBSLIRP_CFLAGS := -I$(LIBSLIRP_DIR)/src -I$(LIBSLIRP_BUILD_DIR)/src
 LIBVNCSERVER_CMAKE_FLAGS := \
+	$(if $(filter y,$(PIC)),-DCMAKE_POSITION_INDEPENDENT_CODE=ON) \
 	-S $(LIBVNCSERVER_DIR) \
 	-B $(LIBVNCSERVER_BUILD_DIR) \
 	-DCMAKE_BUILD_TYPE=Release \
@@ -130,7 +136,8 @@ $(LIBVNCSERVER_ARCHIVE):
 
 $(LIBSLIRP_ARCHIVE):
 	$(MAKE) -C $(LIBSLIRP_DIR) BUILD_DIR=$(abspath $(LIBSLIRP_BUILD_DIR)) \
-		CC="$(CC)" AR="$(AR)" PKG_CONFIG=pkg-config
+		CC="$(CC)" AR="$(AR)" PKG_CONFIG=pkg-config \
+		$(LIBQEMU_SLIRP_ARGS)
 
 $(BACKEND_TARGET): $(BACKEND_OBJS) $(BACKEND_ARCHIVES)
 	@mkdir -p $(OUTPUT_DIR) $(BUILD_DIR)

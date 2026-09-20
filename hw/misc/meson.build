@@ -191,6 +191,7 @@ if get_option('my_virtio').enabled()
       'OUTPUT_DIR=' + my_virtio_lib_output_dir,
       'CC=' + ' '.join(meson.get_compiler('c').cmd_array()),
       'BACKEND_NET=y',
+      'PIC=' + (enable_libqemu ? 'y' : 'n'),
       'all',
     ],
     build_by_default: true,

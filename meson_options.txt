@@ -418,3 +418,6 @@ option('rust', type: 'feature', value: 'disabled',
        description: 'Rust support')
 option('strict_rust_lints', type: 'boolean', value: false,
        description: 'Enable stricter set of Rust warnings')
+
+option('libqemu', type: 'boolean', value: false,
+       description: 'build an embeddable RISC-V system QEMU library')

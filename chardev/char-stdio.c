@@ -92,6 +92,9 @@ static void qemu_chr_open_stdio(Chardev *chr,
 {
     ChardevStdio *opts = backend->u.stdio.data;
     struct sigaction act;
+#ifdef CONFIG_LIBQEMU
+    int fd_in, fd_out;
+#endif
 
     if (is_daemonized()) {
         error_setg(errp, "cannot use stdio with -daemonize");
@@ -117,7 +120,25 @@ static void qemu_chr_open_stdio(Chardev *chr,
     act.sa_handler = term_stdio_handler;
     sigaction(SIGCONT, &act, NULL);
 
+#ifdef CONFIG_LIBQEMU
+    /* The embedding process still owns stdin/stdout after QEMU cleanup. */
+    fd_in = dup(STDIN_FILENO);
+    fd_out = dup(STDOUT_FILENO);
+    if (fd_in < 0 || fd_out < 0) {
+        error_setg_errno(errp, errno, "cannot duplicate stdio descriptors");
+        if (fd_in >= 0) {
+            close(fd_in);
+        }
+        if (fd_out >= 0) {
+            close(fd_out);
+        }
+        term_exit();
+        return;
+    }
+    qemu_chr_open_fd(chr, fd_in, fd_out);
+#else
     qemu_chr_open_fd(chr, 0, 1);
+#endif
 
     stdio_allow_signal = !opts->has_signal || opts->signal;
     qemu_chr_set_echo_stdio(chr, false);

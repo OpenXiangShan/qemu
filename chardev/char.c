@@ -234,6 +234,11 @@ void qemu_chr_be_update_read_handlers(Chardev *s,
 
     assert(qemu_chr_has_feature(s, QEMU_CHAR_FEATURE_GCONTEXT)
            || !context);
+#ifdef CONFIG_LIBQEMU
+    if (!context) {
+        context = g_main_context_get_thread_default();
+    }
+#endif
     s->gcontext = context;
     if (cc->chr_update_read_handler) {
         cc->chr_update_read_handler(s);
@@ -1021,6 +1026,11 @@ static Chardev *chardev_new(const char *id, const char *typename,
     chr = CHARDEV(obj);
     chr->handover_yank_instance = handover_yank_instance;
     chr->label = g_strdup(id);
+#ifdef CONFIG_LIBQEMU
+    if (!gcontext) {
+        gcontext = g_main_context_get_thread_default();
+    }
+#endif
     chr->gcontext = gcontext;
 
     qemu_char_open(chr, backend, &be_opened, &local_err);

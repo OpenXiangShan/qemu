@@ -791,6 +791,9 @@ for opt do
   ;;
   --disable-rust) rust=disabled
   ;;
+  --enable-libqemu|-Dlibqemu=true)
+      meson_option_add -Dlibqemu=true -Db_staticpic=true
+  ;;
   # everything else has the same name in configure and meson
   --*) meson_option_parse "$opt" "$optarg"
   ;;

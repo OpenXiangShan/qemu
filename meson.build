@@ -68,6 +68,18 @@ foreach target : target_dirs
   have_system = have_system or target.endswith('-softmmu')
 endforeach
 have_user = have_linux_user or have_bsd_user
+enable_libqemu = get_option('libqemu')
+if enable_libqemu
+  if host_os != 'linux' or target_dirs != ['riscv64-softmmu']
+    error('libqemu requires Linux and --target-list=riscv64-softmmu')
+  endif
+  if not get_option('b_staticpic')
+    error('libqemu requires PIC; use configure --enable-libqemu')
+  endif
+  if get_option('plugins') or get_option('fuzzing') or get_option('prefer_static')
+    error('libqemu does not support plugins, fuzzing or static linking')
+  endif
+endif
 
 ############
 # Programs #
@@ -251,16 +263,17 @@ have_vhost_net = have_vhost_net_kernel or have_vhost_net_user or have_vhost_net_
 have_tcg = get_option('tcg').allowed() and (have_system or have_user)
 
 have_tools = get_option('tools') \
-  .disable_auto_if(not have_system) \
+  .disable_auto_if(not have_system or enable_libqemu) \
   .allowed()
 have_ga = get_option('guest_agent') \
-  .disable_auto_if(not have_system and not have_tools) \
+  .disable_auto_if(enable_libqemu or (not have_system and not have_tools)) \
   .require(host_os in ['sunos', 'linux', 'windows', 'freebsd', 'netbsd', 'openbsd'],
            error_message: 'unsupported OS for QEMU guest agent') \
   .allowed()
 have_block = have_system or have_tools
 
 enable_modules = get_option('modules') \
+  .disable_auto_if(enable_libqemu) \
   .require(host_os != 'windows',
            error_message: 'Modules are not available for Windows') \
   .require(not get_option('prefer_static'),
@@ -2337,7 +2350,13 @@ endif
 # config-host.h #
 #################
 
+if enable_libqemu and (sdl.found() or gtk.found() or opengl.found() or
+                      enable_modules or have_tools or have_ga or not have_tcg)
+  error('libqemu requires TCG; disable SDL, GTK, OpenGL, modules, tools and guest-agent')
+endif
+
 config_host_data = configuration_data()
+config_host_data.set('CONFIG_LIBQEMU', enable_libqemu)
 
 config_host_data.set('CONFIG_HAVE_RUST', have_rust)
 audio_drivers_selected = []
@@ -4004,6 +4023,9 @@ common_ss.add(files('cpu-common.c'))
 specific_ss.add(files('cpu-target.c'))
 
 subdir('system')
+if enable_libqemu
+  subdir('libqemu')
+endif
 
 # Work around a gcc bug/misfeature wherein constant propagation looks
 # through an alias:
@@ -4542,6 +4564,16 @@ foreach target : target_dirs
                  c_args: c_args,
                  build_by_default: false)
 
+  if enable_libqemu
+    shared_library('qemu-system-' + target_name,
+      objects: lib.extract_all_objects(recursive: true),
+      dependencies: arch_deps,
+      link_args: ['-Wl,--version-script=' + meson.project_source_root() / 'libqemu/libqemu.version'],
+      link_depends: files('libqemu/libqemu.version'),
+      install: true)
+    continue
+  endif
+
   if target.endswith('-softmmu')
     execs = [{
       'name': 'qemu-system-' + target_name,
@@ -4735,7 +4767,7 @@ subdir('pc-bios')
 subdir('docs')
 # Tests are disabled on emscripten because they rely on host features that aren't
 # supported by emscripten (e.g. fork and unix socket).
-if host_os != 'emscripten'
+if host_os != 'emscripten' and not enable_libqemu
   subdir('tests')
 endif
 if gtk.found()
@@ -4828,6 +4860,7 @@ summary_info += {'system-mode emulation': have_system}
 summary_info += {'user-mode emulation': have_user}
 summary_info += {'block layer':       have_block}
 summary_info += {'Install blobs':     get_option('install_blobs')}
+summary_info += {'libqemu':           enable_libqemu}
 summary_info += {'module support':    enable_modules}
 if enable_modules
   summary_info += {'alternative module path': get_option('module_upgrades')}

@@ -18,6 +18,9 @@ const char *qemu_get_vm_name(void);
 /* Exit notifiers will run with BQL held. */
 void qemu_add_exit_notifier(Notifier *notify);
 void qemu_remove_exit_notifier(Notifier *notify);
+#ifdef CONFIG_LIBQEMU
+void qemu_run_exit_notifiers(void);
+#endif
 
 void qemu_add_machine_init_done_notifier(Notifier *notify);
 void qemu_remove_machine_init_done_notifier(Notifier *notify);
