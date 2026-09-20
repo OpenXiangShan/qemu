@@ -20,6 +20,7 @@ void qemu_add_exit_notifier(Notifier *notify);
 void qemu_remove_exit_notifier(Notifier *notify);
 #ifdef CONFIG_LIBQEMU
 void qemu_run_exit_notifiers(void);
+void qemu_lib_finish_init(Error **errp);
 #endif
 
 void qemu_add_machine_init_done_notifier(Notifier *notify);

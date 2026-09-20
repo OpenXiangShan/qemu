@@ -4565,12 +4565,22 @@ foreach target : target_dirs
                  build_by_default: false)
 
   if enable_libqemu
-    shared_library('qemu-system-' + target_name,
+    libqemu_shared = shared_library('qemu-system-' + target_name,
       objects: lib.extract_all_objects(recursive: true),
       dependencies: arch_deps,
       link_args: ['-Wl,--version-script=' + meson.project_source_root() / 'libqemu/libqemu.version'],
       link_depends: files('libqemu/libqemu.version'),
       install: true)
+    test('libqemu-lifecycle', libqemu_lifecycle,
+         args: [libqemu_shared.full_path()], depends: libqemu_shared)
+    test('libqemu-assembly', libqemu_assemble,
+         args: [libqemu_shared.full_path()], depends: libqemu_shared)
+    test('libqemu-autostart', libqemu_assemble,
+         args: [libqemu_shared.full_path(), 'running'], depends: libqemu_shared)
+    test('libqemu-cancel', libqemu_assemble,
+         args: [libqemu_shared.full_path(), 'cancel'], depends: libqemu_shared)
+    test('libqemu-concurrency', libqemu_concurrency,
+         args: [libqemu_shared.full_path()], depends: libqemu_shared)
     continue
   endif
 

@@ -6,14 +6,14 @@ python3 tests/libqemu/check.py --build /tmp/build --output /tmp/results \
 """
 import argparse
 import json
-import re
 import os
 from pathlib import Path
+import re
+import selectors
 import signal
 import struct
 import subprocess
 import time
-import selectors
 
 
 SOURCE = Path(__file__).resolve().parents[2]
@@ -61,6 +61,8 @@ def test_linux(args):
     os.set_inheritable(read_fd, True)
     if not args.normal:
         cmd += ['--control-fd', str(read_fd)]
+        if args.split_init:
+            cmd += ['--split-init']
     cmd += ['-M', f'xiangshan-kunminghu,generated-dtb=on,my-virtio-blk=on,'
             f'my-virtio-devices=blk,my-virtio-blk-image={disk}',
             '-smp', '4', '-m', '16G', '-accel', 'tcg',
@@ -164,6 +166,7 @@ def main():
     parser.add_argument('--kernel', type=Path)
     parser.add_argument('--disk', type=Path)
     parser.add_argument('--normal', action='store_true')
+    parser.add_argument('--split-init', action='store_true')
     args = parser.parse_args()
     args.build = args.build.resolve()
     args.output = args.output.resolve()

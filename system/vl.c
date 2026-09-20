@@ -23,6 +23,9 @@
  */
 
 #include "qemu/osdep.h"
+#ifdef CONFIG_LIBQEMU
+#include "libqemu/internal.h"
+#endif
 #include "qemu/help-texts.h"
 #include "qemu/datadir.h"
 #include "qemu/units.h"
@@ -2794,15 +2797,8 @@ static bool qemu_machine_creation_done(Error **errp)
     return true;
 }
 
-void qmp_x_exit_preconfig(Error **errp)
+static void qemu_finish_machine_init(Error **errp)
 {
-    if (phase_check(PHASE_MACHINE_INITIALIZED)) {
-        error_setg(errp, "The command is permitted only before machine initialization");
-        return;
-    }
-
-    qemu_init_board();
-    qemu_create_cli_devices();
     if (!qemu_machine_creation_done(errp)) {
         return;
     }
@@ -2833,6 +2829,35 @@ void qmp_x_exit_preconfig(Error **errp)
         qmp_cont(NULL);
     }
 }
+
+void qmp_x_exit_preconfig(Error **errp)
+{
+    if (phase_check(PHASE_MACHINE_INITIALIZED)) {
+        error_setg(errp, "The command is permitted only before machine initialization");
+        return;
+    }
+    qemu_init_board();
+    qemu_create_cli_devices();
+    qemu_finish_machine_init(errp);
+}
+
+static void qemu_init_post(void)
+{
+    qemu_init_displays();
+    accel_setup_post(current_machine);
+    os_setup_post();
+    resume_mux_open();
+}
+
+#ifdef CONFIG_LIBQEMU
+void qemu_lib_finish_init(Error **errp)
+{
+    qemu_finish_machine_init(errp);
+    if (!*errp) {
+        qemu_init_post();
+    }
+}
+#endif
 
 void qemu_init(int argc, char **argv)
 {
@@ -3836,11 +3861,15 @@ void qemu_init(int argc, char **argv)
         exit(0);
     }
 
+#ifdef CONFIG_LIBQEMU
+    if (libqemu_deferred_init()) {
+        qemu_init_board();
+        qemu_create_cli_devices();
+        return;
+    }
+#endif
     if (!preconfig_requested) {
         qmp_x_exit_preconfig(&error_fatal);
     }
-    qemu_init_displays();
-    accel_setup_post(current_machine);
-    os_setup_post();
-    resume_mux_open();
+    qemu_init_post();
 }

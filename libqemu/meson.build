@@ -1,4 +1,4 @@
-system_ss.add(files('libqemu.c'))
+system_ss.add(files('libqemu.c', 'core.c'))
 install_headers('libqemu.h', subdir: 'libqemu')
 libqemu_example = executable('libqemu-run', 'examples/run.c',
   include_directories: include_directories('..'),
@@ -9,3 +9,12 @@ libqemu_lifecycle = executable('libqemu-lifecycle',
   '../tests/libqemu/lifecycle.c',
   include_directories: include_directories('..'),
   dependencies: cc.find_library('dl'))
+
+libqemu_assemble = executable('libqemu-assemble', 'examples/assemble.c',
+  include_directories: include_directories('..'),
+  dependencies: cc.find_library('dl'))
+
+libqemu_concurrency = executable('libqemu-concurrency',
+  '../tests/libqemu/concurrency.c',
+  include_directories: include_directories('..'),
+  dependencies: [cc.find_library('dl'), threads])

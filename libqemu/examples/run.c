@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Usage: libqemu-run LIBRARY [--control-fd FD] QEMU-OPTIONS... */
+/* Usage: libqemu-run LIBRARY [--control-fd FD] [--split-init] QEMU-OPTIONS... */
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -39,17 +39,22 @@ int main(int argc, char **argv)
     void *library;
     char *error = NULL;
     int status, first = 2;
+    bool split_init = false;
     pthread_t controller, loop_thread;
     GMainLoop *loop;
 
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s LIBRARY [--control-fd FD] QEMU-OPTIONS...\n",
+        fprintf(stderr, "Usage: %s LIBRARY [--control-fd FD] [--split-init] QEMU-OPTIONS...\n",
                 argv[0]);
         return 2;
     }
     if (argc > 4 && !strcmp(argv[2], "--control-fd")) {
         control_fd = atoi(argv[3]);
         first = 4;
+    }
+    if (argc > first && !strcmp(argv[first], "--split-init")) {
+        split_init = true;
+        first++;
     }
     library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!library) {
@@ -71,8 +76,11 @@ int main(int argc, char **argv)
         g_thread_yield();
     }
     argv[first - 1] = (char *)"embedded-qemu";
-    if (api->start(argc - first + 1,
-                   (const char *const *)&argv[first - 1], &error)) {
+    int (*init)(int, const char *const *, char **) =
+        split_init ? api->init : api->start;
+    if (init(argc - first + 1,
+             (const char *const *)&argv[first - 1], &error) ||
+        (split_init && api->finish_qemu_init(&error))) {
         fprintf(stderr, "%s\n", error);
         api->error_free(error);
         return 2;
