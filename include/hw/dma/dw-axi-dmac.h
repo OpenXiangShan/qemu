@@ -45,6 +45,8 @@ struct DWAxiDMACState {
     SysBusDevice parent_obj;
 
     MemoryRegion iomem;
+    MemoryRegion *dma_memory;
+    AddressSpace dma_as;
     qemu_irq irq;
 
     uint32_t cfg;

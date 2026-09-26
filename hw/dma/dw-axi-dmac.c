@@ -177,7 +177,7 @@ static MemTxResult dw_axi_dmac_dma_rw(DWAxiDMACState *s, hwaddr addr,
     attrs.pid = 0;
     attrs.secure = 0;
 
-    return address_space_rw(&address_space_memory, addr, attrs, buf, len,
+    return address_space_rw(&s->dma_as, addr, attrs, buf, len,
                             is_write);
 }
 
@@ -549,6 +549,9 @@ static void dw_axi_dmac_realize(DeviceState *dev, Error **errp)
         return;
     }
 
+    address_space_init(&s->dma_as,
+                       s->dma_memory ? s->dma_memory : get_system_memory(),
+                       TYPE_DW_AXI_DMAC);
     sysbus_init_irq(sbd, &s->irq);
     memory_region_init_io(&s->iomem, OBJECT(s), &dw_axi_dmac_ops, s,
                           TYPE_DW_AXI_DMAC, DW_AXI_DMAC_MMIO_SIZE);
@@ -623,8 +626,15 @@ static const VMStateDescription dw_axi_dmac_vmstate = {
 };
 
 static const Property dw_axi_dmac_properties[] = {
+    DEFINE_PROP_LINK("dma-memory", DWAxiDMACState, dma_memory,
+                     TYPE_MEMORY_REGION, MemoryRegion *),
     DEFINE_PROP_UINT32("requester-id", DWAxiDMACState, requester_id, 0x8),
 };
+
+static void dw_axi_dmac_unrealize(DeviceState *dev)
+{
+    address_space_destroy(&DW_AXI_DMAC(dev)->dma_as);
+}
 
 static void dw_axi_dmac_class_init(ObjectClass *klass, const void *data)
 {
@@ -632,6 +642,7 @@ static void dw_axi_dmac_class_init(ObjectClass *klass, const void *data)
 
     dc->desc = "Synopsys DesignWare AXI DMAC";
     dc->realize = dw_axi_dmac_realize;
+    dc->unrealize = dw_axi_dmac_unrealize;
     device_class_set_legacy_reset(dc, dw_axi_dmac_reset);
     dc->vmsd = &dw_axi_dmac_vmstate;
     device_class_set_props(dc, dw_axi_dmac_properties);
