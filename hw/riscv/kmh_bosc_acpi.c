@@ -35,7 +35,7 @@
 #define KMH_BOSC_NUMA_LOCAL_DISTANCE      10
 #define KMH_BOSC_NUMA_REMOTE_DISTANCE     20
 
-#define KMH_BOSC_UART0_BASE               0x0000000004000000ULL
+#define KMH_BOSC_UART0_BASE               0x0000100004000000ULL
 #define KMH_BOSC_UART0_SIZE               0x10000
 #define KMH_BOSC_UART0_IRQ                10
 #define KMH_BOSC_UART_CLK_FREQ            50000000
@@ -50,7 +50,7 @@
 #define KMH_BOSC_IMSIC_NUM_IDS            255
 #define KMH_BOSC_IMSIC_GUEST_INDEX_BITS   3
 #define KMH_BOSC_IMSIC_HART_INDEX_BITS    4
-#define KMH_BOSC_IMSIC_GROUP_INDEX_BITS   2
+#define KMH_BOSC_IMSIC_GROUP_INDEX_BITS   3
 #define KMH_BOSC_CLINT_TIMEBASE_FREQ      1000000
 
 #define KMH_BOSC_PCIE_ECAM_SIZE           PCIE_MMCFG_SIZE_MAX
@@ -85,7 +85,7 @@ static const uint64_t kmh_bosc_acpi_pcie_mem_base[KMH_BOSC_PCIE_PER_DIE] = {
 
 static inline hwaddr kmh_bosc_acpi_die_addr(int die, hwaddr offset)
 {
-    return (((hwaddr)die) << KMH_BOSC_DIE_SHIFT) | offset;
+    return (((hwaddr)(die + 1)) << KMH_BOSC_DIE_SHIFT) | offset;
 }
 
 static bool kmh_bosc_acpi_die_selected(const KmhBoscAcpiState *s, int die)
@@ -284,8 +284,12 @@ static void kmh_bosc_acpi_dsdt_add_uart(Aml *scope)
     aml_append(dev, aml_name_decl("_UID", aml_int(0)));
 
     crs = aml_resource_template();
-    aml_append(crs, aml_memory32_fixed(KMH_BOSC_UART0_BASE, KMH_BOSC_UART0_SIZE,
-                                       AML_READ_WRITE));
+    aml_append(crs, aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED,
+                                     AML_MAX_FIXED, AML_NON_CACHEABLE,
+                                     AML_READ_WRITE, 0, KMH_BOSC_UART0_BASE,
+                                     KMH_BOSC_UART0_BASE +
+                                     KMH_BOSC_UART0_SIZE - 1,
+                                     0, KMH_BOSC_UART0_SIZE));
     aml_append(crs,
                aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
                              AML_EXCLUSIVE, &uart_irq, 1));
@@ -544,7 +548,8 @@ static void kmh_bosc_acpi_build_rhct(GArray *table_data, BIOSLinker *linker,
                                      const KmhBoscAcpiState *s)
 {
     int first_hartid = kmh_bosc_acpi_first_selected_hartid(s);
-    RISCVCPU *cpu = &s->cpus->harts[first_hartid];
+    RISCVCPU *cpu = &s->cpus[first_hartid / KMH_BOSC_APP_HARTS_PER_DIE].harts[
+        first_hartid % KMH_BOSC_APP_HARTS_PER_DIE];
     bool rv32 = riscv_cpu_is_32bit(cpu);
     g_autofree char *isa = riscv_isa_string(cpu);
     int selected_harts = kmh_bosc_acpi_selected_hart_count(s);

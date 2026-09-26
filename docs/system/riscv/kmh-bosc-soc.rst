@@ -24,7 +24,7 @@ devices:
   views
 * AIA interrupt controllers: IMSIC and APLIC
 * ACLINT timer/software interrupt blocks
-* One UART
+* Per-die UARTs (the generated OS console uses die0 UART)
 * DesignWare PCIe host controllers
 * RISC-V IOMMU platform device with PCIe DMA remapping
 * DesignWare AXI DMAC
@@ -33,6 +33,79 @@ devices:
 
 The RISC-V trace encoder is not implemented yet.  The trace MMIO aperture is
 present only as an unimplemented device.
+
+Die addressing
+--------------
+
+Die indices in machine options, bus names and hart IDs remain zero-based.
+Hardware die IDs in peripheral physical addresses are 1, 2, 3, 4::
+
+   global peripheral address = ((die_index + 1) << 44) | local_offset
+   mhartid = die_index * 16 + core_index
+
+For a requester on a given die, addresses with die ID 0 select that die's
+local peripheral. Its own nonzero die ID selects the same peripheral;
+other nonzero die IDs select remote peripherals. Application harts and
+MCUs have stable per-die address spaces. APLIC MSI, DMAC DMA, and PCIe DMA
+without the system IOMMU use their owning die's address space, independently
+of which CPU last programmed the device.
+
+================= =============== ====================
+Physical die      Hardware die ID Core0 machine IMSIC
+================= =============== ====================
+die0              1               0x10001c000000
+die1              2               0x20001c000000
+die2              3               0x30001c000000
+die3              4               0x40001c000000
+================= =============== ====================
+
+For example, a die1 CPU can access its own IMSIC through either
+``0x1c000000`` or ``0x20001c000000``. ``0x10001c000000`` always means
+die0, including when accessed from die1. QEMU monitor/qtest physical
+accesses have no die requester and should use global peripheral addresses.
+
+DDR retains its existing global address map; the local alias rule is for
+the modeled peripheral/SRAM/ROM windows, not the whole low address space.
+ACLINT remains a shared 64-hart block, accessible at ``0x19000000`` and
+through each nonzero die ID. The optional system IOMMU and AXI4 traffic
+generators remain die0 devices; IOMMU output addresses are global.
+
+Generated DT and ACPI use global peripheral addresses so software may
+migrate between dies. In particular, the OS UART is ``0x100004000000``;
+use ``earlycon`` from the generated DT, or explicitly use that address.
+Older external DTBs/ACPI tables using zero-based global die IDs must be
+updated. The IMSIC group index has 3 bits at bit 44, because 2 bits
+cannot represent hardware die ID 4.
+
+Cross-die APLIC priority test
+----------------------------
+
+For die0 APLIC to die1/core0 (software ``mhartid=16``), the standard
+machine-level MSI configuration is::
+
+   mmsiaddrcfg  = 0x0001c000
+   mmsiaddrcfgh = 0x14034000  (HHXS=20, HHXW=3, LHXW=4, LHXS=0)
+   target Hart Index = (2 << 4) | 0 = 32
+   target[source] = (32 << 18) | EIID = 0x00800000 | EIID
+   MSI address = 0x20001c000000, data = EIID
+
+The APLIC Hart Index is not ``mhartid``. Do not shift the group field to
+bit 45 just to make software hart16 produce hardware die ID 2.
+
+The per-die test helper at local address ``0x0409014c`` raises all 56
+non-reserved sources when written with ``0xffffffff``; a source number
+clears that source. When the receiver on die1 clears a source belonging
+to die0, it must write ``0x10000409014c``, not the local helper on die1.
+
+Run the exported ITGen cross-die BIN with::
+
+   qemu-system-riscv64 \
+     -M kmh-bosc-soc,die-mask=0x3,core-mask=0x1:0x1:0:0,boot-source=ddr \
+     -smp 64,maxcpus=68 -m 256M -nographic -bios cross-die.bin
+
+The guest reports software target hart16 and ``claimed=56``. The existing
+ITGen ``0x5006b`` completion opcode is not a QEMU shutdown instruction;
+terminate QEMU after checking the PASS line.
 
 Required command line
 ---------------------
@@ -233,13 +306,13 @@ FAT 分区根目录放置 ``Image`` 和 ``startup.nsh``。设备树启动可以�
 
 .. code-block:: text
 
-   fs0:\Image console=ttyS0,115200 earlycon=uart8250,mmio32,0x4000000,115200n8 loglevel=8 ignore_loglevel acpi=off rdinit=/bin/sh
+   fs0:\Image console=ttyS0,115200 earlycon=uart8250,mmio32,0x100004000000,115200n8 loglevel=8 ignore_loglevel acpi=off rdinit=/bin/sh
 
 ACPI 启动把 ``acpi=off`` 改成 ``acpi=on``：
 
 .. code-block:: text
 
-   fs0:\Image console=ttyS0,115200 earlycon=uart8250,mmio32,0x4000000,115200n8 loglevel=8 ignore_loglevel acpi=on rdinit=/bin/sh
+   fs0:\Image console=ttyS0,115200 earlycon=uart8250,mmio32,0x100004000000,115200n8 loglevel=8 ignore_loglevel acpi=on rdinit=/bin/sh
 
 单 die 设备树启动示例：
 

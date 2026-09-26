@@ -80,6 +80,7 @@
 #define KMH_BOSC_IMSIC_GUEST_INDEX_BITS   3
 #define KMH_BOSC_CLINT_TIMEBASE_FREQ      1000000
 #define KMH_BOSC_IRQ_TYPE_LEVEL_HIGH      0x4
+#define KMH_BOSC_PCIE_MEMMAP_COUNT         6
 
 #define KMH_BOSC_FDT_PCI_ADDR_CELLS       3
 #define KMH_BOSC_FDT_PCI_INT_CELLS        1
@@ -247,7 +248,7 @@ typedef struct KmhBoscSysCtrlState {
 struct KmhBoscState {
     MachineState parent_obj;
 
-    RISCVHartArrayState app_cpus;
+    RISCVHartArrayState app_cpus[KMH_BOSC_DIES];
     RISCVHartArrayState mcu_cpus[KMH_BOSC_DIES];
     DeviceState *irqchip[KMH_BOSC_DIES];
 
@@ -267,6 +268,13 @@ struct KmhBoscState {
     MemoryRegion mcu_local_bootctl_alias[KMH_BOSC_DIES];
     MemoryRegion mcu_local_sysctrl_alias[KMH_BOSC_DIES];
     MemoryRegion mcu_local_dmac_alias[KMH_BOSC_DIES];
+    MemoryRegion die_mem[KMH_BOSC_DIES];
+    MemoryRegion die_system_alias[KMH_BOSC_DIES];
+    MemoryRegion die_local_alias[KMH_BOSC_DIES][ARRAY_SIZE(kmh_bosc_memmap) +
+        KMH_BOSC_PCIE_PER_DIE * KMH_BOSC_PCIE_MEMMAP_COUNT];
+    MemoryRegion clint_alias[KMH_BOSC_DIES];
+    MemoryRegion traffic0_local_alias;
+    AddressSpace die_as[KMH_BOSC_DIES];
     KmhBoscBootCtlState bootctl[KMH_BOSC_DIES];
     KmhBoscSysCtrlState sysctrl[KMH_BOSC_DIES];
     DWAxiDMACState dmac[KMH_BOSC_DIES];
@@ -295,12 +303,19 @@ static int kmh_bosc_first_selected_die(const KmhBoscState *s);
 
 static inline hwaddr kmh_bosc_die_addr(int die, hwaddr offset)
 {
-    return (((hwaddr)die) << KMH_BOSC_DIE_SHIFT) | offset;
+    /* Hardware die IDs are 1..4; ID 0 is requester-local. */
+    return (((hwaddr)(die + 1)) << KMH_BOSC_DIE_SHIFT) | offset;
 }
 
 static inline hwaddr kmh_bosc_die_memmap_base(int die, int region)
 {
     return kmh_bosc_die_addr(die, kmh_bosc_memmap[region].base);
+}
+
+static RISCVCPU *kmh_bosc_app_cpu(KmhBoscState *s, int hartid)
+{
+    return &s->app_cpus[hartid / KMH_BOSC_APP_HARTS_PER_DIE].harts[
+        hartid % KMH_BOSC_APP_HARTS_PER_DIE];
 }
 
 static inline hwaddr kmh_bosc_ddr_base(int die)
@@ -483,7 +498,7 @@ static void kmh_bosc_power_off_unselected_app_harts(KmhBoscState *s)
             }
 
             hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
-            cs = CPU(&s->app_cpus.harts[hartid]);
+            cs = CPU(kmh_bosc_app_cpu(s, hartid));
             cs->start_powered_off = true;
             cs->halted = true;
         }
@@ -701,7 +716,7 @@ static void kmh_bosc_prepare_release_app_hart(KmhBoscState *s, int hartid,
         return;
     }
 
-    cpu = &s->app_cpus.harts[hartid];
+    cpu = kmh_bosc_app_cpu(s, hartid);
     cs = CPU(cpu);
     cpu->env.resetvec = resetvec;
     cpu_reset(cs);
@@ -721,7 +736,7 @@ static void kmh_bosc_resume_app_hart(KmhBoscState *s, int hartid)
         return;
     }
 
-    cpu = &s->app_cpus.harts[hartid];
+    cpu = kmh_bosc_app_cpu(s, hartid);
     cs = CPU(cpu);
     cpu_resume(cs);
 }
@@ -740,7 +755,7 @@ static void kmh_bosc_set_app_boot_args(KmhBoscState *s, hwaddr fdt_addr)
             }
 
             hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
-            cpu = &s->app_cpus.harts[hartid];
+            cpu = kmh_bosc_app_cpu(s, hartid);
             cpu->env.gpr[10] = hartid;
             cpu->env.gpr[11] = fdt_addr;
         }
@@ -761,7 +776,7 @@ static void kmh_bosc_set_app_resetvec(KmhBoscState *s, hwaddr resetvec)
             }
 
             hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
-            cpu = &s->app_cpus.harts[hartid];
+            cpu = kmh_bosc_app_cpu(s, hartid);
             cpu->env.resetvec = resetvec;
             cpu->env.pc = resetvec;
         }
@@ -782,7 +797,7 @@ static void kmh_bosc_set_app_hartid_arg(KmhBoscState *s)
             }
 
             hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
-            cpu = &s->app_cpus.harts[hartid];
+            cpu = kmh_bosc_app_cpu(s, hartid);
             cpu->env.gpr[10] = hartid;
         }
     }
@@ -889,10 +904,12 @@ static uint64_t kmh_bosc_compute_fdt_addr(hwaddr node_base, hwaddr node_size,
     return dtb_start;
 }
 
-static DeviceState *kmh_bosc_create_aia(int die, int hartid_base)
+static DeviceState *kmh_bosc_create_aia(KmhBoscState *s, int die,
+                                       int hartid_base)
 {
     const MemMapEntry *memmap = kmh_bosc_memmap;
     DeviceState *aplic_m;
+    DeviceState *aplic_s;
     hwaddr imsic_m_base = kmh_bosc_die_memmap_base(die, KMH_BOSC_IMSIC_M);
     hwaddr imsic_s_base = kmh_bosc_die_memmap_base(die, KMH_BOSC_IMSIC_S);
     hwaddr aplic_m_base = kmh_bosc_die_memmap_base(die, KMH_BOSC_APLIC_M);
@@ -913,9 +930,12 @@ static DeviceState *kmh_bosc_create_aia(int die, int hartid_base)
     aplic_m = riscv_aplic_create(aplic_m_base, memmap[KMH_BOSC_APLIC_M].size,
                                  0, 0, KMH_BOSC_APLIC_NUM_SOURCES,
                                  1, true, true, NULL);
-    riscv_aplic_create(aplic_s_base, memmap[KMH_BOSC_APLIC_S].size,
+    aplic_s = riscv_aplic_create(aplic_s_base, memmap[KMH_BOSC_APLIC_S].size,
                        0, 0, KMH_BOSC_APLIC_NUM_SOURCES,
                        1, true, false, aplic_m);
+    /* MSI die ID 0 is relative to the APLIC, not to the issuing CPU. */
+    riscv_aplic_set_msi_address_space(RISCV_APLIC(aplic_m), &s->die_as[die]);
+    riscv_aplic_set_msi_address_space(RISCV_APLIC(aplic_s), &s->die_as[die]);
 
     return aplic_m;
 }
@@ -1299,7 +1319,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
             uint32_t intc_phandle = qemu_fdt_alloc_phandle(fdt);
 
             idx = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
-            cpu = &s->app_cpus.harts[idx];
+            cpu = kmh_bosc_app_cpu(s, idx);
 
             cpu_name = g_strdup_printf("/cpus/cpu@%u", idx);
             qemu_fdt_add_subnode(fdt, cpu_name);
@@ -1511,7 +1531,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     qemu_fdt_setprop(fdt, "/soc/imsics-m", "reg",
                      imsic_m_regs, selected_dies * 4 * sizeof(*imsic_m_regs));
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "riscv,hart-index-bits", 4);
-    qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "riscv,group-index-bits", 2);
+    qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "riscv,group-index-bits", 3);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "riscv,group-index-shift",
                           KMH_BOSC_DIE_SHIFT);
 
@@ -1551,19 +1571,19 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     qemu_fdt_setprop(fdt, "/soc/imsics-s", "reg",
                      imsic_s_regs, selected_dies * 4 * sizeof(*imsic_s_regs));
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "riscv,hart-index-bits", 4);
-    qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "riscv,group-index-bits", 2);
+    qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "riscv,group-index-bits", 3);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "riscv,group-index-shift",
                           KMH_BOSC_DIE_SHIFT);
 
     {
-        hwaddr uart_base = memmap[KMH_BOSC_UART0].base;
+        hwaddr uart_base = kmh_bosc_die_memmap_base(0, KMH_BOSC_UART0);
         g_autofree char *uart_name = g_strdup_printf("/soc/serial@%" HWADDR_PRIx,
                                                      uart_base);
 
         qemu_fdt_add_subnode(fdt, uart_name);
         qemu_fdt_setprop_string(fdt, uart_name, "compatible", "ns16550a");
         qemu_fdt_setprop_sized_cells(fdt, uart_name, "reg",
-                                     2, memmap[KMH_BOSC_UART0].base,
+                                     2, uart_base,
                                      2, memmap[KMH_BOSC_UART0].size);
         qemu_fdt_setprop_cell(fdt, uart_name, "reg-shift", 2);
         qemu_fdt_setprop_cell(fdt, uart_name, "clock-frequency", 50000000);
@@ -1576,7 +1596,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     }
 
     if (kmh_bosc_is_iommu_sys_enabled(s)) {
-        hwaddr iommu_base = memmap[KMH_BOSC_IOMMU].base;
+        hwaddr iommu_base = kmh_bosc_die_memmap_base(0, KMH_BOSC_IOMMU);
         g_autofree char *iommu_name = g_strdup_printf("/soc/iommu@%" HWADDR_PRIx,
                                                       iommu_base);
         int traffic;
@@ -1587,7 +1607,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         qemu_fdt_setprop_cell(fdt, iommu_name, "#iommu-cells", 1);
         qemu_fdt_setprop_cell(fdt, iommu_name, "phandle", iommu_phandle);
         qemu_fdt_setprop_sized_cells(fdt, iommu_name, "reg",
-                                     2, memmap[KMH_BOSC_IOMMU].base,
+                                     2, iommu_base,
                                      2, memmap[KMH_BOSC_IOMMU].size);
         qemu_fdt_setprop_cell(fdt, iommu_name, "interrupt-parent",
                               aplic_s_phandles[0]);
@@ -1600,7 +1620,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         qemu_fdt_setprop_string(fdt, iommu_name, "status", "okay");
 
         for (traffic = 0; traffic < KMH_BOSC_AXI4_TRAFFIC_COUNT; traffic++) {
-            hwaddr traffic_base = kmh_bosc_axi4_traffic_base[traffic];
+            hwaddr traffic_base =
+                kmh_bosc_die_addr(0, kmh_bosc_axi4_traffic_base[traffic]);
             g_autofree char *traffic_name =
                 g_strdup_printf("/soc/axi4-traffic@%" HWADDR_PRIx,
                                 traffic_base);
@@ -1735,17 +1756,23 @@ static void kmh_bosc_realize_hart_arrays(KmhBoscState *s)
     hwaddr app_resetvec = boot_die >= 0 ? kmh_bosc_ddr_base(boot_die) : 0;
     int die;
 
-    object_initialize_child(OBJECT(machine), "app-cpus", &s->app_cpus,
-                            TYPE_RISCV_HART_ARRAY);
-    qdev_prop_set_uint32(DEVICE(&s->app_cpus), "num-harts",
-                         KMH_BOSC_TOTAL_APP_HARTS);
-    qdev_prop_set_uint32(DEVICE(&s->app_cpus), "hartid-base", 0);
-    qdev_prop_set_string(DEVICE(&s->app_cpus), "cpu-type",
-                         TYPE_RISCV_CPU_XIANGSHAN_KMH);
-    qdev_prop_set_uint64(DEVICE(&s->app_cpus), "resetvec", app_resetvec);
-    qdev_prop_set_bit(DEVICE(&s->app_cpus), "start-powered-off",
-                      app_powered_off);
-    sysbus_realize(SYS_BUS_DEVICE(&s->app_cpus), &error_fatal);
+    for (die = 0; die < KMH_BOSC_DIES; die++) {
+        g_autofree char *name = g_strdup_printf("app-cpus%d", die);
+        DeviceState *cpus;
+
+        object_initialize_child(OBJECT(machine), name, &s->app_cpus[die],
+                                TYPE_RISCV_HART_ARRAY);
+        cpus = DEVICE(&s->app_cpus[die]);
+        qdev_prop_set_uint32(cpus, "num-harts", KMH_BOSC_APP_HARTS_PER_DIE);
+        qdev_prop_set_uint32(cpus, "hartid-base",
+                             die * KMH_BOSC_APP_HARTS_PER_DIE);
+        qdev_prop_set_string(cpus, "cpu-type", TYPE_RISCV_CPU_XIANGSHAN_KMH);
+        qdev_prop_set_uint64(cpus, "resetvec", app_resetvec);
+        qdev_prop_set_bit(cpus, "start-powered-off", app_powered_off);
+        object_property_set_link(OBJECT(cpus), "memory",
+                                 OBJECT(&s->die_mem[die]), &error_abort);
+        sysbus_realize(SYS_BUS_DEVICE(cpus), &error_fatal);
+    }
 
     for (die = 0; die < KMH_BOSC_DIES; die++) {
         g_autofree char *mcu_name = g_strdup_printf("mcu-cpu%d", die);
@@ -1774,7 +1801,6 @@ static void kmh_bosc_realize_hart_arrays(KmhBoscState *s)
 
 static void kmh_bosc_init_mcu_local_mem(KmhBoscState *s)
 {
-    MemoryRegion *system_memory = get_system_memory();
     const MemMapEntry *memmap = kmh_bosc_memmap;
     int die;
 
@@ -1788,7 +1814,7 @@ static void kmh_bosc_init_mcu_local_mem(KmhBoscState *s)
 
         name = g_strdup_printf("kmh-bosc.mcu-local-system.%d", die);
         memory_region_init_alias(&s->mcu_local_system_alias[die], OBJECT(s),
-                                 name, system_memory, 0, UINT64_MAX);
+                                 name, &s->die_mem[die], 0, UINT64_MAX);
         memory_region_add_subregion_overlap(&s->mcu_local_mem[die], 0,
                                             &s->mcu_local_system_alias[die],
                                             -1);
@@ -1901,12 +1927,10 @@ static void kmh_bosc_map_local_memory(KmhBoscState *s)
         memory_region_init_io(&s->bootctl[die].mr, NULL,
                               &kmh_bosc_bootctl_ops, &s->bootctl[die],
                               name, memmap[KMH_BOSC_WATCH_DOG].size);
-        if (die > 0) {
-            memory_region_add_subregion(system_memory,
-                                        kmh_bosc_die_memmap_base(die,
-                                                                 KMH_BOSC_WATCH_DOG),
-                                        &s->bootctl[die].mr);
-        }
+        memory_region_add_subregion(system_memory,
+                                    kmh_bosc_die_memmap_base(
+                                        die, KMH_BOSC_WATCH_DOG),
+                                    &s->bootctl[die].mr);
 
         s->sysctrl[die].machine = s;
         s->sysctrl[die].die = die;
@@ -1914,12 +1938,10 @@ static void kmh_bosc_map_local_memory(KmhBoscState *s)
         memory_region_init_io(&s->sysctrl[die].mr, NULL,
                               &kmh_bosc_sysctrl_ops, &s->sysctrl[die],
                               name, memmap[KMH_BOSC_SYS_CTRL].size);
-        if (die > 0) {
-            memory_region_add_subregion(system_memory,
-                                        kmh_bosc_die_memmap_base(die,
-                                                                 KMH_BOSC_SYS_CTRL),
-                                        &s->sysctrl[die].mr);
-        }
+        memory_region_add_subregion(system_memory,
+                                    kmh_bosc_die_memmap_base(die,
+                                                             KMH_BOSC_SYS_CTRL),
+                                    &s->sysctrl[die].mr);
         kmh_bosc_sysctrl_reset(&s->sysctrl[die]);
         qemu_register_reset(kmh_bosc_sysctrl_reset, &s->sysctrl[die]);
 
@@ -1939,6 +1961,8 @@ static void kmh_bosc_map_local_memory(KmhBoscState *s)
         name = g_strdup_printf("kmh-bosc.dmac.%d", die);
         object_initialize_child(OBJECT(s), name, &s->dmac[die],
                                 TYPE_DW_AXI_DMAC);
+        object_property_set_link(OBJECT(&s->dmac[die]), "dma-memory",
+                                 OBJECT(&s->die_mem[die]), &error_abort);
         sysbus_realize(SYS_BUS_DEVICE(&s->dmac[die]), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(&s->dmac[die]), 0,
                         kmh_bosc_die_memmap_base(die, KMH_BOSC_DMAC));
@@ -1956,10 +1980,6 @@ static void kmh_bosc_map_local_memory(KmhBoscState *s)
                                     kmh_bosc_die_memmap_base(die, KMH_BOSC_DDR1_CFG),
                                     memmap[KMH_BOSC_DDR1_CFG].size);
     }
-    memory_region_add_subregion(system_memory, memmap[KMH_BOSC_WATCH_DOG].base,
-                                &s->bootctl[0].mr);
-    memory_region_add_subregion(system_memory, memmap[KMH_BOSC_SYS_CTRL].base,
-                                &s->sysctrl[0].mr);
     kmh_bosc_init_mcu_local_mem(s);
 }
 
@@ -1987,6 +2007,56 @@ static void kmh_bosc_map_ddr(KmhBoscState *s)
     }
 }
 
+/*
+ * Each requester gets a stable address space: die-id 0 aliases its own
+ * canonical peripheral windows, while nonzero IDs and DDR remain global.
+ * Use real aliases (also for RAM/ROM), never current_cpu-dependent MMIO.
+ */
+static void kmh_bosc_init_die_address_spaces(KmhBoscState *s)
+{
+    MemoryRegion *system_memory = get_system_memory();
+
+    for (int die = 0; die < KMH_BOSC_DIES; die++) {
+        int index = 0;
+        g_autofree char *name = g_strdup_printf("kmh-bosc.die%d", die);
+
+        memory_region_init(&s->die_mem[die], OBJECT(s), name, UINT64_MAX);
+        memory_region_init_alias(&s->die_system_alias[die], OBJECT(s), name,
+                                 system_memory, 0, UINT64_MAX);
+        memory_region_add_subregion_overlap(&s->die_mem[die], 0,
+                                            &s->die_system_alias[die], -1);
+        for (int region = 0; region < ARRAY_SIZE(kmh_bosc_memmap); region++) {
+            const MemMapEntry *entry = &kmh_bosc_memmap[region];
+            MemoryRegion *alias = &s->die_local_alias[die][index++];
+
+            memory_region_init_alias(alias, OBJECT(s), name, system_memory,
+                                     kmh_bosc_die_addr(die, entry->base),
+                                     entry->size);
+            memory_region_add_subregion_overlap(&s->die_mem[die], entry->base,
+                                                alias, 1);
+        }
+        for (int port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
+            const KmhBoscPciePortMemMap *pcie = &kmh_bosc_pcie_memmap[port];
+            const MemMapEntry *entries[] = {
+                &pcie->iopmp, &pcie->dbi, &pcie->app, &pcie->mctp,
+                &pcie->ecam, &pcie->mem,
+            };
+
+            for (int i = 0; i < ARRAY_SIZE(entries); i++) {
+                const MemMapEntry *entry = entries[i];
+                MemoryRegion *alias = &s->die_local_alias[die][index++];
+
+                memory_region_init_alias(alias, OBJECT(s), name, system_memory,
+                                         kmh_bosc_die_addr(die, entry->base),
+                                         entry->size);
+                memory_region_add_subregion_overlap(&s->die_mem[die],
+                                                    entry->base, alias, 1);
+            }
+        }
+        address_space_init(&s->die_as[die], &s->die_mem[die], name);
+    }
+}
+
 static void kmh_bosc_init_per_die_interrupts(KmhBoscState *s)
 {
     hwaddr clint_base = kmh_bosc_memmap[KMH_BOSC_CLINT].base;
@@ -1995,7 +2065,7 @@ static void kmh_bosc_init_per_die_interrupts(KmhBoscState *s)
     for (die = 0; die < KMH_BOSC_DIES; die++) {
         int hartid_base = die * KMH_BOSC_APP_HARTS_PER_DIE;
 
-        s->irqchip[die] = kmh_bosc_create_aia(die, hartid_base);
+        s->irqchip[die] = kmh_bosc_create_aia(s, die, hartid_base);
         kmh_bosc_aplic_test_create(
             s->irqchip[die],
             kmh_bosc_die_addr(die, KMH_BOSC_APLIC_TEST_MMIO_BASE));
@@ -2008,6 +2078,16 @@ static void kmh_bosc_init_per_die_interrupts(KmhBoscState *s)
                                RISCV_ACLINT_DEFAULT_MTIMECMP,
                                RISCV_ACLINT_DEFAULT_MTIME,
                                KMH_BOSC_CLINT_TIMEBASE_FREQ, true);
+    /* ACLINT remains one shared 64-hart block, also reachable by die ID. */
+    for (die = 0; die < KMH_BOSC_DIES; die++) {
+        memory_region_init_alias(&s->clint_alias[die], OBJECT(s),
+                                 "kmh-bosc.clint", get_system_memory(),
+                                 clint_base,
+                                 kmh_bosc_memmap[KMH_BOSC_CLINT].size);
+        memory_region_add_subregion(get_system_memory(),
+                                    kmh_bosc_die_addr(die, clint_base),
+                                    &s->clint_alias[die]);
+    }
 }
 
 static void kmh_bosc_init_dmac_irqs(KmhBoscState *s)
@@ -2023,10 +2103,22 @@ static void kmh_bosc_init_dmac_irqs(KmhBoscState *s)
 
 static void kmh_bosc_init_uart(KmhBoscState *s)
 {
-    serial_mm_init(get_system_memory(), kmh_bosc_memmap[KMH_BOSC_UART0].base, 2,
-                   qdev_get_gpio_in(s->irqchip[0], KMH_BOSC_UART0_IRQ),
-                   115200, serial_hd(0), DEVICE_LITTLE_ENDIAN);
+    for (int die = 0; die < KMH_BOSC_DIES; die++) {
+        serial_mm_init(get_system_memory(),
+                       kmh_bosc_die_memmap_base(die, KMH_BOSC_UART0), 2,
+                       qdev_get_gpio_in(s->irqchip[die], KMH_BOSC_UART0_IRQ),
+                       115200, serial_hd(die), DEVICE_LITTLE_ENDIAN);
+    }
 }
+
+static AddressSpace *kmh_bosc_pcie_dma_as(PCIBus *bus, void *opaque, int devfn)
+{
+    return opaque;
+}
+
+static const PCIIOMMUOps kmh_bosc_pcie_dma_ops = {
+    .get_address_space = kmh_bosc_pcie_dma_as,
+};
 
 static void kmh_bosc_init_pcie(KmhBoscState *s)
 {
@@ -2089,11 +2181,15 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
                                                 kmh_bosc_pcie_msi_irq(port)));
             /*
              * DWC installs an inbound-iATU address space as PCI's default
-             * IOMMU. This machine uses direct system-memory DMA unless the
+             * IOMMU. This machine uses requester-local DMA unless the
              * RISC-V IOMMU below replaces it.
              */
             PCI_HOST_BRIDGE(host)->bus->iommu_ops = NULL;
             PCI_HOST_BRIDGE(host)->bus->iommu_opaque = NULL;
+            if (!kmh_bosc_is_iommu_sys_enabled(s)) {
+                pci_setup_iommu(PCI_HOST_BRIDGE(host)->bus,
+                                &kmh_bosc_pcie_dma_ops, &s->die_as[die]);
+            }
             pcie_host_mmcfg_map(PCIE_HOST_BRIDGE(host), ecam_base,
                                 pcie_map->ecam.size);
 
@@ -2126,7 +2222,7 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
     int die, port, traffic;
 
     object_property_set_uint(OBJECT(iommu_sys), "addr",
-                             memmap[KMH_BOSC_IOMMU].base,
+                             kmh_bosc_die_memmap_base(0, KMH_BOSC_IOMMU),
                              &error_fatal);
     object_property_set_uint(OBJECT(iommu_sys), "base-irq",
                              KMH_BOSC_IOMMU_IRQ_BASE,
@@ -2151,8 +2247,17 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
                                  &error_fatal);
         sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
-                        kmh_bosc_axi4_traffic_base[traffic]);
+                        kmh_bosc_die_addr(
+                            0, kmh_bosc_axi4_traffic_base[traffic]));
     }
+    /* traffic0 sits immediately after the 4 KiB IOMMU register aperture. */
+    memory_region_init_alias(&s->traffic0_local_alias, OBJECT(s),
+                             "kmh-bosc.traffic0-local", get_system_memory(),
+                             kmh_bosc_die_addr(
+                                 0, kmh_bosc_axi4_traffic_base[0]),
+                             BOSC_AXI4_TRAFFIC_MMIO_SIZE);
+    memory_region_add_subregion(&s->die_mem[0], kmh_bosc_axi4_traffic_base[0],
+                                &s->traffic0_local_alias);
 
     if (s->dw_pcie) {
         for (die = 0; die < KMH_BOSC_DIES; die++) {
@@ -2174,7 +2279,8 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
     }
 
     create_unimplemented_device("kmh-bosc-iommu-cfg1",
-                                memmap[KMH_BOSC_IOMMU_CFG1].base,
+                                kmh_bosc_die_memmap_base(
+                                    0, KMH_BOSC_IOMMU_CFG1),
                                 memmap[KMH_BOSC_IOMMU_CFG1].size);
 }
 
@@ -2263,7 +2369,7 @@ static void kmh_bosc_load_mcu_fdt(KmhBoscState *s)
         exit(1);
     }
 
-    riscv_boot_info_init(&boot_info, &s->app_cpus);
+    riscv_boot_info_init(&boot_info, &s->app_cpus[boot_die]);
     fdt_addr = kmh_bosc_compute_fdt_addr(kmh_bosc_ddr_base(boot_die),
                                          boot_window_size,
                                          machine, &boot_info);
@@ -2428,11 +2534,12 @@ static void kmh_bosc_load_app_boot(KmhBoscState *s)
     uint64_t fdt_addr;
     bool direct_kernel = kmh_bosc_ddr_direct_kernel(machine);
 
-    riscv_boot_info_init(&boot_info, &s->app_cpus);
+    riscv_boot_info_init(&boot_info, &s->app_cpus[boot_die]);
     firmware_end_addr = start_addr;
     if (!direct_kernel) {
         firmware_end_addr = riscv_find_and_load_firmware(machine,
-                                riscv_default_firmware_name(&s->app_cpus),
+                                riscv_default_firmware_name(
+                                    &s->app_cpus[boot_die]),
                                 &start_addr, NULL);
         if (firmware_end_addr > (kmh_bosc_ddr_base(boot_die) + boot_window_size)) {
             error_report("firmware does not fit in the boot DDR node");
@@ -2666,6 +2773,7 @@ static void kmh_bosc_machine_init(MachineState *machine)
     kmh_bosc_validate(machine);
 
     kmh_bosc_map_ddr(s);
+    kmh_bosc_init_die_address_spaces(s);
     kmh_bosc_map_local_memory(s);
     kmh_bosc_realize_hart_arrays(s);
     kmh_bosc_init_per_die_interrupts(s);
@@ -2699,7 +2807,7 @@ static void kmh_bosc_machine_init(MachineState *machine)
 
 #ifdef CONFIG_ACPI
     if (s->generated_acpi) {
-        kmh_bosc_acpi_setup(machine, &s->app_cpus, s->die_mask, s->core_mask,
+        kmh_bosc_acpi_setup(machine, s->app_cpus, s->die_mask, s->core_mask,
                             s->acpi_handoff_addr, s->acpi_handoff_size,
                             s->dw_pcie);
     }

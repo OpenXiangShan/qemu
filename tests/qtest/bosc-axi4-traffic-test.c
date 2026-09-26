@@ -10,7 +10,7 @@
 #include "qemu/bitops.h"
 #include "hw/riscv/riscv-iommu-bits.h"
 
-#define KMH_BOSC_IOMMU_BASE              0x0000004f80200000ULL
+#define KMH_BOSC_IOMMU_BASE              0x0000104f80200000ULL
 #define KMH_BOSC_DDR_BASE                0x0000000080000000ULL
 #define BOSC_AXI4_TRAFFIC_MMIO_SIZE      0x1000
 #define BOSC_AXI4_TRAFFIC_BEAT_BYTES     32
@@ -52,9 +52,9 @@
 #define BOSC_AXI4_TRAFFIC_PA_BASE        (KMH_BOSC_DDR_BASE + 0x02000000)
 
 static const uint64_t traffic_bases[] = {
-    0x0000004f80201000ULL,
-    0x0000004f80211000ULL,
-    0x0000004f80221000ULL,
+    0x0000104f80201000ULL,
+    0x0000104f80211000ULL,
+    0x0000104f80221000ULL,
 };
 
 static QTestState *bosc_axi4_traffic_start_qtest(void)

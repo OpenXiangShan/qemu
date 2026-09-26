@@ -282,6 +282,8 @@ qtests_riscv32 = \
   (config_all_devices.has_key('CONFIG_SIFIVE_E_AON') ? ['sifive-e-aon-watchdog-test'] : [])
 
 qtests_riscv64 = ['riscv-csr-test'] + \
+  (config_all_devices.has_key('CONFIG_KMH_BOSC_SOC') ? \
+   ['kmh-bosc-die-test'] : []) + \
   (config_all_devices.has_key('CONFIG_QEMU_TO_IOSYSTEM') ? \
    ['qemu-to-iosystem-test'] : []) + \
   (config_all_devices.has_key('CONFIG_BOSC_AXI4_TRAFFIC') ? \
