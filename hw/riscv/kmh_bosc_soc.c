@@ -61,8 +61,10 @@
 #define KMH_BOSC_DIE_MASK_BITS            0x0f
 
 #define KMH_BOSC_DDR_NODE_BASE            0x0000000080000000ULL
-#define KMH_BOSC_DDR_NODE_STRIDE          0x0000000800000000ULL
-#define KMH_BOSC_DDR_MAX_SIZE             (128 * GiB)
+/* Four fixed 32 GiB slots; -m supplies an equal-sized prefix of each slot. */
+#define KMH_BOSC_DDR_NODE_STRIDE          (32 * GiB)
+#define KMH_BOSC_DDR_MAX_SIZE             \
+    (KMH_BOSC_DIES * KMH_BOSC_DDR_NODE_STRIDE)
 #define KMH_BOSC_MCU_PAYLOAD_ADDR         KMH_BOSC_DDR_NODE_BASE
 #define KMH_BOSC_MCU_SYNC_FLAG_ADDR       0x0000000088000000ULL
 #define KMH_BOSC_UART0_IRQ                10

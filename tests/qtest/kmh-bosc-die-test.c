@@ -1,10 +1,11 @@
 /*
- * KmhBosc requester-local/global die-ID routing.
+ * KmhBosc requester-local/global die-ID routing and fixed DDR slots.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include "qemu/osdep.h"
 #include "libqtest.h"
 #include "qemu/bswap.h"
+#include "qemu/units.h"
 
 #define APLIC_M 0x1e020000
 #define FORCE_REG 0x0409014c
@@ -133,9 +134,64 @@ static void test_die_routing(void)
     unlink(bios);
 }
 
+typedef struct DdrLayout {
+    unsigned ram_gib;
+    unsigned die_mask;
+} DdrLayout;
+
+static void test_ddr_layout(const void *opaque)
+{
+    const DdrLayout *layout = opaque;
+    const uint64_t base = 0x80000000ULL;
+    const uint64_t stride = 32 * GiB;
+    uint64_t size = layout->ram_gib * GiB / 4;
+    QTestState *qts = qtest_initf(
+        "-M kmh-bosc-soc,die-mask=0x%x,core-mask=0x1,generated-dtb=on "
+        "-smp 64,maxcpus=68 -m %uG", layout->die_mask, layout->ram_gib);
+
+    /* Keep distinct sentinels in all slots to catch accidental RAM aliases. */
+    for (unsigned die = 0; die < 4; die++) {
+        uint64_t start = base + die * stride;
+        uint64_t value = 0x123456789abc0000ULL + die;
+
+        qtest_writeq(qts, start, value);
+        qtest_writeq(qts, start + size - 8, ~value);
+        if (!(layout->die_mask & (1U << die))) {
+            g_assert_cmphex(qtest_readq(qts, start), !=, value);
+            g_assert_cmphex(qtest_readq(qts, start + size - 8), !=, ~value);
+        }
+        if (size < stride) {
+            qtest_writeq(qts, start + size, value);
+            qtest_writeq(qts, start + stride - 8, value);
+            g_assert_cmphex(qtest_readq(qts, start + size), !=, value);
+            g_assert_cmphex(qtest_readq(qts, start + stride - 8), !=, value);
+        }
+    }
+    for (unsigned die = 0; die < 4; die++) {
+        uint64_t start = base + die * stride;
+        uint64_t value = 0x123456789abc0000ULL + die;
+
+        if (layout->die_mask & (1U << die)) {
+            g_assert_cmphex(qtest_readq(qts, start), ==, value);
+            g_assert_cmphex(qtest_readq(qts, start + size - 8), ==, ~value);
+        }
+    }
+    /* The first byte beyond the full 128 GiB aperture is not RAM. */
+    qtest_writeq(qts, base + 4 * stride, 0xfeed1234);
+    g_assert_cmphex(qtest_readq(qts, base + 4 * stride), !=, 0xfeed1234);
+    qtest_quit(qts);
+}
+
 int main(int argc, char **argv)
 {
+    static const DdrLayout small = { 16, 0xf };
+    static const DdrLayout full = { 128, 0xf };
+    static const DdrLayout sparse = { 16, 0x5 };
+
     g_test_init(&argc, &argv, NULL);
     qtest_add_func("/kmh-bosc/die-routing", test_die_routing);
+    qtest_add_data_func("/kmh-bosc/ddr/16g", &small, test_ddr_layout);
+    qtest_add_data_func("/kmh-bosc/ddr/128g", &full, test_ddr_layout);
+    qtest_add_data_func("/kmh-bosc/ddr/sparse", &sparse, test_ddr_layout);
     return g_test_run();
 }

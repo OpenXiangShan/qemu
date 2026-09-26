@@ -123,6 +123,34 @@ selects fewer application harts.
 RAM is split evenly across the four dies.  The size must be divisible by four
 and must not exceed the documented 128 GiB DDR aperture.
 
+DDR slots
+---------
+
+The DDR aperture starts at ``0x80000000`` and spans 128 GiB. Each physical
+die owns a fixed 32 GiB slot, independent of ``die-mask`` and ``-m``:
+
+======== ============== ============== ==========
+Die      Slot start     Slot end       Maximum
+======== ============== ============== ==========
+die0     0x0080000000   0x087fffffff   32 GiB
+die1     0x0880000000   0x107fffffff   32 GiB
+die2     0x1080000000   0x187fffffff   32 GiB
+die3     0x1880000000   0x207fffffff   32 GiB
+======== ============== ============== ==========
+
+Slot ends above are inclusive. For each selected die, QEMU maps
+``-m / 4`` bytes starting at that die's slot start; the unused suffix is
+unmapped. For example, ``-m 16G`` maps the first 4 GiB of each selected
+slot, and ``-m 128G`` fills all selected slots with 32 GiB each.
+
+The divisor remains four even if ``die-mask`` selects fewer dies. Disabled
+dies have no DDR mapping, and the remaining dies are not renumbered or
+given larger RAM regions. For example, ``die-mask=0x5,-m 16G`` exposes
+4 GiB on die0 and 4 GiB on die2 at their fixed physical addresses.
+Generated DT memory nodes and ACPI SRAT entries follow this same layout;
+autotest DTs additionally exclude the reserved rootfs/workload windows
+from ordinary System RAM. DDR does not use the peripheral die-ID encoding.
+
 Machine options
 ---------------
 

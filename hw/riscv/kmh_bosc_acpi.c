@@ -7,6 +7,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
+#include "qemu/units.h"
 #include "hw/acpi/acpi.h"
 #include "hw/acpi/acpi-defs.h"
 #include "hw/acpi/aml-build.h"
@@ -31,7 +32,7 @@
 #define KMH_BOSC_APP_HART_MASK            ((1U << KMH_BOSC_APP_HARTS_PER_DIE) - 1U)
 #define KMH_BOSC_DIE_SHIFT                44
 #define KMH_BOSC_DDR_NODE_BASE            0x0000000080000000ULL
-#define KMH_BOSC_DDR_NODE_STRIDE          0x0000000800000000ULL
+#define KMH_BOSC_DDR_NODE_STRIDE          (32 * GiB)
 #define KMH_BOSC_NUMA_LOCAL_DISTANCE      10
 #define KMH_BOSC_NUMA_REMOTE_DISTANCE     20
 
