@@ -25,6 +25,7 @@
 #include "hw/intc/riscv_aclint.h"
 #include "hw/intc/riscv_aplic.h"
 #include "hw/intc/riscv_imsic.h"
+#include "hw/misc/kmh_bosc_aplic_test.h"
 #include "hw/misc/bosc-axi4-traffic.h"
 #include "hw/misc/unimp.h"
 #include "hw/pci-host/designware.h"
@@ -74,7 +75,7 @@
 #define KMH_BOSC_DMAC_IRQ                 40
 #define KMH_BOSC_IOMMU_IRQ_BASE           36
 
-#define KMH_BOSC_APLIC_NUM_SOURCES        96
+#define KMH_BOSC_APLIC_NUM_SOURCES        KMH_BOSC_APLIC_TEST_NUM_IRQS
 #define KMH_BOSC_IMSIC_NUM_IDS            255
 #define KMH_BOSC_IMSIC_GUEST_INDEX_BITS   3
 #define KMH_BOSC_CLINT_TIMEBASE_FREQ      1000000
@@ -1995,6 +1996,9 @@ static void kmh_bosc_init_per_die_interrupts(KmhBoscState *s)
         int hartid_base = die * KMH_BOSC_APP_HARTS_PER_DIE;
 
         s->irqchip[die] = kmh_bosc_create_aia(die, hartid_base);
+        kmh_bosc_aplic_test_create(
+            s->irqchip[die],
+            kmh_bosc_die_addr(die, KMH_BOSC_APLIC_TEST_MMIO_BASE));
     }
 
     riscv_aclint_swi_create(clint_base, 0, KMH_BOSC_TOTAL_APP_HARTS, false);
