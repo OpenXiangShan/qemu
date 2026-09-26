@@ -13,6 +13,7 @@ Details about QEMU's various subsystems including how to add features to them.
    rcu
    block-coroutine-wrapper
    clocks
+   kmh-bosc-memory-region
    ebpf_rss
    migration/index
    multi-process
