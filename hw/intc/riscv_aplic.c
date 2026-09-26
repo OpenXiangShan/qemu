@@ -445,7 +445,7 @@ static void riscv_aplic_msi_send(RISCVAPLICState *aplic,
     addr |= (uint64_t)(guest_idx & APLIC_xMSICFGADDR_PPN_HART(lhxs));
     addr <<= APLIC_xMSICFGADDR_PPN_SHIFT;
 
-    address_space_stl_le(&address_space_memory, addr,
+    address_space_stl_le(aplic->msi_as, addr,
                          eiid, MEMTXATTRS_UNSPECIFIED, &result);
     if (result != MEMTX_OK) {
         qemu_log_mask(LOG_GUEST_ERROR, "%s: MSI write failed for "
@@ -905,6 +905,8 @@ static void riscv_aplic_realize(DeviceState *dev, Error **errp)
     uint32_t i;
     RISCVAPLICState *aplic = RISCV_APLIC(dev);
 
+    aplic->msi_as = &address_space_memory;
+
     if (riscv_use_emulated_aplic(aplic->msimode)) {
         /* Create output IRQ lines for non-MSI mode */
         if (!aplic->msimode) {
@@ -1038,6 +1040,11 @@ static void riscv_aplic_register_types(void)
 }
 
 type_init(riscv_aplic_register_types)
+
+void riscv_aplic_set_msi_address_space(RISCVAPLICState *aplic, AddressSpace *as)
+{
+    aplic->msi_as = as;
+}
 
 /*
  * Add a APLIC device to another APLIC device as child for
