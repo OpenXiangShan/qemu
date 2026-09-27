@@ -36,7 +36,7 @@
 #define KMH_BOSC_NUMA_LOCAL_DISTANCE      10
 #define KMH_BOSC_NUMA_REMOTE_DISTANCE     20
 
-#define KMH_BOSC_UART0_BASE               0x0000100004000000ULL
+#define KMH_BOSC_UART0_BASE               0x0000000004000000ULL
 #define KMH_BOSC_UART0_SIZE               0x10000
 #define KMH_BOSC_UART0_IRQ                10
 #define KMH_BOSC_UART_CLK_FREQ            50000000
@@ -70,6 +70,7 @@ typedef struct KmhBoscAcpiState {
     hwaddr handoff_addr;
     uint64_t handoff_size;
     bool dw_pcie;
+    bool single_soc;
 } KmhBoscAcpiState;
 
 static const uint64_t kmh_bosc_acpi_pcie_ecam_base[KMH_BOSC_PCIE_PER_DIE] = {
@@ -84,9 +85,11 @@ static const uint64_t kmh_bosc_acpi_pcie_mem_base[KMH_BOSC_PCIE_PER_DIE] = {
     0x000004f000000000ULL,
 };
 
-static inline hwaddr kmh_bosc_acpi_die_addr(int die, hwaddr offset)
+static inline hwaddr kmh_bosc_acpi_die_addr(const KmhBoscAcpiState *s,
+                                           int die, hwaddr offset)
 {
-    return (((hwaddr)(die + 1)) << KMH_BOSC_DIE_SHIFT) | offset;
+    return s->single_soc ? offset :
+           (((hwaddr)(die + 1)) << KMH_BOSC_DIE_SHIFT) | offset;
 }
 
 static bool kmh_bosc_acpi_die_selected(const KmhBoscAcpiState *s, int die)
@@ -124,7 +127,7 @@ static uint64_t kmh_bosc_acpi_ddr_base(int die)
 
 static uint64_t kmh_bosc_acpi_die_ram_size(const KmhBoscAcpiState *s)
 {
-    return s->ms->ram_size / KMH_BOSC_DIES;
+    return s->ms->ram_size / (s->single_soc ? 1 : KMH_BOSC_DIES);
 }
 
 static int kmh_bosc_acpi_selected_hart_count(const KmhBoscAcpiState *s)
@@ -153,9 +156,10 @@ static int kmh_bosc_acpi_first_selected_hartid(const KmhBoscAcpiState *s)
     return -1;
 }
 
-static uint64_t kmh_bosc_acpi_imsic_s_addr(int die, int hart)
+static uint64_t kmh_bosc_acpi_imsic_s_addr(const KmhBoscAcpiState *s,
+                                              int die, int hart)
 {
-    return kmh_bosc_acpi_die_addr(die, KMH_BOSC_IMSIC_S_BASE) +
+    return kmh_bosc_acpi_die_addr(s, die, KMH_BOSC_IMSIC_S_BASE) +
            hart * IMSIC_HART_SIZE(KMH_BOSC_IMSIC_GUEST_INDEX_BITS);
 }
 
@@ -164,9 +168,10 @@ static uint32_t kmh_bosc_acpi_pcie_segment(int die, int port)
     return die * KMH_BOSC_PCIE_PER_DIE + port;
 }
 
-static uint64_t kmh_bosc_acpi_pcie_ecam_addr(int die, int port)
+static uint64_t kmh_bosc_acpi_pcie_ecam_addr(const KmhBoscAcpiState *s,
+                                              int die, int port)
 {
-    return kmh_bosc_acpi_die_addr(die,
+    return kmh_bosc_acpi_die_addr(s, die,
                                   kmh_bosc_acpi_pcie_ecam_base[port]);
 }
 
@@ -176,10 +181,11 @@ static uint64_t kmh_bosc_acpi_pcie_mem32_bus_base(uint32_t segment)
            segment * KMH_BOSC_PCIE_ROOT_BUS_STRIDE;
 }
 
-static uint64_t kmh_bosc_acpi_pcie_mem_cpu_base(int die, int port,
+static uint64_t kmh_bosc_acpi_pcie_mem_cpu_base(const KmhBoscAcpiState *s,
+                                              int die, int port,
                                                 bool above_4g)
 {
-    return kmh_bosc_acpi_die_addr(die,
+    return kmh_bosc_acpi_die_addr(s, die,
                                   kmh_bosc_acpi_pcie_mem_base[port]) +
            (above_4g ? KMH_BOSC_PCIE_WINDOW_SIZE : 0);
 }
@@ -192,7 +198,8 @@ static uint32_t kmh_bosc_acpi_pcie_gsi(int die, int port, int pin)
            pin;
 }
 
-static void kmh_bosc_acpi_madt_add_rintc(uint32_t uid, int die, int hart,
+static void kmh_bosc_acpi_madt_add_rintc(const KmhBoscAcpiState *s,
+                                         uint32_t uid, int die, int hart,
                                          GArray *entry)
 {
     build_append_int_noprefix(entry, 0x18, 1);       /* Type */
@@ -204,7 +211,7 @@ static void kmh_bosc_acpi_madt_add_rintc(uint32_t uid, int die, int hart,
     build_append_int_noprefix(entry, uid, 4);        /* ACPI Processor UID */
     build_append_int_noprefix(entry, 0, 4);          /* External INTC ID */
     build_append_int_noprefix(entry,
-                              kmh_bosc_acpi_imsic_s_addr(die, hart), 8);
+                              kmh_bosc_acpi_imsic_s_addr(s, die, hart), 8);
     build_append_int_noprefix(entry,
                               IMSIC_HART_SIZE(KMH_BOSC_IMSIC_GUEST_INDEX_BITS),
                               4);
@@ -230,7 +237,7 @@ static void kmh_bosc_acpi_dsdt_add_cpus(Aml *scope,
             aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0007")));
             aml_append(dev, aml_name_decl("_UID", aml_int(hartid)));
 
-            kmh_bosc_acpi_madt_add_rintc(hartid, die, hart, madt_buf);
+            kmh_bosc_acpi_madt_add_rintc(s, hartid, die, hart, madt_buf);
             aml_append(dev, aml_name_decl("_MAT",
                                           aml_buffer(madt_buf->len,
                                           (uint8_t *)madt_buf->data)));
@@ -252,7 +259,7 @@ static void kmh_bosc_acpi_dsdt_add_aplics(Aml *scope,
             continue;
         }
 
-        aplic_base = kmh_bosc_acpi_die_addr(die, KMH_BOSC_APLIC_S_BASE);
+        aplic_base = kmh_bosc_acpi_die_addr(s, die, KMH_BOSC_APLIC_S_BASE);
         gsi_base = die * KMH_BOSC_APLIC_NUM_SOURCES;
         dev = aml_device("IC%.02X", die);
 
@@ -271,7 +278,8 @@ static void kmh_bosc_acpi_dsdt_add_aplics(Aml *scope,
     }
 }
 
-static void kmh_bosc_acpi_dsdt_add_uart(Aml *scope)
+static void kmh_bosc_acpi_dsdt_add_uart(Aml *scope,
+                                         const KmhBoscAcpiState *s)
 {
     Aml *dev = aml_device("COM0");
     Aml *crs;
@@ -280,6 +288,7 @@ static void kmh_bosc_acpi_dsdt_add_uart(Aml *scope)
     Aml *dsd;
     Aml *uuid;
     uint32_t uart_irq = KMH_BOSC_UART0_IRQ;
+    hwaddr uart_base = kmh_bosc_acpi_die_addr(s, 0, KMH_BOSC_UART0_BASE);
 
     aml_append(dev, aml_name_decl("_HID", aml_string("RSCV0003")));
     aml_append(dev, aml_name_decl("_UID", aml_int(0)));
@@ -287,8 +296,8 @@ static void kmh_bosc_acpi_dsdt_add_uart(Aml *scope)
     crs = aml_resource_template();
     aml_append(crs, aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED,
                                      AML_MAX_FIXED, AML_NON_CACHEABLE,
-                                     AML_READ_WRITE, 0, KMH_BOSC_UART0_BASE,
-                                     KMH_BOSC_UART0_BASE +
+                                     AML_READ_WRITE, 0, uart_base,
+                                     uart_base +
                                      KMH_BOSC_UART0_SIZE - 1,
                                      0, KMH_BOSC_UART0_SIZE));
     aml_append(crs,
@@ -375,17 +384,17 @@ static void kmh_bosc_acpi_dsdt_add_pcie(Aml *scope,
         pxm = kmh_bosc_acpi_numa_node_id(s, die);
         for (int port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
             uint32_t segment = kmh_bosc_acpi_pcie_segment(die, port);
-            uint64_t ecam_base = kmh_bosc_acpi_pcie_ecam_addr(die, port);
+            uint64_t ecam_base = kmh_bosc_acpi_pcie_ecam_addr(s, die, port);
             uint64_t mem32_bus_base =
                 kmh_bosc_acpi_pcie_mem32_bus_base(segment);
             uint64_t mem32_bus_limit =
                 mem32_bus_base + KMH_BOSC_PCIE_WINDOW_SIZE - 1;
             uint64_t mem32_cpu_base =
-                kmh_bosc_acpi_pcie_mem_cpu_base(die, port, false);
+                kmh_bosc_acpi_pcie_mem_cpu_base(s, die, port, false);
             uint64_t mem64_bus_limit = KMH_BOSC_PCIE_MEM_BUS_BASE +
                                        KMH_BOSC_PCIE_WINDOW_SIZE - 1;
             uint64_t mem64_cpu_base =
-                kmh_bosc_acpi_pcie_mem_cpu_base(die, port, true);
+                kmh_bosc_acpi_pcie_mem_cpu_base(s, die, port, true);
             Aml *dev = aml_device("P%.03X", segment);
             Aml *cba;
             Aml *crs;
@@ -450,7 +459,7 @@ static void kmh_bosc_acpi_build_dsdt(GArray *table_data, BIOSLinker *linker,
     scope = aml_scope("\\_SB");
     kmh_bosc_acpi_dsdt_add_cpus(scope, s);
     kmh_bosc_acpi_dsdt_add_aplics(scope, s);
-    kmh_bosc_acpi_dsdt_add_uart(scope);
+    kmh_bosc_acpi_dsdt_add_uart(scope, s);
     if (s->dw_pcie) {
         kmh_bosc_acpi_dsdt_add_pcie(scope, s);
     }
@@ -500,7 +509,7 @@ static void kmh_bosc_acpi_build_madt(GArray *table_data, BIOSLinker *linker,
             }
 
             hartid = kmh_bosc_acpi_hartid(die, hart);
-            kmh_bosc_acpi_madt_add_rintc(hartid, die, hart, table_data);
+            kmh_bosc_acpi_madt_add_rintc(s, hartid, die, hart, table_data);
         }
     }
 
@@ -513,7 +522,9 @@ static void kmh_bosc_acpi_build_madt(GArray *table_data, BIOSLinker *linker,
     build_append_int_noprefix(table_data, KMH_BOSC_IMSIC_NUM_IDS, 2);
     build_append_int_noprefix(table_data, KMH_BOSC_IMSIC_GUEST_INDEX_BITS, 1);
     build_append_int_noprefix(table_data, KMH_BOSC_IMSIC_HART_INDEX_BITS, 1);
-    build_append_int_noprefix(table_data, KMH_BOSC_IMSIC_GROUP_INDEX_BITS, 1);
+    build_append_int_noprefix(table_data,
+                              s->single_soc ? 0 : KMH_BOSC_IMSIC_GROUP_INDEX_BITS,
+                              1);
     build_append_int_noprefix(table_data, KMH_BOSC_DIE_SHIFT, 1);
 
     for (int die = 0; die < KMH_BOSC_DIES; die++) {
@@ -524,7 +535,7 @@ static void kmh_bosc_acpi_build_madt(GArray *table_data, BIOSLinker *linker,
             continue;
         }
 
-        aplic_base = kmh_bosc_acpi_die_addr(die, KMH_BOSC_APLIC_S_BASE);
+        aplic_base = kmh_bosc_acpi_die_addr(s, die, KMH_BOSC_APLIC_S_BASE);
         gsi_base = die * KMH_BOSC_APLIC_NUM_SOURCES;
 
         build_append_int_noprefix(table_data, 0x1A, 1); /* APLIC */
@@ -744,7 +755,8 @@ static void kmh_bosc_acpi_build_slit(GArray *table_data, BIOSLinker *linker,
     acpi_table_end(linker, &table);
 }
 
-static void kmh_bosc_acpi_build_spcr(GArray *table_data, BIOSLinker *linker)
+static void kmh_bosc_acpi_build_spcr(GArray *table_data, BIOSLinker *linker,
+                                      const KmhBoscAcpiState *s)
 {
     const char name[] = ".";
     AcpiSpcrData serial = {
@@ -753,7 +765,7 @@ static void kmh_bosc_acpi_build_spcr(GArray *table_data, BIOSLinker *linker)
         .base_addr.width = 32,
         .base_addr.offset = 0,
         .base_addr.size = 1,
-        .base_addr.addr = KMH_BOSC_UART0_BASE,
+        .base_addr.addr = kmh_bosc_acpi_die_addr(s, 0, KMH_BOSC_UART0_BASE),
         .interrupt_type = 1 << 4,
         .pc_interrupt = 0,
         .interrupt = KMH_BOSC_UART0_IRQ,
@@ -801,7 +813,7 @@ static void kmh_bosc_acpi_build_mcfg(GArray *table_data, BIOSLinker *linker,
         for (int port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
             build_append_int_noprefix(
                 table_data,
-                kmh_bosc_acpi_pcie_ecam_addr(die, port), 8);
+                kmh_bosc_acpi_pcie_ecam_addr(s, die, port), 8);
             build_append_int_noprefix(
                 table_data,
                 kmh_bosc_acpi_pcie_segment(die, port), 2);
@@ -915,7 +927,7 @@ static void kmh_bosc_acpi_build_tables(const KmhBoscAcpiState *s,
     kmh_bosc_acpi_build_rhct(blob, linker, s);
 
     acpi_add_table(table_offsets, blob);
-    kmh_bosc_acpi_build_spcr(blob, linker);
+    kmh_bosc_acpi_build_spcr(blob, linker, s);
 
     if (s->dw_pcie) {
         acpi_add_table(table_offsets, blob);
@@ -959,7 +971,7 @@ static void kmh_bosc_acpi_build_rsdp(GArray *blob, hwaddr xsdt_addr)
 void kmh_bosc_acpi_setup(MachineState *ms, RISCVHartArrayState *cpus,
                          uint32_t die_mask, const uint32_t core_mask[4],
                          hwaddr handoff_addr, uint64_t handoff_size,
-                         bool dw_pcie)
+                         bool dw_pcie, bool single_soc)
 {
     KmhBoscAcpiState state = {
         .ms = ms,
@@ -968,6 +980,7 @@ void kmh_bosc_acpi_setup(MachineState *ms, RISCVHartArrayState *cpus,
         .handoff_addr = handoff_addr,
         .handoff_size = handoff_size,
         .dw_pcie = dw_pcie,
+        .single_soc = single_soc,
     };
     GArray *handoff = g_array_new(false, true, 1);
     GArray *table_offsets = g_array_new(false, true, sizeof(uint32_t));

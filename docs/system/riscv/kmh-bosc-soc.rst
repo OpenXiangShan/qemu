@@ -1,5 +1,29 @@
-BOSC Kunminghu multi-die SoC (``kmh-bosc-soc``)
-================================================
+BOSC Kunminghu single/four-die SoC (kmh-bosc-soc)
+======================================================
+
+The machine shape is selected with the soc-mode property:
+
+* soc-mode=multi (the default) models the four-die SoC. die-mask may select
+  which dies are released, but it does not change the peripheral address
+  format: addresses retain hardware die IDs 1 through 4.
+* soc-mode=single models a true single-die SoC. Only die0 is instantiated,
+  die-mask is ignored, and peripheral/SRAM/ROM addresses use local offsets.
+  Use -smp 16,maxcpus=17; all -m memory is assigned to die0, up to 32 GiB.
+
+Example command lines:
+
+.. code-block:: bash
+
+   # True single-die address map
+   -M kmh-bosc-soc,soc-mode=single,die-mask=0xf,core-mask=0xffff \
+   -smp 16,maxcpus=17 -m 16G
+
+   # Four-die SoC with only die0 released; addresses still carry ID 1
+   -M kmh-bosc-soc,soc-mode=multi,die-mask=0x1,core-mask=0x1 \
+   -smp 64,maxcpus=68 -m 16G
+
+Multi-die model
+================
 
 ``kmh-bosc-soc`` models the BOSC Kunminghu multi-die SoC.  It is a
 64-bit RISC-V machine with four dies.  Each die has 16 application harts
@@ -161,6 +185,13 @@ Machine options
    $ qemu-system-riscv64 -M kmh-bosc-soc,help
 
 常用属性如下。
+
+``soc-mode=single|multi``
+   选择 SoC 形态，默认是 ``multi``。``multi`` 保持四 die SoC 的硬件
+   die-ID 全局外设地址体系，即使 ``die-mask`` 只选择一个 die；``single``
+   只实例化 die0，忽略 ``die-mask``，并使用不带 die-ID 的本地外设地址。
+   single 模式使用 ``-smp 16,maxcpus=17``，multi 模式使用
+   ``-smp 64,maxcpus=68``。
 
 ``boot-source=ddr|mcu``
    选择启动来源。默认是 ``ddr``。

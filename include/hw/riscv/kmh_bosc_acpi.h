@@ -15,6 +15,6 @@
 void kmh_bosc_acpi_setup(MachineState *ms, RISCVHartArrayState *cpus,
                          uint32_t die_mask, const uint32_t core_mask[4],
                          hwaddr handoff_addr, uint64_t handoff_size,
-                         bool dw_pcie);
+                         bool dw_pcie, bool single_soc);
 
 #endif

@@ -42,6 +42,23 @@ static void assert_only_pending(QTestState *qts, unsigned target)
     }
 }
 
+
+static void test_single_soc_addresses(void)
+{
+    QTestState *qts = qtest_init(
+        "-M kmh-bosc-soc,soc-mode=single,die-mask=0xf,core-mask=0xffff,"
+        "generated-dtb=on -smp 16,maxcpus=17 -m 256M");
+
+    qtest_writeq(qts, 0x01100000, 0x1122334455667788ULL);
+    g_assert_cmphex(qtest_readq(qts, 0x01100000), ==,
+                    0x1122334455667788ULL);
+    g_assert_cmphex(qtest_readq(qts, 0x100001100000ULL), !=,
+                    0x1122334455667788ULL);
+
+
+    qtest_quit(qts);
+}
+
 static void test_die_routing(void)
 {
     g_autofree char *bios = NULL;
@@ -189,6 +206,7 @@ int main(int argc, char **argv)
     static const DdrLayout sparse = { 16, 0x5 };
 
     g_test_init(&argc, &argv, NULL);
+    qtest_add_func("/kmh-bosc/single/addresses", test_single_soc_addresses);
     qtest_add_func("/kmh-bosc/die-routing", test_die_routing);
     qtest_add_data_func("/kmh-bosc/ddr/16g", &small, test_ddr_layout);
     qtest_add_data_func("/kmh-bosc/ddr/128g", &full, test_ddr_layout);
