@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "deferred": ["PCIe integration", "my-virtio", "ACPI/UEFI boot", "KVM/M-mode/nested", "VFIO", "cosim/devproxy and default DMA fallback", "RTL/FPGA", "direct generated-DTB MCU boot"],
+  "cases": [
+    {"id": "qtest-die", "group": "qtest", "owner": "bosc", "kind": "qtest", "binary": "kmh-bosc-die-test", "timeout": 120, "assets": [], "tests": ["/kmh-bosc/single/addresses", "/kmh-bosc/die-routing", "/kmh-bosc/ddr/16g", "/kmh-bosc/ddr/128g", "/kmh-bosc/ddr/sparse"]},
+    {"id": "qtest-traffic", "group": "qtest", "owner": "bosc", "kind": "qtest", "binary": "bosc-axi4-traffic-test", "timeout": 120, "assets": [], "tests": ["/riscv64/bosc_axi4_traffic/reset_and_readback", "/riscv64/bosc_axi4_traffic/bare_traffic_windows", "/riscv64/bosc_axi4_traffic/user_requester_selection", "/riscv64/bosc_axi4_traffic/error_dma_has_no_done"]},
+    {"id": "kmh-linux-1", "group": "kmh-linux", "owner": "kmh", "kind": "linux", "cpus": 1, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
+    {"id": "kmh-linux-16", "group": "kmh-linux", "owner": "kmh", "kind": "linux", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
+    {"id": "bosc-ddr-single", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "single", "die_mask": "0xf", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
+    {"id": "bosc-ddr-multi", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "multi", "die_mask": "0xf", "cpus": 64, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
+    {"id": "bosc-ddr-multi-die0", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "multi", "die_mask": "0x1", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
+    {"id": "bosc-ddr-default", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "default", "die_mask": "0x1", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
+    {"id": "bosc-mcu-single", "group": "bosc-mcu", "owner": "bosc", "kind": "mcu", "mode": "single", "die_mask": "0xf", "cpus": 16, "timeout": 600, "assets": ["fw_jump", "rootfs", "mcu", "qspi"]},
+    {"id": "bosc-mcu-multi", "group": "bosc-mcu", "owner": "bosc", "kind": "mcu", "mode": "multi", "die_mask": "0xf", "cpus": 64, "timeout": 600, "assets": ["fw_jump", "rootfs", "mcu", "qspi"]},
+    {"id": "bosc-mcu-multi-die0", "group": "bosc-mcu", "owner": "bosc", "kind": "mcu", "mode": "multi", "die_mask": "0x1", "cpus": 16, "timeout": 600, "assets": ["fw_jump", "rootfs", "mcu", "qspi"]},
+    {"id": "bosc-itgen-cross-die", "group": "itgen", "owner": "bosc", "kind": "itgen", "timeout": 120, "assets": ["itgen"]}
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "baseline": "st-v0.9.99-mcu-20260927-itgen-dieid2-20260924",
+  "publication_note": "2026-09-27: six remote files verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen published without overwriting existing content. path is offline layout; jf_path is repository-relative remote location.",
+  "assets": {
+    "fw_jump": {
+      "path": "st-release-v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin",
+      "jf_path": "xs-sw/st-release/v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin",
+      "size": 274704,
+      "sha256": "d8da253945e544c284b0757a9ddc9cb799c13912e34616a33279bc288dbf4bd2",
+      "source": "st-release-v0.9.99"
+    },
+    "kernel": {
+      "path": "st-release-v0.9.99/minimal/Image",
+      "jf_path": "xs-sw/st-release/v0.9.99/minimal/Image",
+      "size": 8321912,
+      "sha256": "55afc258b442384edd1a0a789eda747b715cda4f9401a170b209ff334e4985e9",
+      "source": "st-release-v0.9.99"
+    },
+    "rootfs": {
+      "path": "st-release-v0.9.99/openEuler-minimal-rootfs/openEuler-minimal-rootfs-24.03-SP3-RVA23.ext4",
+      "jf_path": "xs-sw/st-release/v0.9.99/openEuler-minimal-rootfs/openEuler-minimal-rootfs-24.03-SP3-RVA23.ext4",
+      "size": 536870912,
+      "sha256": "4b0ddf5b06eb26369f5c2df1f87c63d94fb47d249e9c99d7d0291cf80a720ee5",
+      "source": "st-release-v0.9.99"
+    },
+    "mcu": {
+      "path": "qemu-ci/mcu/20260927/kmh-bosc-mcu.bin",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/mcu/20260927/kmh-bosc-mcu.bin",
+      "size": 1058,
+      "sha256": "d50f8728880707d3f529bd0bcd032701113b5b560fb89237faf854b36068563c",
+      "source": "XSV contrib/kmh-bosc-soc-mcu source snapshot; see ASSETS.md",
+      "compiler": "riscv64-unknown-elf-gcc 15.1.0 (g1b306039ac4)",
+      "license": "GPL-2.0-or-later",
+      "publication": "verified-20260927"
+    },
+    "qspi": {
+      "path": "qemu-ci/mcu/20260927/fw_payload.bin",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/mcu/20260927/fw_payload.bin",
+      "size": 12516216,
+      "sha256": "cee4dcbfbd773a4456ff01cf650181c72ae6d16654b9846ce4bb6fc2bef413b9",
+      "components": [{"asset": "fw_jump", "offset": 0}, {"asset": "kernel", "offset": 4194304}],
+      "flash_size": 134217728,
+      "publication": "verified-20260927"
+    },
+    "itgen": {
+      "path": "qemu-ci/itgen/aplic-cross-die/dieid2-20260924/test_RISCV_AIA_aplic_irq_priority_cross_die.bin",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/itgen/aplic-cross-die/dieid2-20260924/test_RISCV_AIA_aplic_irq_priority_cross_die.bin",
+      "size": 56760,
+      "sha256": "d8c37599a2e438995a44a0eda1eb0851f46497df4a05b98c63b3a6b3eb461a57",
+      "source": "ITGen export_kmh_bosc_aplic_priority_cross_die_hart0_hart16_dieid2_20260924",
+      "publication": "verified-20260927"
+    }
+  }
+}

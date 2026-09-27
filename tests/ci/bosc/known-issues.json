@@ -1,0 +1,9 @@
+{
+  "MCU-DIE-NUM-RESET": {
+    "baseline_revision": "be94744b77",
+    "observed": 0,
+    "scope": "Only stage=start extra on selected MCU UARTs; expected selected die count. All other assertions must pass.",
+    "unexpected_pass": "fail and remove/update this waiver through review",
+    "note": "Local tracking identifier, not a GitLab issue number. Startup reset clears MCU_DIE_NUM and bypasses die0 all-ready barrier. Boot PASS does not prove barrier correctness."
+  }
+}

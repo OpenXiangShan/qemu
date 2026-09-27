@@ -1,0 +1,3 @@
+# Only YAML lint uses a non-stdlib package. Configure uses the wheels already
+# provided by QEMU (Meson 1.8.1 and pycotap 1.3.1) in qemu-build/pyvenv.
+PyYAML==6.0.1

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "description": "git archive of the exact Meson wrap revisions, without Git metadata or local overlay files. QEMU packagefiles are applied from the tested checkout.",
+  "assets": {
+    "berkeley-softfloat-3": {
+      "revision": "b64af41c3276f97f0e181920400ee056b9c88037",
+      "path": "native-deps/berkeley-softfloat-3-b64af41c3276f97f0e181920400ee056b9c88037.tar",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/native-deps/berkeley-softfloat-3-b64af41c3276f97f0e181920400ee056b9c88037.tar",
+      "size": 2273280,
+      "sha256": "9b6d63657c075ae34d93e20d491a3ec959e1f27e091fa1550585a045aae1740d"
+    },
+    "berkeley-testfloat-3": {
+      "revision": "e7af9751d9f9fd3b47911f51a5cfd08af256a9ab",
+      "path": "native-deps/berkeley-testfloat-3-e7af9751d9f9fd3b47911f51a5cfd08af256a9ab.tar",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/native-deps/berkeley-testfloat-3-e7af9751d9f9fd3b47911f51a5cfd08af256a9ab.tar",
+      "size": 1935360,
+      "sha256": "20e6f1ddaeae358ff22415236cfdfdfe7a1a10443c6208e9446e099f61d5d5f9"
+    },
+    "keycodemapdb": {
+      "revision": "f5772a62ec52591ff6870b7e8ef32482371f22c6",
+      "path": "native-deps/keycodemapdb-f5772a62ec52591ff6870b7e8ef32482371f22c6.tar",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/native-deps/keycodemapdb-f5772a62ec52591ff6870b7e8ef32482371f22c6.tar",
+      "size": 133120,
+      "sha256": "4f08abb658b465864b5b6bcddf505028332c8e768aea709602dc9fd66146c92f"
+    }
+  }
+}

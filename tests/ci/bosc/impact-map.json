@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "docs": ["docs/*.rst", "docs/*.md", "docs/*.txt", "README.rst", "README.md", "COPYING", "COPYING.LIB"],
+  "rules": [
+    {"patterns": ["tests/ci/*", ".gitlab-ci*", "*meson.build", "*meson_options.txt", "*Kconfig*", "configure", "configs/*", "scripts/*"], "owners": ["bosc", "kmh"], "reason": "CI/build configuration"},
+    {"patterns": ["hw/riscv/kmh_bosc*", "include/hw/riscv/kmh_bosc*", "hw/misc/kmh_bosc*", "tests/qtest/kmh-bosc*", "tests/qtest/bosc-axi4*", "hw/misc/bosc_axi4*"], "owners": ["bosc"], "reason": "BOSC platform"},
+    {"patterns": ["hw/riscv/xiangshan_kmh.c", "hw/riscv/xiangshan_kmh_acpi.*", "include/hw/riscv/xiangshan_kmh.h", "hw/misc/my_virtio*", "my-virtio-lib/*"], "owners": ["kmh"], "reason": "KMH platform (optional-device integration remains deferred)"},
+    {"patterns": ["hw/dma/dw-axi-dmac.c", "include/hw/dma/dw-axi-dmac.h"], "owners": ["bosc", "kmh"], "reason": "DMAC: BOSC functional + both smoke; cosim/default fallback not covered"},
+    {"patterns": ["hw/intc/*", "target/riscv/*", "tcg/*", "system/*", "accel/*", "hw/riscv/boot*", "hw/core/*", "include/*"], "owners": ["bosc", "kmh"], "reason": "shared infrastructure"}
+  ]
+}

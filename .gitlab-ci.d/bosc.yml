@@ -1,0 +1,114 @@
+# Local-first, trusted Linux x86_64 Shell Runner entrypoint.
+# Select this file as the project's custom CI configuration path only after
+# local acceptance. No Docker image/services and no firmware publication.
+stages: [check, build, test, report]
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+
+variables:
+  BOSC_CI_RUNNER_TAG: bosc-ci
+  BOSC_CI_WORK: build/ci/pipeline
+  BOSC_CI_JOBS: "8"
+  GIT_DEPTH: "0"
+
+default:
+  tags: [x86_64, tcg, "$BOSC_CI_RUNNER_TAG"]
+  interruptible: true
+
+bosc:check:
+  stage: check
+  timeout: 10m
+  script:
+    - python3 tests/ci/bosc/ci.py select --work-dir "$BOSC_CI_WORK"
+    - python3 -m unittest discover -s tests/ci/bosc -p test_ci.py -v
+    - python3 tests/ci/bosc/lint_ci.py
+    - git diff --check
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build/ci/pipeline/selected-tests.json
+      - build/ci/pipeline/stage-errors/
+
+bosc:build:
+  stage: build
+  timeout: 80m
+  dependencies: ["bosc:check"]
+  script:
+    - python3 tests/ci/bosc/ci.py doctor --work-dir "$BOSC_CI_WORK"
+    - python3 tests/ci/bosc/ci.py build --work-dir "$BOSC_CI_WORK" --jobs "$BOSC_CI_JOBS"
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build/ci/pipeline/bundle/
+      - build/ci/pipeline/doctor.json
+      - build/ci/pipeline/configure.log*
+      - build/ci/pipeline/build.log*
+      - build/ci/pipeline/native-dependencies.json
+      - build/ci/pipeline/asset-evidence/
+      - build/ci/pipeline/stage-errors/
+
+.bosc:test:
+  stage: test
+  timeout: 45m
+  dependencies: ["bosc:check", "bosc:build"]
+  script:
+    - python3 tests/ci/bosc/ci.py run --work-dir "$BOSC_CI_WORK" --group "$BOSC_CI_GROUP"
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build/ci/pipeline/results/
+      - build/ci/pipeline/reports/
+      - build/ci/pipeline/asset-evidence/
+      - build/ci/pipeline/stage-errors/
+    reports:
+      junit: build/ci/pipeline/reports/*/junit.xml
+
+bosc:qtest:
+  extends: .bosc:test
+  variables:
+    BOSC_CI_GROUP: qtest
+
+bosc:kmh-linux:
+  extends: .bosc:test
+  variables:
+    BOSC_CI_GROUP: kmh-linux
+
+bosc:ddr:
+  extends: .bosc:test
+  variables:
+    BOSC_CI_GROUP: bosc-ddr
+
+bosc:mcu:
+  extends: .bosc:test
+  variables:
+    BOSC_CI_GROUP: bosc-mcu
+
+bosc:itgen:
+  extends: .bosc:test
+  variables:
+    BOSC_CI_GROUP: itgen
+
+bosc:report:
+  stage: report
+  timeout: 10m
+  when: always
+  dependencies: ["bosc:check", "bosc:build", "bosc:qtest", "bosc:kmh-linux", "bosc:ddr", "bosc:mcu", "bosc:itgen"]
+  script:
+    - python3 tests/ci/bosc/ci.py report --work-dir "$BOSC_CI_WORK"
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - build/ci/pipeline/reports/all/
+    reports:
+      junit: build/ci/pipeline/reports/all/junit.xml
