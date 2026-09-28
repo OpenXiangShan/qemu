@@ -163,6 +163,39 @@ QMP quit → TERM → KILL，只处理本次创建的进程/进程组；不会�
 PASS、FAIL、XFAIL、XPASS、NOT_SELECTED 分开统计。选中结果缺失、混入其他 run、
 脚本变更、qtest 子结果缺失均不能全绿。失败由脚本退出码阻塞，JUnit 只是展示。
 
+## 实时串口与失败诊断
+
+`run` / `all` 默认同时保留完整原始文件，并把各用例的 `uart0.log`～`uart3.log`
+实时显示到终端/CI job 日志；`qemu.log` 和 `qtest.log` 也实时显示。每行带用例及
+通道前缀，例如：
+
+```text
+[bosc-mcu-multi][uart0] [kmh-mcu] die=0 ... stage=copy-begin ...
+[bosc-mcu-multi][uart1] [kmh-mcu] die=1 ... stage=ready ...
+[bosc-mcu-multi][uart0] [    0.000000] Linux version ...
+```
+
+父进程约每 100 ms 读取一次日志文件，不依赖被重定向的 worker stdout，也不改变
+QMP/串口捕获、原始数据或判定逻辑。不同 UART 的展示顺序是轮询观察顺序，不代表
+guest 中的精确跨 die 事件先后。新出现的文件、分段 UTF-8、无换行提示符和长行均
+有界处理。页面展示清除终端控制序列，原始文件保持不变。GitLab 中按用例建立可
+折叠的 live 日志段，默认展开；本地终端不输出 GitLab 段标记。
+
+失败、超时或可处理的取消会在进程清理后展开 failure 段，显示原因和 UART、QEMU、
+worker/exception、qtest/DT 导出等已有日志的尾部。每个文件最多取最后 16 KiB 中的
+200 行，过长行只在页面截短，随后仍应下载 artifacts 查看完整内容。
+
+| 参数/预算 | 默认及范围 |
+| --- | --- |
+| `BOSC_CI_LIVE_LOG_KIB` | 默认 1024，可设 0～2048；0 只关闭实时展示 |
+| 失败尾部预算 | 每个 `run` / `all` 进程独立保留 512 KiB，不占实时展示预算 |
+| 段标记/文件位置提示预算 | 64 KiB；RUN、结果及最终摘要另行打印 |
+
+预算按 job/进程共享，不是每个 UART 或每个用例各自一份，前缀也计入字节数。
+达到限额会提示查看 artifacts；不截断原始日志、不改变结果。若 Runner 管理员配置
+了更小的 job 日志上限，应相应降低实时展示预算。折叠日志段不会减少实际字节数。
+不要用开启 `CI_DEBUG_TRACE` 代替串口展示，以免泄露环境中的凭据。
+
 ## Shell Runner 过渡接入
 
 只在可信专用服务器、独立非 root 账号、独立 checkout 上注册 Shell Runner。
@@ -203,4 +236,5 @@ python3 tests/ci/bosc/lint_ci.py
 
 `lint_ci.py` 是离线语法和清单一致性检查，不能替代服务器端 GitLab CI Lint。
 自测包括选测、rename/delete、未知路径、缺失/损坏资产、假 PASS、缺核、panic、
-精确 XFAIL/XPASS、缺失/陈旧结果、timeout/cancel 清理和不影响其他进程。
+精确 XFAIL/XPASS、缺失/陈旧结果、timeout/cancel 清理和不影响其他进程；还覆盖
+实时可见性、多 UART、UTF-8/控制字符、长行、共享日志预算、失败尾部和折叠段闭合。

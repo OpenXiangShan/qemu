@@ -13,6 +13,7 @@ import traceback
 from assets import prepare
 from build import build, doctor, verify_bundle
 from dependencies import prepare_dependencies
+from live_log import CaseConsole, JobConsole
 from common import HERE, SOURCE, catalog, locked, read_json, run_logged, utc_now, write_json
 from report import aggregate
 from selection import select, selected_cases
@@ -64,35 +65,43 @@ def worker(args, work):
 
 def run_cases(args, work, cases):
     selection = read_json(work / "selected-tests.json")
+    console = JobConsole.from_environment()
     for case in cases:
         directory = work / "results" / case["id"]
         if directory.exists():
             raise ValueError(f"existing case evidence: {directory}; use a fresh run")
         directory.mkdir(parents=True)
         print(f"RUN {case['id']} (limit {case['timeout']}s)", flush=True)
-        try:
-            paths = prepare(work, [case], args.assets_dir, pairs(args.asset), args.cache_dir,
-                            read_json(args.jf_paths) if args.jf_paths else None)
-            write_json(directory / "assets.json", paths)
-            # Independent session encloses QEMU/QMP threads, qtest children and
-            # teardown. This hard deadline also bounds a broken harness.
-            run_logged([sys.executable, HERE / "ci.py", "_worker", "--work-dir", work,
-                        "--case", case["id"]], directory / "worker.log", timeout=case["timeout"] + 120)
-        except BaseException as exc:
-            result_path = directory / "result.json"
-            if result_path.exists():
-                result = read_json(result_path)
-                if result["status"] != "FAIL":
-                    result.update({"status": "FAIL", "message": f"worker lifecycle failed: {type(exc).__name__}: {exc}"})
-                    write_json(result_path, result)
-            else:
-                write_json(result_path, {"id": case["id"], "status": "FAIL",
-                           "selection_sha256": selection["config_sha256"], "run_id": selection["run_id"],
-                           "message": f"{type(exc).__name__}: {exc}", "checks": []})
-            if isinstance(exc, KeyboardInterrupt):
-                raise
+        interrupted_error = None
+        with CaseConsole(directory, case["id"], console) as live:
+            try:
+                paths = prepare(work, [case], args.assets_dir, pairs(args.asset), args.cache_dir,
+                                read_json(args.jf_paths) if args.jf_paths else None)
+                write_json(directory / "assets.json", paths)
+                # Read raw UART files in the parent so worker redirection cannot
+                # hide live output. The worker and its deadline stay independent.
+                run_logged([sys.executable, HERE / "ci.py", "_worker", "--work-dir", work,
+                            "--case", case["id"]], directory / "worker.log",
+                           timeout=case["timeout"] + 120, on_poll=live.poll)
+            except BaseException as exc:
+                result_path = directory / "result.json"
+                if result_path.exists():
+                    result = read_json(result_path)
+                    if result["status"] != "FAIL":
+                        result.update({"status": "FAIL", "message": f"worker lifecycle failed: {type(exc).__name__}: {exc}"})
+                        write_json(result_path, result)
+                else:
+                    write_json(result_path, {"id": case["id"], "status": "FAIL",
+                               "selection_sha256": selection["config_sha256"], "run_id": selection["run_id"],
+                               "message": f"{type(exc).__name__}: {exc}", "checks": []})
+                if isinstance(exc, KeyboardInterrupt):
+                    interrupted_error = exc
         result = read_json(directory / "result.json")
         print(f"{result['status']} {case['id']} {result.get('message', '')}", flush=True)
+        if result["status"] != "PASS":
+            live.diagnostics(result.get("message", "case failed"))
+        if interrupted_error is not None:
+            raise interrupted_error
 
 
 def parser():

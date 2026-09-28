@@ -16,6 +16,7 @@ variables:
   BOSC_CI_RUNNER_TAG: bosc-ci
   BOSC_CI_WORK: build/ci/pipeline
   BOSC_CI_JOBS: "8"
+  BOSC_CI_LIVE_LOG_KIB: "1024"
   GIT_DEPTH: "0"
 
 default:

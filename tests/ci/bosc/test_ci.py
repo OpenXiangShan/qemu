@@ -1,6 +1,7 @@
 """Offline negative tests for the CI harness. GPL-2.0-or-later."""
 import hashlib
 import io
+import contextlib
 import os
 from pathlib import Path
 import signal
@@ -18,6 +19,7 @@ from common import HERE, catalog, run_logged, write_json
 from report import aggregate
 from selection import changed_paths, choose, parse_status, select
 from dependencies import prepare_dependencies, safe_members
+from live_log import CaseConsole, JobConsole, LINE_CHARS, TAIL_LINES
 
 
 def boot_text(token="TOKEN", cpus="0-15"):
@@ -238,6 +240,159 @@ class CheckTests(unittest.TestCase):
                 checks.qtest_assertions(text, ["/a", "/b"])
 
 
+class LiveLogTests(unittest.TestCase):
+    def test_late_files_split_utf8_partial_lines_and_all_uarts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            output = io.StringIO()
+            console = JobConsole(output, gitlab=False)
+            data = "串口启动\r\nlast partial".encode()
+            with CaseConsole(directory, "multi", console) as live:
+                live.poll()  # Files do not exist yet.
+                (directory / "uart0.log").write_bytes(data[:2])
+                live.poll()
+                self.assertNotIn("\ufffd", output.getvalue())
+                with (directory / "uart0.log").open("ab") as stream:
+                    stream.write(data[2:])
+                for die in range(1, 4):
+                    (directory / f"uart{die}.log").write_text(f"die{die} ready\n")
+                live.poll()
+                self.assertIn("[multi][uart0] 串口启动\n", output.getvalue())
+                self.assertNotIn("last partial", output.getvalue())
+                for die in range(1, 4):
+                    self.assertIn(f"[multi][uart{die}] die{die} ready\n", output.getvalue())
+            self.assertEqual(output.getvalue().count("last partial"), 1)
+            self.assertEqual((directory / "uart0.log").read_bytes(), data)
+
+    def test_streaming_is_visible_before_worker_exits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            output = io.StringIO()
+            ready = directory / "parent-saw-output"
+            child = ("from pathlib import Path; import time; "
+                     f"Path({str(directory / 'uart0.log')!r}).write_text('booting\\n'); "
+                     f"p=Path({str(ready)!r}); "
+                     "\nwhile not p.exists(): time.sleep(0.01)\n")
+            with CaseConsole(directory, "live", JobConsole(output, gitlab=False)) as live:
+                def tick():
+                    live.poll()
+                    if "[live][uart0] booting" in output.getvalue():
+                        ready.touch()
+                run_logged([sys.executable, "-c", child], directory / "worker.log",
+                           timeout=3, on_poll=tick)
+            self.assertTrue(ready.exists())
+
+    def test_live_limit_shared_across_cases_preserves_tail_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            output = io.StringIO()
+            console = JobConsole(output, live_bytes=100, diagnostic_bytes=4096, gitlab=True)
+            raw = (b"before flood\n" + b"X" * 5000 + b"\nLATEST FAILURE\n")
+            (directory / "uart0.log").write_bytes(raw)
+            (directory / "qemu.log").write_text("QEMU error detail\n")
+            with CaseConsole(directory, "first", console) as live:
+                live.poll()
+            self.assertEqual(console.remaining["live"], 0)
+            live.diagnostics("timeout")
+            self.assertIn("LATEST FAILURE", output.getvalue())
+            self.assertIn("QEMU error detail", output.getvalue())
+            with CaseConsole(directory, "second", console) as second:
+                second.poll()
+            self.assertNotIn("[second][uart0]", output.getvalue())
+            self.assertEqual(output.getvalue().count("live output limit reached"), 1)
+            self.assertEqual((directory / "uart0.log").read_bytes(), raw)
+            self.assertEqual(output.getvalue().count("section_start:"), 3)
+            self.assertEqual(output.getvalue().count("section_end:"), 3)
+            self.assertLess(len(output.getvalue().encode()), 8192)
+
+    def test_control_sequences_are_safe_only_in_display(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            output = io.StringIO()
+            raw = b"\x1b[31mPANIC\x1b[0m\r\n\x1b]0;unsafe-title\x07next\x00\n"
+            (directory / "uart0.log").write_bytes(raw)
+            with CaseConsole(directory, "safe", JobConsole(output, gitlab=False)) as live:
+                live.poll()
+            self.assertIn("[safe][uart0] PANIC\n", output.getvalue())
+            self.assertIn("[safe][uart0] next\n", output.getvalue())
+            self.assertNotIn("\x1b", output.getvalue())
+            self.assertNotIn("\x00", output.getvalue())
+            self.assertNotIn("unsafe-title", output.getvalue())
+            self.assertEqual((directory / "uart0.log").read_bytes(), raw)
+
+    def test_no_newline_output_stays_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            output = io.StringIO()
+            raw = b"x" * (128 * 1024)
+            (directory / "uart0.log").write_bytes(raw)
+            with CaseConsole(directory, "flood", JobConsole(output, live_bytes=8192, gitlab=False)) as live:
+                live.poll()
+                self.assertLess(len(live.followers[0].pending), LINE_CHARS)
+            self.assertLess(len(output.getvalue()), 10000)
+            self.assertEqual((directory / "uart0.log").stat().st_size, len(raw))
+
+    def test_failure_tails_bounded_and_symlinks_not_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            output = io.StringIO()
+            (directory / "uart0.log").write_text("".join(f"line-{i}\n" for i in range(1000)))
+            secret = directory / "not-a-log"
+            secret.write_text("do not display me")
+            (directory / "uart1.log").symlink_to(secret)
+            live = CaseConsole(directory, "tail", JobConsole(output, live_bytes=0, gitlab=False))
+            live.diagnostics("failure")
+            text = output.getvalue()
+            self.assertEqual(text.count("[tail][uart0.log tail]"), TAIL_LINES)
+            self.assertIn("line-999", text)
+            self.assertNotIn("line-100\n", text)
+            self.assertNotIn("do not display me", text)
+
+    def test_job_budget_environment_validation(self):
+        with patch.dict(os.environ, {"BOSC_CI_LIVE_LOG_KIB": "0"}):
+            self.assertEqual(JobConsole.from_environment().remaining["live"], 0)
+        for value in ("-1", "2049", "not-a-number"):
+            with patch.dict(os.environ, {"BOSC_CI_LIVE_LOG_KIB": value}), self.assertRaises(ValueError):
+                JobConsole.from_environment()
+
+    def test_output_failure_does_not_replace_guest_result(self):
+        class BrokenOutput:
+            def write(self, _text):
+                raise BrokenPipeError()
+        console = JobConsole(BrokenOutput(), gitlab=False)
+        console.line("test", "uart0", "hello")
+        self.assertTrue(console.disabled)
+
+    def test_parent_failure_and_cancel_print_diagnostics_after_cleanup(self):
+        import argparse
+        import ci
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel), tempfile.TemporaryDirectory() as tmp:
+                work = Path(tmp)
+                write_json(work / "selected-tests.json", {"config_sha256": "test", "run_id": "test"})
+                case = {"id": "fake", "timeout": 1}
+                args = argparse.Namespace(assets_dir=None, asset=[], cache_dir=None, jf_paths=None)
+                output = io.StringIO()
+                def fake_worker(_argv, log, **kwargs):
+                    (log.parent / "uart0.log").write_text("early UART\n")
+                    kwargs["on_poll"]()
+                    self.assertIn("early UART", output.getvalue())
+                    (log.parent / "qemu.log").write_text("final QEMU error\n")
+                    raise KeyboardInterrupt("cancelled") if cancel else RuntimeError("worker failed")
+                with patch("ci.prepare", return_value={}), patch("ci.run_logged", side_effect=fake_worker), \
+                        patch.dict(os.environ, {"GITLAB_CI": "true", "BOSC_CI_LIVE_LOG_KIB": "1"}), \
+                        contextlib.redirect_stdout(output):
+                    if cancel:
+                        with self.assertRaises(KeyboardInterrupt):
+                            ci.run_cases(args, work, [case])
+                    else:
+                        ci.run_cases(args, work, [case])
+                self.assertIn("final QEMU error", output.getvalue())
+                self.assertIn("FAIL fake", output.getvalue())
+                self.assertEqual(output.getvalue().count("section_start:"), 2)
+                self.assertEqual(output.getvalue().count("section_end:"), 2)
+
+
 class ProcessAndReportTests(unittest.TestCase):
     def test_timeout_cleans_group(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -246,7 +401,8 @@ class ProcessAndReportTests(unittest.TestCase):
                     f"open({str(pidfile)!r},'w').write(str(os.getpid())); time.sleep(30)")
             start = time.monotonic()
             with self.assertRaises(subprocess.TimeoutExpired):
-                run_logged([sys.executable, "-c", code], Path(tmp) / "timeout.log", timeout=0.3)
+                run_logged([sys.executable, "-c", code], Path(tmp) / "timeout.log", timeout=0.3,
+                           on_poll=lambda: None)
             self.assertLess(time.monotonic() - start, 7)
             with self.assertRaises(ProcessLookupError):
                 os.kill(int(pidfile.read_text()), 0)
@@ -257,7 +413,7 @@ class ProcessAndReportTests(unittest.TestCase):
             child = "import os,time; " + f"open({str(pidfile)!r},'w').write(str(os.getpid())); time.sleep(60)"
             outer = ("import signal,sys; from common import run_logged; "
                      "signal.signal(signal.SIGTERM, lambda *a: sys.exit(130)); "
-                     f"run_logged([sys.executable,'-c',{child!r}],{str(Path(tmp)/'child.log')!r},timeout=60)")
+                     f"run_logged([sys.executable,'-c',{child!r}],{str(Path(tmp)/'child.log')!r},timeout=60,on_poll=lambda:None)")
             unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
             proc = subprocess.Popen([sys.executable, "-c", outer], cwd=HERE,
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

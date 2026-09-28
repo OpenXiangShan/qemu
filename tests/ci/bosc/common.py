@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import time
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parents[2]
@@ -66,7 +67,7 @@ def stop_group(proc):
     proc.wait(timeout=5)
 
 
-def run_logged(argv, log, *, cwd=None, env=None, timeout=120):
+def run_logged(argv, log, *, cwd=None, env=None, timeout=120, on_poll=None):
     """Bounded command with process-group cleanup, including cancellation."""
     log = Path(log)
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +77,20 @@ def run_logged(argv, log, *, cwd=None, env=None, timeout=120):
                                 stdout=stream, stderr=subprocess.STDOUT,
                                 start_new_session=True)
         try:
-            code = proc.wait(timeout=timeout)
+            if on_poll is None:
+                code = proc.wait(timeout=timeout)
+            else:
+                deadline = time.monotonic() + timeout
+                while True:
+                    on_poll()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+                    try:
+                        code = proc.wait(timeout=min(0.1, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
             if code:
                 raise RuntimeError(f"command exited {code}; see {log}")
         finally:
