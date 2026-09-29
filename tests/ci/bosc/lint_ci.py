@@ -2,6 +2,7 @@
 """Offline YAML and manifest consistency; NOT server-side GitLab CI Lint."""
 # SPDX-License-Identifier: GPL-2.0-or-later
 import yaml
+import re
 
 from common import HERE, SOURCE, catalog, read_json
 
@@ -23,6 +24,31 @@ def mapping(loader, node, deep=False):
 UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
 
 
+def validate_cases(cases, assets):
+    for spec in assets.values():
+        if (not isinstance(spec.get("size"), int) or spec["size"] <= 0
+                or not re.fullmatch(r"[a-f0-9]{64}", spec.get("sha256", ""))
+                or not spec.get("jf_path")):
+            raise ValueError("asset must have fixed size, SHA256 and JF path")
+    for case in cases:
+        if case.get("tier") not in ("mr", "extended"):
+            raise ValueError(f"invalid case tier: {case['id']}")
+        if not set(case["assets"]).issubset(assets):
+            raise ValueError(f"unknown asset in {case['id']}")
+        if case["kind"] == "iommu-linux":
+            buses = case.get("nvme_buses", [])
+            expected = ([f"pcie-d{i}-p0" for i in range(4)]
+                        if case.get("topology") == "four-die" else
+                        ["dw-pcie" if case["owner"] == "kmh" else "pcie-d0-p0"])
+            if (buses != expected or case.get("disks") != len(buses)
+                    or set(case["assets"]) != {"fw_jump", "iommu_kernel", "rootfs"}
+                    or case["group"] != "iommu"
+                    or case.get("machine") != ("xiangshan-kunminghu" if case["owner"] == "kmh" else "kmh-bosc-soc")
+                    or case.get("topology") not in ("single-root", "four-die")
+                    or case.get("topology") == "four-die" and case["tier"] != "extended"):
+                raise ValueError(f"invalid IOMMU Linux topology/assets: {case['id']}")
+
+
 def main():
     config = yaml.load((SOURCE / ".gitlab-ci.d/bosc.yml").read_text(), Loader=UniqueLoader)
     groups = set()
@@ -41,9 +67,9 @@ def main():
     if groups != {case["group"] for case in catalog()}:
         raise ValueError("YAML/test group mismatch")
     assets = read_json(HERE / "images.lock.json")["assets"]
-    for case in catalog():
-        if not set(case["assets"]).issubset(assets):
-            raise ValueError(f"unknown asset in {case['id']}")
+    validate_cases(catalog(), assets)
+    if "bosc:iommu" not in config["bosc:report"]["dependencies"]:
+        raise ValueError("final report must consume IOMMU results")
     if config["bosc:report"]["when"] != "always":
         raise ValueError("final report must run after failures")
     print("PASS: offline YAML/manifest checks (target GitLab CI Lint still required)")

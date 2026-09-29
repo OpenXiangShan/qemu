@@ -96,6 +96,10 @@ def run_cases(args, work, cases):
                                "message": f"{type(exc).__name__}: {exc}", "checks": []})
                 if isinstance(exc, KeyboardInterrupt):
                     interrupted_error = exc
+            finally:
+                if case.get("kind") == "iommu-linux":
+                    from runner import cleanup_nvme
+                    cleanup_nvme(work, case, directory)
         result = read_json(directory / "result.json")
         print(f"{result['status']} {case['id']} {result.get('message', '')}", flush=True)
         if result["status"] != "PASS":
@@ -114,6 +118,7 @@ def parser():
     p.add_argument("--dependencies-dir", type=Path, default=os.environ.get("BOSC_CI_DEPENDENCIES_DIR"), help="optional offline root for locked native-deps archives")
     p.add_argument("--jf-paths", type=Path, default=os.environ.get("BOSC_CI_JF_PATHS"), help="deployment JSON: asset ID to actual repo-relative JF path (hashes unchanged)")
     p.add_argument("--base")
+    p.add_argument("--full", action="store_true", help="include extended cases regardless of changed paths")
     p.add_argument("--head", default="HEAD")
     p.add_argument("--case", action="append", help="select explicit local case(s), or filter already selected run cases")
     p.add_argument("--group", choices=sorted({c["group"] for c in catalog()}))
@@ -157,7 +162,7 @@ def main():
                 return 2
         try:
             if args.command in ("all", "select"):
-                result = select(work, args.base, args.head, args.case)
+                result = select(work, args.base, args.head, args.case, args.full)
                 print("SELECTED=" + ",".join(result["selected"]), flush=True)
             if args.command == "doctor" and not (work / "selected-tests.json").exists():
                 cases = catalog()

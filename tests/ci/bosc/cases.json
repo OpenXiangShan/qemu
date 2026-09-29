@@ -1,18 +1,290 @@
 {
   "schema": 1,
-  "deferred": ["PCIe integration", "my-virtio", "ACPI/UEFI boot", "KVM/M-mode/nested", "VFIO", "cosim/devproxy and default DMA fallback", "RTL/FPGA", "direct generated-DTB MCU boot"],
+  "deferred": [
+    "my-virtio",
+    "ACPI/UEFI boot",
+    "KVM/M-mode/nested",
+    "VFIO",
+    "cosim/devproxy and default DMA fallback",
+    "RTL/FPGA",
+    "direct generated-DTB MCU boot"
+  ],
   "cases": [
-    {"id": "qtest-die", "group": "qtest", "owner": "bosc", "kind": "qtest", "binary": "kmh-bosc-die-test", "timeout": 120, "assets": [], "tests": ["/kmh-bosc/single/addresses", "/kmh-bosc/die-routing", "/kmh-bosc/ddr/16g", "/kmh-bosc/ddr/128g", "/kmh-bosc/ddr/sparse"]},
-    {"id": "qtest-traffic", "group": "qtest", "owner": "bosc", "kind": "qtest", "binary": "bosc-axi4-traffic-test", "timeout": 120, "assets": [], "tests": ["/riscv64/bosc_axi4_traffic/reset_and_readback", "/riscv64/bosc_axi4_traffic/bare_traffic_windows", "/riscv64/bosc_axi4_traffic/user_requester_selection", "/riscv64/bosc_axi4_traffic/error_dma_has_no_done"]},
-    {"id": "kmh-linux-1", "group": "kmh-linux", "owner": "kmh", "kind": "linux", "cpus": 1, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
-    {"id": "kmh-linux-16", "group": "kmh-linux", "owner": "kmh", "kind": "linux", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
-    {"id": "bosc-ddr-single", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "single", "die_mask": "0xf", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
-    {"id": "bosc-ddr-multi", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "multi", "die_mask": "0xf", "cpus": 64, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
-    {"id": "bosc-ddr-multi-die0", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "multi", "die_mask": "0x1", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
-    {"id": "bosc-ddr-default", "group": "bosc-ddr", "owner": "bosc", "kind": "linux", "mode": "default", "die_mask": "0x1", "cpus": 16, "timeout": 300, "assets": ["fw_jump", "kernel", "rootfs"]},
-    {"id": "bosc-mcu-single", "group": "bosc-mcu", "owner": "bosc", "kind": "mcu", "mode": "single", "die_mask": "0xf", "cpus": 16, "timeout": 600, "assets": ["fw_jump", "rootfs", "mcu", "qspi"]},
-    {"id": "bosc-mcu-multi", "group": "bosc-mcu", "owner": "bosc", "kind": "mcu", "mode": "multi", "die_mask": "0xf", "cpus": 64, "timeout": 600, "assets": ["fw_jump", "rootfs", "mcu", "qspi"]},
-    {"id": "bosc-mcu-multi-die0", "group": "bosc-mcu", "owner": "bosc", "kind": "mcu", "mode": "multi", "die_mask": "0x1", "cpus": 16, "timeout": 600, "assets": ["fw_jump", "rootfs", "mcu", "qspi"]},
-    {"id": "bosc-itgen-cross-die", "group": "itgen", "owner": "bosc", "kind": "itgen", "timeout": 120, "assets": ["itgen"]}
+    {
+      "id": "qtest-die",
+      "group": "qtest",
+      "owner": "bosc",
+      "kind": "qtest",
+      "binary": "kmh-bosc-die-test",
+      "timeout": 120,
+      "assets": [],
+      "tests": [
+        "/kmh-bosc/single/addresses",
+        "/kmh-bosc/die-routing",
+        "/kmh-bosc/ddr/16g",
+        "/kmh-bosc/ddr/128g",
+        "/kmh-bosc/ddr/sparse"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "qtest-traffic",
+      "group": "qtest",
+      "owner": "bosc",
+      "kind": "qtest",
+      "binary": "bosc-axi4-traffic-test",
+      "timeout": 120,
+      "assets": [],
+      "tests": [
+        "/riscv64/bosc_axi4_traffic/reset_and_readback",
+        "/riscv64/bosc_axi4_traffic/bare_traffic_windows",
+        "/riscv64/bosc_axi4_traffic/user_requester_selection",
+        "/riscv64/bosc_axi4_traffic/error_dma_has_no_done"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "qtest-pcie",
+      "group": "qtest",
+      "owner": "bosc",
+      "kind": "qtest",
+      "tier": "mr",
+      "binary": "kmh-bosc-pcie-test",
+      "timeout": 120,
+      "assets": [],
+      "tests": [
+        "/kmh-bosc/pcie/imsi-axi44",
+        "/kmh-bosc/pcie/imsi-iommu",
+        "/kmh-bosc/pcie/generic-dwc",
+        "/kmh-bosc/pcie/iommu-root-contexts"
+      ],
+      "owners": [
+        "bosc",
+        "kmh"
+      ]
+    },
+    {
+      "id": "kmh-linux-1",
+      "group": "kmh-linux",
+      "owner": "kmh",
+      "kind": "linux",
+      "cpus": 1,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "kmh-linux-16",
+      "group": "kmh-linux",
+      "owner": "kmh",
+      "kind": "linux",
+      "cpus": 16,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-ddr-single",
+      "group": "bosc-ddr",
+      "owner": "bosc",
+      "kind": "linux",
+      "mode": "single",
+      "die_mask": "0xf",
+      "cpus": 16,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-ddr-multi",
+      "group": "bosc-ddr",
+      "owner": "bosc",
+      "kind": "linux",
+      "mode": "multi",
+      "die_mask": "0xf",
+      "cpus": 64,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-ddr-multi-die0",
+      "group": "bosc-ddr",
+      "owner": "bosc",
+      "kind": "linux",
+      "mode": "multi",
+      "die_mask": "0x1",
+      "cpus": 16,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-ddr-default",
+      "group": "bosc-ddr",
+      "owner": "bosc",
+      "kind": "linux",
+      "mode": "default",
+      "die_mask": "0x1",
+      "cpus": 16,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-mcu-single",
+      "group": "bosc-mcu",
+      "owner": "bosc",
+      "kind": "mcu",
+      "mode": "single",
+      "die_mask": "0xf",
+      "cpus": 16,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "rootfs",
+        "mcu",
+        "qspi"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-mcu-multi",
+      "group": "bosc-mcu",
+      "owner": "bosc",
+      "kind": "mcu",
+      "mode": "multi",
+      "die_mask": "0xf",
+      "cpus": 64,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "rootfs",
+        "mcu",
+        "qspi"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-mcu-multi-die0",
+      "group": "bosc-mcu",
+      "owner": "bosc",
+      "kind": "mcu",
+      "mode": "multi",
+      "die_mask": "0x1",
+      "cpus": 16,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "rootfs",
+        "mcu",
+        "qspi"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-itgen-cross-die",
+      "group": "itgen",
+      "owner": "bosc",
+      "kind": "itgen",
+      "timeout": 120,
+      "assets": [
+        "itgen"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "kmh-iommu-linux",
+      "group": "iommu",
+      "owner": "kmh",
+      "kind": "iommu-linux",
+      "tier": "mr",
+      "machine": "xiangshan-kunminghu",
+      "topology": "single-root",
+      "nvme_buses": [
+        "dw-pcie"
+      ],
+      "disks": 1,
+      "cpus": 1,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "iommu_kernel",
+        "rootfs"
+      ]
+    },
+    {
+      "id": "bosc-iommu-linux-single",
+      "group": "iommu",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "tier": "mr",
+      "machine": "kmh-bosc-soc",
+      "topology": "single-root",
+      "nvme_buses": [
+        "pcie-d0-p0"
+      ],
+      "disks": 1,
+      "cpus": 1,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "iommu_kernel",
+        "rootfs"
+      ],
+      "mode": "single",
+      "die_mask": "0x1",
+      "core_mask": "0x1"
+    },
+    {
+      "id": "bosc-iommu-linux-multi",
+      "group": "iommu",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "tier": "extended",
+      "machine": "kmh-bosc-soc",
+      "topology": "four-die",
+      "nvme_buses": [
+        "pcie-d0-p0",
+        "pcie-d1-p0",
+        "pcie-d2-p0",
+        "pcie-d3-p0"
+      ],
+      "disks": 4,
+      "cpus": 4,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "iommu_kernel",
+        "rootfs"
+      ],
+      "mode": "multi",
+      "die_mask": "0xf",
+      "core_mask": "0x1"
+    }
   ]
 }

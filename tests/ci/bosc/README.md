@@ -53,7 +53,7 @@ python3 tests/ci/bosc/ci.py all --assets-dir /srv/bosc-ci/assets --jobs 8
 新构建、guest 执行和汇总。不会覆盖已有选测或用例日志；重跑请使用新目录。
 
 已有文件不必为了布局再复制一次，可用 `--asset NAME=PATH` 提供本地映射，仍严格
-匹配锁定 hash。ID 为 `fw_jump`、`kernel`、`rootfs`、`mcu`、`qspi`、`itgen`：
+匹配锁定 hash。ID 为 `fw_jump`、`kernel`、`iommu_kernel`、`rootfs`、`mcu`、`qspi`、`itgen`：
 
 ```sh
 python3 tests/ci/bosc/ci.py all --work-dir build/ci/local-01 \
@@ -131,8 +131,9 @@ release 升级通过独立制品验证和锁文件 MR，普通 MR 不使用 late
 
 ## 首批覆盖和结果
 
-共 12 个执行单元：9 个 Linux 配置、1 个 ITGen、2 个 qtest 可执行文件；后两者展开
-为 9 个 qtest 子测试。因此功能用例是 9 Linux + 1 ITGen + 9 qtest。
+共 16 个执行单元（含 extended）：原有 9 个 Linux 配置、3 个原生 IOMMU Linux
+配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 13 个子测试。MR 最多选中
+15 个执行单元，四 die IOMMU Linux 属于 extended。
 JSON/JUnit 另外保留 qtest 容器结果与 3 个 MCU 已知缺陷断言，不能将行数等同于用例数。
 
 Linux 检查实际在线 CPU 集合、固定 kernel release、机器 model、pmem0 挂载/overlay
@@ -162,6 +163,36 @@ QMP quit → TERM → KILL，只处理本次创建的进程/进程组；不会�
 
 PASS、FAIL、XFAIL、XPASS、NOT_SELECTED 分开统计。选中结果缺失、混入其他 run、
 脚本变更、qtest 子结果缺失均不能全绿。失败由脚本退出码阻塞，JUnit 只是展示。
+
+## 原生 system IOMMU Linux 门禁
+
+`bosc:iommu` 使用固定 `st-release-v0.9.99/xiangshan/Image`，不复用 minimal 内核。
+新资产大小和 SHA256 已与 JF metadata 核对；所有离线/cache/JF 输入仍须逐次校验。
+
+| 用例 | 拓扑 | 层级 |
+| --- | --- | --- |
+| kmh-iommu-linux | KMH，dw-pcie 上一个 NVMe，1 核 | mr |
+| bosc-iommu-linux-single | BOSC single、die-mask=0x1，p0 一个 NVMe，1 核 | mr |
+| bosc-iommu-linux-multi | BOSC multi、四 die，每 die p0 一个 NVMe、1 核 | extended |
+
+三者均使用 `dw-pcie=on,iommu-sys=on,generated-dtb=on`，要求 Linux translated
+默认域、IOMMU 使用 MSIs、每个 endpoint 绑定 DMA/DMA-FQ group、controller live
+且 I/O queue 初始化。逐盘用随机 1 MiB 数据执行 `oflag=direct` 写入和
+`iflag=direct` 读回，对比 SHA256，并核对该 controller 的非 admin 队列中断计数增长。
+只枚举 IOMMU 或 `/dev/nvme*` 不会通过；UART/QEMU 中的 IOMMU fault、NVMe timeout、
+I/O error、panic 都失败。四 die 不使用 XFAIL。
+
+每次在 `work/scratch/<case>/` 创建私有 64 MiB sparse raw 盘，避免写 JF/rootfs
+源文件。worker finally 和父进程超时/取消清理会删除测试盘；scratch 不在 artifacts
+路径中。结果保留 `nvme-disks.json`（总大小、bus、serial、路径和清理状态）、
+`iommu-probe.sh`、DTB/DTS/逐 root iommu-map、BDF/DID/group、读写 hash、中断前后
+快照和完整 UART/QEMU 日志。手动 replay 前按盘元数据重新创建已清理的测试盘。
+
+qtest 组继续运行 AXI translation/requester/error 测试，并运行 PCIe Off/Bare、
+iMSI receiver、跨 root 地址与 translated context 隔离测试。最后一项为四个 root
+的同 RID/IOVA 安装不同页表，防止 DID 碰撞回归。PCIe qtest 在 KMH/BOSC 任一
+平台改动时均选中；共享 IOMMU、PCI requester、PCIe host、NVMe 代码取两者并集。
+不包含 my-virtio-IOMMU、ITGen 65 项套件、nested KVM 或 RTL/VCS。
 
 ## 实时串口与失败诊断
 
@@ -219,7 +250,10 @@ concurrent = 1
 将项目 custom CI configuration path 指向 `.gitlab-ci.d/bosc.yml`，不改上游顶层入口。
 目标 GitLab CI Lint、在线 artifact 合并和实际 Runner 调度仍需部署验收。
 
-MR 使用统一 Python 影响映射；主分支、schedule、tag、手动执行第一阶段全量。
+MR 使用统一 Python 影响映射且默认仅选 `tier=mr`，未知路径或缺 diff 仍选中
+全部 MR 用例。主分支、schedule、tag、本地无 base 的全量运行同时选择 extended；
+普通 web pipeline 默认 MR 层级。`BOSC_CI_FULL=1` 或本地 `--full` 显式选择全量，
+也可本地 `--case bosc-iommu-linux-multi` 独立验证。
 固定任务 DAG；未选中的组输出 NOT_SELECTED，不取得软件镜像、不执行 guest。
 流水线不包含 image/services、Docker、固件编译或 JF 上传。
 任务 artifact 上限至少需容纳 bundle（以本机实际大小为准），不上传 rootfs/cache。

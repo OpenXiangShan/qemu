@@ -49,7 +49,7 @@ def mcu_text(die, count):
 class SelectionTests(unittest.TestCase):
     def owners(self, paths):
         chosen = choose(paths)["selected"]
-        return {c["owner"] for c in catalog() if c["id"] in chosen}
+        return {c["owner"] for c in catalog() if c["id"] in chosen and "owners" not in c}
 
     def test_bosc(self):
         self.assertEqual(self.owners(["hw/riscv/kmh_bosc_soc.c"]), {"bosc"})
@@ -76,7 +76,7 @@ class SelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
             with patch("selection.changed_paths", side_effect=RuntimeError("missing")):
                 result = select(Path(tmp), "unknown")
-            self.assertEqual(len(result["selected"]), len(catalog()))
+            self.assertEqual(len(result["selected"]), len([c for c in catalog() if c["tier"] == "mr"]))
 
     def test_incomplete_diff_rejected(self):
         with self.assertRaises(ValueError):
@@ -88,11 +88,37 @@ class SelectionTests(unittest.TestCase):
             with patch("selection.changed_paths", return_value=["hw/riscv/xiangshan_kmh.c"]) as diff:
                 result = select(Path(tmp))
             diff.assert_called_once_with("base", "head")
-            self.assertEqual(result["selected"], ["kmh-linux-1", "kmh-linux-16"])
+            self.assertEqual(result["selected"], ["qtest-pcie", "kmh-linux-1", "kmh-linux-16", "kmh-iommu-linux"])
 
     def test_schedule_ignores_path_filter(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"CI_PIPELINE_SOURCE": "schedule"}, clear=True):
             self.assertEqual(len(select(Path(tmp), "base")["selected"]), len(catalog()))
+
+
+    def test_iommu_impact_and_tiers(self):
+        multi = "bosc-iommu-linux-multi"
+        for path in ("hw/riscv/riscv-iommu.c", "hw/riscv/riscv-iommu.h",
+                     "hw/pci-host/designware.c", "hw/pci/pci.c", "hw/nvme/ctrl.c"):
+            result = choose([path])
+            self.assertTrue({"kmh-iommu-linux", "bosc-iommu-linux-single"}.issubset(result["selected"]))
+            self.assertIn(multi, result["not_selected"])
+            self.assertIn(multi, choose([path], extended=True)["selected"])
+        self.assertIn(multi, choose(["unknown.c"])["not_selected"])
+
+    def test_pipeline_extended_rules(self):
+        for env, expected in [
+            ({"CI_PIPELINE_SOURCE": "merge_request_event"}, False),
+            ({"CI_PIPELINE_SOURCE": "web"}, False),
+            ({"CI_PIPELINE_SOURCE": "schedule"}, True),
+            ({"CI_PIPELINE_SOURCE": "push", "CI_COMMIT_TAG": "v1"}, True),
+            ({"CI_PIPELINE_SOURCE": "push", "CI_COMMIT_BRANCH": "main", "CI_DEFAULT_BRANCH": "main"}, True),
+            ({"CI_PIPELINE_SOURCE": "merge_request_event", "BOSC_CI_FULL": "1"}, True),
+        ]:
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, env, clear=True):
+                result = select(Path(tmp))
+                self.assertEqual("bosc-iommu-linux-multi" in result["selected"], expected)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            self.assertIn("bosc-iommu-linux-multi", select(Path(tmp), full=True)["selected"])
 
 
 class AssetTests(unittest.TestCase):
@@ -238,6 +264,142 @@ class CheckTests(unittest.TestCase):
         for text in ("ok 1 /a\n", "ok 1 /a # SKIP\n", "not ok 1 /a\n"):
             with self.assertRaises(AssertionError):
                 checks.qtest_assertions(text, ["/a", "/b"])
+
+
+class IommuTests(unittest.TestCase):
+    case = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-single")
+
+    def valid_log(self, count=1):
+        text = "iommu: Default domain type: Translated\nriscv,iommu 4f80200000.iommu: using MSIs\n"
+        rows = []
+        for i in range(count):
+            bdf = f"{i * 3:04x}:01:00.0"
+            text += f"pci {bdf}: Adding to iommu group {i}\nnvme nvme{i}: pci function {bdf}\nnvme nvme{i}: 1/0/0 default/read/poll queues\n"
+            rows += [f"TOKEN:DEVICE=BOSC-CI-{i}|nvme{i}|{bdf}|{i}|DMA-FQ|live|nvme",
+                     f"TOKEN:DMA=BOSC-CI-{i}|{'a'*64}|{'a'*64}|10|20|1048576|direct|msi"]
+        return text + "TOKEN:IOMMU_BEGIN\n" + "\n".join(rows) + f"\nTOKEN:NVME_COUNT={count}\nTOKEN:IOMMU_RC=0\nTOKEN:IOMMU_END\n"
+
+    def test_valid_single_and_multi(self):
+        self.assertEqual(len(checks.iommu_assertions(self.valid_log(), "TOKEN", self.case)), 1)
+        case = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-multi")
+        result = checks.iommu_assertions(self.valid_log(4), "TOKEN", case)
+        self.assertEqual([r["did"] for r in result], [0x100, 0x30100, 0x60100, 0x90100])
+
+    def test_kmh_linux_domain_numbering_and_unrelated_dmac_probe(self):
+        case = next(c for c in catalog() if c["id"] == "kmh-iommu-linux")
+        text = self.valid_log().replace("0000:01:00.0", "0001:01:00.0")
+        result = checks.iommu_assertions(text, "TOKEN", case)
+        self.assertEqual(result[0]["did"], 0x100)
+        text = self.valid_log() + "dw_axi_dmac_platform b000000.dma-controller: probe with driver dw_axi_dmac_platform failed with error -2\n"
+        checks.iommu_assertions(text, "TOKEN", self.case)
+
+    def test_missing_bad_and_echo_evidence(self):
+        good = self.valid_log()
+        for old, new in [("Translated", "Passthrough"), ("using MSIs", "using wired interrupts"),
+                         ("DMA-FQ", "identity"), ("|live|", "|dead|"), ("|10|20|", "|20|20|"),
+                         ("a"*64 + "|" + "a"*64, "a"*64 + "|" + "b"*64),
+                         ("NVME_COUNT=1", "NVME_COUNT=0"), ("IOMMU_RC=0", "IOMMU_RC=1"),
+                         ("TOKEN:DEVICE=", "echo TOKEN:DEVICE="), ("Adding to iommu group", "group"),
+                         ("default/read/poll queues", "no queues"), ("|direct|", "|buffered|"),
+                         ("BOSC-CI-0", "BOSC-CI-1"), ("TOKEN:IOMMU_END", "")]:
+            with self.subTest(old=old), self.assertRaises(AssertionError):
+                checks.iommu_assertions(good.replace(old, new), "TOKEN", self.case)
+        with self.assertRaises(AssertionError):
+            checks.iommu_assertions("/sys/class/iommu\n/dev/nvme0n1\n", "TOKEN", self.case)
+        with self.assertRaises(AssertionError):
+            checks.iommu_assertions(good, "TOKEN", dict(self.case, disks=4))
+
+    def test_fatal_uart_and_qemu(self):
+        for error in ("IOMMU fault", "nvme nvme0: I/O 1 timeout", "I/O error", "Kernel panic", "riscv-iommu: translation fault"):
+            with self.subTest(error=error), self.assertRaises(AssertionError):
+                checks.iommu_assertions(self.valid_log()+error, "TOKEN", self.case)
+            with self.assertRaises(AssertionError):
+                checks.iommu_assertions(self.valid_log(), "TOKEN", self.case, error)
+
+    def test_sparse_private_disks_and_failure_cleanup(self):
+        from runner import nvme_disks, cleanup_nvme
+        from common import read_json
+        for error in (None, RuntimeError, KeyboardInterrupt):
+            with tempfile.TemporaryDirectory() as tmp:
+                work = Path(tmp)
+                directory = work / "results" / self.case["id"]
+                directory.mkdir(parents=True)
+                try:
+                    with nvme_disks(work, self.case, directory) as args:
+                        disk = work / "scratch" / self.case["id"] / "nvme0.raw"
+                        self.assertEqual(disk.stat().st_size, 64*1024*1024)
+                        self.assertEqual(disk.stat().st_blocks, 0)
+                        self.assertIn("bus=pcie-d0-p0", " ".join(args))
+                        if error:
+                            raise error()
+                except (RuntimeError, KeyboardInterrupt):
+                    pass
+                self.assertFalse(disk.exists())
+                self.assertTrue(read_json(directory / "nvme-disks.json")["cleaned"])
+                cleanup_nvme(work, self.case, directory)  # Parent cleanup is idempotent.
+
+    def test_parent_cleans_killed_worker_disks(self):
+        import ci
+        from types import SimpleNamespace
+        from runner import nvme_disks
+        from common import read_json
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            write_json(work / "selected-tests.json", {"config_sha256": "hash", "run_id": "run"})
+            args = SimpleNamespace(assets_dir=None, asset=[], cache_dir=None, jf_paths=None)
+            held = []
+            def killed(*args, **kwargs):
+                directory = work / "results" / self.case["id"]
+                ctx = nvme_disks(work, self.case, directory)
+                ctx.__enter__()
+                held.append(ctx)  # Simulate SIGKILL, so the worker finally did not run.
+                raise RuntimeError("worker killed")
+            with patch("ci.prepare", return_value={}), patch("ci.run_logged", side_effect=killed), contextlib.redirect_stdout(io.StringIO()):
+                ci.run_cases(args, work, [self.case])
+            self.assertFalse(list((work / "scratch").rglob("*.raw")))
+            self.assertTrue(read_json(work / "results" / self.case["id"] / "nvme-disks.json")["cleaned"])
+            held[0].__exit__(None, None, None)
+
+    def test_schema_and_kernel_lock(self):
+        from lint_ci import validate_cases
+        from common import read_json
+        specs = read_json(HERE / "images.lock.json")["assets"]
+        validate_cases(catalog(), specs)
+        self.assertEqual(specs["iommu_kernel"]["jf_path"], "xs-sw/st-release/v0.9.99/xiangshan/Image")
+        for edits in ({"assets": ["fw_jump", "kernel", "rootfs"]}, {"disks": 4},
+                      {"tier": "xfail"}, {"nvme_buses": ["wrong"]}):
+            with self.assertRaises(ValueError):
+                validate_cases([dict(self.case, **edits)], specs)
+
+    def test_iommu_missing_result_is_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            select(work, case_ids=["bosc-iommu-linux-multi"])
+            self.assertEqual(aggregate(work, "iommu")["status"], "FAIL")
+
+    def test_report_rejects_pass_without_endpoint_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            selected = select(work, case_ids=[self.case["id"]])
+            write_json(work / "results" / self.case["id"] / "result.json",
+                       {"id": self.case["id"], "status": "PASS", "checks": [],
+                        "run_id": selected["run_id"], "selection_sha256": selected["config_sha256"]})
+            self.assertEqual(aggregate(work, "iommu")["status"], "FAIL")
+
+    def test_new_qtest_source_is_part_of_build_identity(self):
+        import common
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "tests/qtest/new.c"
+            src.parent.mkdir(parents=True)
+            src.write_text("first")
+            def git_mock(*args, **kwargs):
+                return b"tests/qtest/new.c\0" if args[0] == "ls-files" else b"HEAD"
+            with patch("common.SOURCE", root), patch("common.git", side_effect=git_mock):
+                first = common.source_identity()
+                src.write_text("changed")
+                second = common.source_identity()
+            self.assertNotEqual(first["untracked_sources"], second["untracked_sources"])
 
 
 class LiveLogTests(unittest.TestCase):
@@ -437,7 +599,7 @@ class ProcessAndReportTests(unittest.TestCase):
     def test_missing_result_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
-            selected = choose(full_reason="test")
+            selected = choose(full_reason="test", extended=True)
             selected["run_id"] = "test-run"
             write_json(work / "selected-tests.json", selected)
             result = aggregate(work)

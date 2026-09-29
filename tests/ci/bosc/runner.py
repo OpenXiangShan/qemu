@@ -1,5 +1,6 @@
 """Bounded real QEMU execution using the in-tree QMP harness. GPL-2.0-or-later."""
 import os
+import contextlib
 import re
 import shlex
 import signal
@@ -11,7 +12,7 @@ import time
 import uuid
 
 from common import SOURCE, run_logged, sha256, write_json
-from checks import BOOTARGS, FATAL, clean, itgen_assertions, linux_assertions, mcu_assertions, qtest_assertions
+from checks import BOOTARGS, FATAL, clean, iommu_assertions, itgen_assertions, linux_assertions, mcu_assertions, qtest_assertions
 
 sys.path.insert(0, str(SOURCE / "python"))
 from qemu.machine import QEMUMachine  # noqa: E402
@@ -25,8 +26,10 @@ def machine(case, boot="ddr", extra=None):
         options = ["kmh-bosc-soc"]
         if case["mode"] != "default":
             options.append("soc-mode=" + case["mode"])
-        options += ["die-mask=" + case["die_mask"], "core-mask=0xffff", "boot-source=" + boot]
+        options += ["die-mask=" + case["die_mask"], "core-mask=" + case.get("core_mask", "0xffff"), "boot-source=" + boot]
         smp = "16,maxcpus=17" if case["mode"] == "single" else "64,maxcpus=68"
+    if case["kind"] == "iommu-linux":
+        options += ["dw-pcie=on", "iommu-sys=on"]
     return ["-M", ",".join(options + (extra or [])), "-smp", smp, "-m", "16G", "-accel", "tcg"]
 
 
@@ -35,13 +38,17 @@ def dt_options():
             "autotest-workload-addr=0xc0000000"]
 
 
+def bootargs(case):
+    return BOOTARGS + (" iommu.passthrough=0" if case["kind"] == "iommu-linux" else "")
+
+
 def prepare_dtb(binary, case, paths, directory):
     dtb = directory / "machine.dtb"
     argv = [binary, "-L", binary.parent / "share/qemu", *machine(case, extra=dt_options() + [f"dumpdtb={dtb}"]),
             "-display", "none", "-monitor", "none", "-serial", "null",
             "-bios", paths["fw_jump"]]
     run_logged(argv, directory / "dumpdtb.log", timeout=30)
-    run_logged(["fdtput", "-t", "s", dtb, "/chosen", "bootargs", BOOTARGS],
+    run_logged(["fdtput", "-t", "s", dtb, "/chosen", "bootargs", bootargs(case)],
                directory / "fdtput.log", timeout=30)
     run_logged(["dtc", "-I", "dtb", "-O", "dts", dtb], directory / "machine.dts", timeout=30)
     def prop(node, name, kind="s"):
@@ -54,6 +61,22 @@ def prepare_dtb(binary, case, paths, directory):
     if model != expected:
         raise AssertionError(f"DT model {model!r}, expected {expected!r}")
     evidence = {"model": model, "sha256": sha256(dtb)}
+    if case["kind"] == "iommu-linux":
+        nodes = subprocess.check_output(["fdtget", "-l", str(dtb), "/soc"], timeout=10).decode().split()
+        roots = []
+        for node in nodes:
+            if not node.startswith(("pcie@", "pci@")):
+                continue
+            node = "/soc/" + node
+            mapping = [int(x, 16) for x in prop(node, "iommu-map", "x").split()]
+            segment = int(prop(node, "linux,pci-domain", "i")) if case["owner"] == "bosc" else 0
+            base = segment << 16 if case["owner"] == "bosc" else 0
+            if len(mapping) != 4 or mapping[0] != 0 or mapping[2:] != [base, 0x10000]:
+                raise AssertionError(f"incorrect DT IOMMU mapping for {node}: {mapping}")
+            roots.append({"node": node, "segment": segment, "iommu_map": mapping})
+        if not roots:
+            raise AssertionError("missing PCIe iommu-map in DT")
+        evidence["pcie_roots"] = roots
     if case["owner"] == "bosc":
         single = case["mode"] == "single"
         imsic = [int(x, 16) for x in prop("/soc/imsics-s", "reg", "x").split()]
@@ -90,6 +113,96 @@ def shell_probe(token):
             "printf '%s:RC=%s\\n%s:END\\n' \"$t\" \"$r\" \"$t\"\n")
 
 
+def iommu_probe(token):
+    # Run in a subshell so set -e reports a nonzero RC without killing the
+    # interactive console. Every line fits the tty canonical input buffer.
+    return "t=" + shlex.quote(token) + "\n" + r'''(
+set -eu
+printf '\n%s:IOMMU_BEGIN\n' "$t"
+irq_count() {
+    awk -v c="$1" '$NF ~ ("^" c "q[1-9][0-9]*$") {for(i=2;i<=NF && $i ~ /^[0-9]+$/;i++) n+=$i} END {print n+0}' /proc/interrupts
+}
+n=0
+for p in /sys/class/nvme/nvme*; do
+    [ -e "$p" ] || continue
+    c=${p##*/}
+    serial=$(tr -d ' ' < "$p/serial")
+    state=$(cat "$p/state")
+    bdf=$(basename "$(readlink -f "$p/device")")
+    group=$(basename "$(readlink -f "$p/device/iommu_group")")
+    domain=$(cat "$p/device/iommu_group/type")
+    driver=$(basename "$(readlink -f "$p/device/driver")")
+    msis=$(cat "$p/device/msi_irqs/"*)
+    printf '%s:DEVICE=%s|%s|%s|%s|%s|%s|%s\n' "$t" "$serial" "$c" "$bdf" "$group" "$domain" "$state" "$driver"
+    [ "$state" = live ] && [ "$driver" = nvme ]
+    case "$domain" in DMA|DMA-FQ) ;; *) exit 1;; esac
+    case "$msis" in *msi*) ;; *) exit 1;; esac
+    dev=/dev/${c}n1
+    [ -b "$dev" ]
+    src=/tmp/bosc-ci-source
+    dst=/tmp/bosc-ci-readback
+    dd if=/dev/urandom of="$src" bs=4096 count=256
+    before=$(irq_count "$c")
+    printf '%s:IRQ_BEFORE=%s\n' "$t" "$c"
+    cat /proc/interrupts
+    dd if="$src" of="$dev" bs=4096 count=256 seek=256 oflag=direct conv=fsync
+    dd if="$dev" of="$dst" bs=4096 count=256 skip=256 iflag=direct
+    after=$(irq_count "$c")
+    printf '%s:IRQ_AFTER=%s\n' "$t" "$c"
+    cat /proc/interrupts
+    a=$(sha256sum "$src"); a=${a%% *}
+    b=$(sha256sum "$dst"); b=${b%% *}
+    printf '%s:DMA=%s|%s|%s|%s|%s|1048576|direct|msi\n' "$t" "$serial" "$a" "$b" "$before" "$after"
+    [ "$a" = "$b" ] && [ "$after" -gt "$before" ]
+    rm -f "$src" "$dst"
+    n=$((n+1))
+done
+printf '%s:NVME_COUNT=%s\n' "$t" "$n"
+)
+r=$?
+printf '%s:IOMMU_RC=%s\n%s:IOMMU_END\n' "$t" "$r" "$t"
+'''
+
+
+def cleanup_nvme(work, case, directory):
+    """Also called by the parent after a worker timeout/kill."""
+    from common import read_json
+    manifest = directory / "nvme-disks.json"
+    if not manifest.exists():
+        return
+    data = read_json(manifest)
+    scratch = work / "scratch" / case["id"]
+    for index in range(case["disks"]):
+        (scratch / f"nvme{index}.raw").unlink(missing_ok=True)
+    if scratch.exists():
+        scratch.rmdir()
+    data["cleaned"] = True
+    write_json(manifest, data)
+
+
+@contextlib.contextmanager
+def nvme_disks(work, case, directory):
+    if case["kind"] != "iommu-linux":
+        yield []
+        return
+    scratch = work / "scratch" / case["id"]
+    scratch.mkdir(parents=True, exist_ok=False)
+    disks = [{"path": str(scratch / f"nvme{i}.raw"), "bus": bus,
+              "serial": f"BOSC-CI-{i}", "size": 64 * 1024 * 1024}
+             for i, bus in enumerate(case["nvme_buses"])]
+    write_json(directory / "nvme-disks.json", {"disks": disks, "cleaned": False})
+    try:
+        args = []
+        for i, disk in enumerate(disks):
+            with open(disk["path"], "xb") as stream:
+                stream.truncate(disk["size"])
+            args += ["-drive", f"file={disk['path']},if=none,id=nvme{i},format=raw,cache=none",
+                     "-device", f"nvme,drive=nvme{i},bus={disk['bus']},addr=0,serial={disk['serial']}"]
+        yield args
+    finally:
+        cleanup_nvme(work, case, directory)
+
+
 def shutdown_vm(vm):
     """QMP quit, then TERM, then the native harness KILL/cleanup fallback."""
     try:
@@ -118,6 +231,7 @@ def run_vm(binary, args, directory, timeout, kind, case):
     token = "BOSC_CI_" + uuid.uuid4().hex
     text = ""
     sent = False
+    iommu_sent = False
     last_data_at = time.monotonic()
     deadline = time.monotonic() + timeout
     # Never emit a command containing an inherited fd as a reproducible CLI.
@@ -162,7 +276,15 @@ def run_vm(binary, args, directory, timeout, kind, case):
                             console.sendall(shell_probe(token).encode())
                             sent = True
                         if sent and re.search(rf"(?m)^{token}:END$", normalized):
-                            break
+                            if kind != "iommu-linux":
+                                break
+                            if not iommu_sent:
+                                probe = iommu_probe(token)
+                                (directory / "iommu-probe.sh").write_text(probe)
+                                console.sendall(probe.encode())
+                                iommu_sent = True
+                            if re.search(rf"(?m)^{token}:IOMMU_END$", normalized):
+                                break
                 else:
                     raise TimeoutError(f"{kind} exceeded {timeout}s; last stage preserved in UART log")
             # Quiesce before consuming other UARTs and asserting no late panic.
@@ -186,6 +308,9 @@ def run_vm(binary, args, directory, timeout, kind, case):
         if kind == "itgen":
             return itgen_assertions(text), []
         evidence = linux_assertions(text, token, case)
+        if kind == "iommu-linux":
+            evidence["iommu"] = iommu_assertions(text, token, case,
+                (directory / "qemu.log").read_text(errors="replace"))
         checks = []
         if kind == "mcu":
             logs = [text] + [(directory / f"uart{d}.log").read_text(errors="replace")
@@ -215,18 +340,20 @@ def execute(work, case, paths, directory):
         return run_vm(binary, args, directory, case["timeout"], "itgen", case)
     dtb, dt_evidence = prepare_dtb(binary, case, paths, directory)
     trigger = directory / "boot-rootfs.trigger"
-    trigger.write_text(f'[cmd]\nbootargs: "{BOOTARGS}"\n[cmd_end]\n[task]\n[task_end]\n')
+    trigger.write_text(f'[cmd]\nbootargs: "{bootargs(case)}"\n[cmd_end]\n[task]\n[task_end]\n')
     if case["kind"] == "mcu":
         args = machine(case, "mcu", ["generated-dtb=off", "mcu-bios=" + paths["mcu"]])
         args += ["-bios", paths["qspi"], "-dtb", str(dtb)]
     else:
         args = machine(case, extra=dt_options())
-        args += ["-bios", paths["fw_jump"], "-device", "loader,file=" + paths["kernel"] + ",addr=0x80400000"]
+        kernel = "iommu_kernel" if case["kind"] == "iommu-linux" else "kernel"
+        args += ["-bios", paths["fw_jump"], "-device", "loader,file=" + paths[kernel] + ",addr=0x80400000"]
     args += ["-device", "loader,file=" + paths["rootfs"] + ",addr=0xa0000000",
              "-device", f"loader,file={trigger},addr=0x90000000"]
     if case["owner"] == "bosc" and case["mode"] != "single":
         for die in range(1, 4):
             args += ["-serial", f"file:{directory / f'uart{die}.log'}"]
-    evidence, checks = run_vm(binary, args, directory, case["timeout"], case["kind"], case)
+    with nvme_disks(work, case, directory) as disk_args:
+        evidence, checks = run_vm(binary, args + disk_args, directory, case["timeout"], case["kind"], case)
     evidence["dt"] = dt_evidence
     return evidence, checks

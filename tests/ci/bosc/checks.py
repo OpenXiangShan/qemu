@@ -50,13 +50,85 @@ def linux_assertions(text, token, case):
     online, kernel, mounts, rc = match.groups()
     if cpu_set(online) != set(range(case["cpus"])):
         raise AssertionError(f"online CPUs {online}, expected 0..{case['cpus'] - 1}")
-    if kernel != "20260824_6.18_g3520522921abc-minimal":
+    asset = "iommu_kernel" if case.get("kind") == "iommu-linux" else "kernel"
+    if kernel != read_json(HERE / "images.lock.json")["assets"][asset]["kernel_release"]:
         raise AssertionError(f"unexpected kernel release: {kernel}")
     if not re.search(r"(?m)^overlay / overlay (\S+) ", mounts):
         raise AssertionError("root is not mounted as overlay")
     if rc != "0":
         raise AssertionError("guest probe command failed")
     return {"online": online, "kernel": kernel, "root": "pmem0 + overlay"}
+
+
+IOMMU_FATAL = re.compile(r"iommu[^\n]*\bfault\b|nvme[^\n]*(?:timeout|timed out|failed|resetting)|"
+                         r"I/O error|Buffer I/O|blk_update_request|DMA (?:transfer|mapping) error", re.I)
+
+
+def iommu_assertions(text, token, case, qemu_log=""):
+    text = clean(text)
+    combined = text + "\n" + clean(qemu_log)
+    if FATAL.search(combined) or IOMMU_FATAL.search(combined):
+        raise AssertionError("IOMMU/NVMe fatal output")
+    for pattern in (r"iommu: Default domain type: Translated",
+                    r"riscv,iommu [^\n]+ using MSIs"):
+        if not re.search(pattern, text):
+            raise AssertionError(f"missing translated IOMMU/MSI evidence: {pattern}")
+    match = re.search(rf"(?m)^{token}:IOMMU_BEGIN\n(.*?)^{token}:IOMMU_RC=0\n{token}:IOMMU_END$",
+                      text, re.S | re.M)
+    if not match:
+        raise AssertionError("missing successful IOMMU shell response")
+    body = match[1]
+    count = re.findall(rf"(?m)^{token}:NVME_COUNT=(\d+)$", body)
+    if count != [str(case["disks"])]:
+        raise AssertionError("wrong NVMe controller count")
+    devices = re.findall(rf"(?m)^{token}:DEVICE=(.*)$", body)
+    transfers = re.findall(rf"(?m)^{token}:DMA=(.*)$", body)
+    if len(devices) != case["disks"] or len(transfers) != case["disks"]:
+        raise AssertionError("missing or duplicate endpoint DMA evidence")
+    result = []
+    seen = set()
+    bdfs = set()
+    for line in devices:
+        fields = line.split("|")
+        if len(fields) != 7:
+            raise AssertionError("malformed endpoint evidence")
+        serial, ctrl, bdf, group, domain, state, driver = fields
+        if not re.fullmatch(r"BOSC-CI-\d+", serial) or serial in seen:
+            raise AssertionError("unknown or duplicate NVMe serial")
+        index = int(serial.removeprefix("BOSC-CI-"))
+        segment = index * 3 if case.get("topology") == "four-die" else 0
+        # KMH leaves Linux domain numbering to enumeration (its empty root
+        # can be visited first). The fixed serial still binds the QEMU bus.
+        valid_bdf = (bool(re.fullmatch(r"[0-9a-f]{4}:01:00\.0", bdf))
+                     if case["owner"] == "kmh" else bdf == f"{segment:04x}:01:00.0")
+        if not valid_bdf or bdf in bdfs:
+            raise AssertionError(f"unexpected endpoint BDF: {bdf}")
+        if (not re.fullmatch(r"nvme\d+", ctrl) or not group.isdigit()
+                or domain not in ("DMA", "DMA-FQ") or state != "live" or driver != "nvme"):
+            raise AssertionError("NVMe lacks live driver/translated IOMMU group")
+        if not re.search(rf"pci {re.escape(bdf)}: Adding to iommu group {group}\b", text):
+            raise AssertionError("missing NVMe IOMMU group attachment")
+        if not re.search(rf"nvme {ctrl}: pci function {re.escape(bdf)}\b", text):
+            raise AssertionError("missing NVMe probe")
+        if not re.search(rf"nvme {ctrl}: \d+/\d+/\d+ default/read/poll queues", text):
+            raise AssertionError("missing initialized NVMe I/O queues")
+        dma = [row.split("|") for row in transfers if row.split("|")[0] == serial]
+        if len(dma) != 1 or len(dma[0]) != 8:
+            raise AssertionError("missing/duplicate/malformed DMA result")
+        _, source, readback, before, after, size, mode, irq = dma[0]
+        if (not re.fullmatch(r"[a-f0-9]{64}", source) or source != readback
+                or not before.isdigit() or not after.isdigit() or int(after) <= int(before)
+                or (size, mode, irq) != ("1048576", "direct", "msi")):
+            raise AssertionError("direct DMA hash or interrupt delta failed")
+        seen.add(serial)
+        bdfs.add(bdf)
+        result.append({"serial": serial, "controller": ctrl, "bdf": bdf,
+                       "did": (segment << 16) | 0x100, "group": int(group),
+                       "domain": domain, "sha256": source, "bytes": int(size),
+                       "irq_before": int(before), "irq_after": int(after)})
+    if seen != {f"BOSC-CI-{i}" for i in range(case["disks"])}:
+        raise AssertionError("unexpected NVMe endpoints")
+    return result
 
 
 def mcu_assertions(logs, dies):

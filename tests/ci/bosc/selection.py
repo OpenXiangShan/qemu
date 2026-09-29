@@ -29,7 +29,7 @@ def changed_paths(base, head, source=SOURCE):
                             merge_base, head, "--", source=source))
 
 
-def choose(paths=None, full_reason=None):
+def choose(paths=None, full_reason=None, extended=False):
     policy = read_json(HERE / "impact-map.json")
     owners = set()
     reasons = []
@@ -52,13 +52,21 @@ def choose(paths=None, full_reason=None):
                 owners.update(("bosc", "kmh"))
                 reasons.append({"path": path, "reason": "unknown path: conservative full"})
     cases = catalog()
+    selected = [c["id"] for c in cases if owners.intersection(c.get("owners", [c["owner"]]))
+                and (extended or c["tier"] == "mr")]
     return {"schema": 1, "config_sha256": config_hash(),
-            "selected": [c["id"] for c in cases if c["owner"] in owners],
-            "not_selected": [c["id"] for c in cases if c["owner"] not in owners],
+            "extended": extended, "selected": selected,
+            "not_selected": [c["id"] for c in cases if c["id"] not in selected],
             "reasons": reasons}
 
 
-def select(work, base=None, head="HEAD", case_ids=None):
+def select(work, base=None, head="HEAD", case_ids=None, full=False):
+    pipeline = os.environ.get("CI_PIPELINE_SOURCE")
+    full = full or os.environ.get("BOSC_CI_FULL") == "1"
+    extended = (full or not pipeline and not base or pipeline == "schedule"
+                or bool(os.environ.get("CI_COMMIT_TAG"))
+                or bool(os.environ.get("CI_DEFAULT_BRANCH") and
+                        os.environ.get("CI_COMMIT_BRANCH") == os.environ["CI_DEFAULT_BRANCH"]))
     if case_ids:
         known = {c["id"] for c in catalog()}
         unknown = set(case_ids) - known
@@ -69,16 +77,17 @@ def select(work, base=None, head="HEAD", case_ids=None):
         result["not_selected"] = sorted(known - set(case_ids))
     else:
         reason = None
-        pipeline = os.environ.get("CI_PIPELINE_SOURCE")
-        if pipeline == "merge_request_event" and not base:
+        if full:
+            reason = "explicit full regression"
+        elif pipeline == "merge_request_event" and not base:
             base = os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA")
             head = os.environ.get("CI_COMMIT_SHA", head)
             if not base:
                 reason = "missing MR diff base: conservative full"
         elif pipeline:
-            reason = f"{pipeline}: full first-phase regression"
+            reason = f"{pipeline}: all applicable tiers"
         if reason or not base:
-            result = choose(full_reason=reason or "local full regression")
+            result = choose(full_reason=reason or "local full regression", extended=extended)
         else:
             try:
                 paths = changed_paths(base, head)
@@ -87,9 +96,9 @@ def select(work, base=None, head="HEAD", case_ids=None):
                     # a clean commit range hide dirty code from selection.
                     paths += parse_status(git("diff", "HEAD", "--name-status", "-z", "--find-renames"))
                     paths += [p for p in git("ls-files", "--others", "--exclude-standard", "-z").decode().split("\0") if p]
-                result = choose(paths)
+                result = choose(paths, extended=extended)
             except Exception:
-                result = choose(full_reason="unavailable/incomplete diff: conservative full")
+                result = choose(full_reason="unavailable/incomplete diff: conservative full", extended=extended)
         result.update({"base": base, "head": head})
     result["revision"] = git("rev-parse", "HEAD").decode().strip()
     result["run_id"] = uuid.uuid4().hex

@@ -5,6 +5,7 @@ stages: [check, build, test, report]
 
 workflow:
   rules:
+    - if: '$BOSC_CI_FULL == "1"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
@@ -99,11 +100,16 @@ bosc:itgen:
   variables:
     BOSC_CI_GROUP: itgen
 
+bosc:iommu:
+  extends: .bosc:test
+  variables:
+    BOSC_CI_GROUP: iommu
+
 bosc:report:
   stage: report
   timeout: 10m
   when: always
-  dependencies: ["bosc:check", "bosc:build", "bosc:qtest", "bosc:kmh-linux", "bosc:ddr", "bosc:mcu", "bosc:itgen"]
+  dependencies: ["bosc:check", "bosc:build", "bosc:qtest", "bosc:kmh-linux", "bosc:ddr", "bosc:mcu", "bosc:itgen", "bosc:iommu"]
   script:
     - python3 tests/ci/bosc/ci.py report --work-dir "$BOSC_CI_WORK"
   artifacts:

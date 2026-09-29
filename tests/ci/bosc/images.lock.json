@@ -15,7 +15,8 @@
       "jf_path": "xs-sw/st-release/v0.9.99/minimal/Image",
       "size": 8321912,
       "sha256": "55afc258b442384edd1a0a789eda747b715cda4f9401a170b209ff334e4985e9",
-      "source": "st-release-v0.9.99"
+      "source": "st-release-v0.9.99",
+      "kernel_release": "20260824_6.18_g3520522921abc-minimal"
     },
     "rootfs": {
       "path": "st-release-v0.9.99/openEuler-minimal-rootfs/openEuler-minimal-rootfs-24.03-SP3-RVA23.ext4",
@@ -39,7 +40,16 @@
       "jf_path": "hejian-workspace/guoyaxing/qemu-ci/mcu/20260927/fw_payload.bin",
       "size": 12516216,
       "sha256": "cee4dcbfbd773a4456ff01cf650181c72ae6d16654b9846ce4bb6fc2bef413b9",
-      "components": [{"asset": "fw_jump", "offset": 0}, {"asset": "kernel", "offset": 4194304}],
+      "components": [
+        {
+          "asset": "fw_jump",
+          "offset": 0
+        },
+        {
+          "asset": "kernel",
+          "offset": 4194304
+        }
+      ],
       "flash_size": 134217728,
       "publication": "verified-20260927"
     },
@@ -50,6 +60,14 @@
       "sha256": "d8c37599a2e438995a44a0eda1eb0851f46497df4a05b98c63b3a6b3eb461a57",
       "source": "ITGen export_kmh_bosc_aplic_priority_cross_die_hart0_hart16_dieid2_20260924",
       "publication": "verified-20260927"
+    },
+    "iommu_kernel": {
+      "path": "st-release-v0.9.99/xiangshan/Image",
+      "jf_path": "xs-sw/st-release/v0.9.99/xiangshan/Image",
+      "size": 29575680,
+      "sha256": "1162d06c684404d9e54a79ab9a46fed36b9f3e511019ce1afd016d25bde9872e",
+      "source": "st-release-v0.9.99",
+      "kernel_release": "20260824_6.18_g3520522921abc-xiangshan"
     }
   }
 }

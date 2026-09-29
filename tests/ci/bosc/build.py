@@ -21,7 +21,7 @@ def doctor(work, cases):
     required = ["git", "python3"]
     if cases:
         required += ["cc", "c++", "make", "ninja", "pkg-config", "ldd"]
-    if any(c["kind"] in ("linux", "mcu") for c in cases):
+    if any(c["kind"] in ("linux", "mcu", "iommu-linux") for c in cases):
         required += ["dtc", "fdtget", "fdtput"]
     tools = {tool: shutil.which(tool) for tool in required}
     errors = [f"missing tool: {key}" for key, value in tools.items() if not value]
@@ -82,8 +82,8 @@ def build(work, cases, jobs=8):
     run_logged(["ninja", "-C", build_dir, "-j", str(jobs), *targets],
                work / "build.log", env=env, timeout=3600)
     after = source_identity()
-    if before["revision"] != after["revision"] or before["tracked_diff_sha256"] != after["tracked_diff_sha256"]:
-        raise RuntimeError("tracked source changed during build")
+    if any(before[key] != after[key] for key in ("revision", "tracked_diff_sha256", "untracked_sources")):
+        raise RuntimeError("source changed during build")
     bundle = work / "bundle"
     bundle.mkdir(exist_ok=True)
     files = {}
@@ -111,7 +111,7 @@ def verify_bundle(work, case):
     from common import read_json
     manifest = read_json(work / "bundle" / "build.json")
     current = source_identity()
-    for key in ("revision", "tracked_diff_sha256"):
+    for key in ("revision", "tracked_diff_sha256", "untracked_sources"):
         if manifest["source"][key] != current[key]:
             raise ValueError("build does not match current tracked source")
     targets = ["qemu-system-riscv64"]

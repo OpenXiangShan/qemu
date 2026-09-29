@@ -30,6 +30,12 @@ def aggregate(work, group=None):
                     raise ValueError("qtest sub-results missing or duplicated")
                 if case["kind"] == "mcu" and ids != ["MCU-DIE-NUM-RESET"]:
                     raise ValueError("MCU reset-count assertion missing")
+                if case["kind"] == "iommu-linux":
+                    endpoints = result.get("evidence", {}).get("iommu", [])
+                    if (len(endpoints) != case["disks"] or
+                            {e.get("serial") for e in endpoints} !=
+                            {f"BOSC-CI-{i}" for i in range(case["disks"])}):
+                        raise ValueError("IOMMU endpoint results missing or duplicated")
             rows.append({"id": case_id, "status": result["status"],
                          "message": result.get("message", ""), "seconds": result.get("seconds", 0)})
             for check in result.get("checks", []):
@@ -56,7 +62,7 @@ def aggregate(work, group=None):
     build_manifest = work / "bundle/build.json"
     if build_manifest.exists():
         report["build"] = read_json(build_manifest)
-    report["counting_note"] = "Counts include qtest executable containers AND their subtests. Full suite is 9 Linux boots + 1 ITGen + 9 qtest subtests; MCU count assertions are separate."
+    report["counting_note"] = "Counts include qtest executable containers AND their subtests; MCU count assertions are separate. Consult the selected case manifest for MR/extended coverage."
     report_dir = work / "reports" / (group or "all")
     write_json(report_dir / "summary.json", report)
     suite = ET.Element("testsuite", name="bosc-first-phase", tests=str(len(rows)),

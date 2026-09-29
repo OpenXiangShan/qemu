@@ -96,3 +96,11 @@ Python/Meson 使用仓库内 wheels，宿主系统开发包仍由服务器管理
 软件发布与 QEMU 回归分离：由有权限的发布流程构建新软件，独立验证并上传新的
 不可覆盖版本，再通过 MR 更新锁文件/预期行为并运行第一阶段全量。普通 QEMU MR
 不持有发布权限，不会验证 MCU 源码能否重新构建，不会自行修复 MCU_DIE_NUM 缺陷。
+
+## 原生 IOMMU Linux 内核
+
+`iommu_kernel` 复用 `xs-sw/st-release/v0.9.99/xiangshan/Image`：29,575,680 bytes，
+SHA256 `1162d06c684404d9e54a79ab9a46fed36b9f3e511019ce1afd016d25bde9872e`。
+2026-09-28 只读核验 JF metadata 与本地 release 一致；未发布或覆盖远端文件。
+release 为 `20260824_6.18_g3520522921abc-xiangshan`，包含 RISC-V IOMMU、DWC 和
+NVMe 驱动。复用锁定 fw_jump/rootfs；测试盘由 runner 独立创建并清理。

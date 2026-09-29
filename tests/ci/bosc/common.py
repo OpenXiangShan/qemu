@@ -103,9 +103,16 @@ def git(*args, source=SOURCE):
 
 
 def source_identity():
-    # Hash tracked diffs; retain untracked names without reading unrelated data.
+    # New source files (for example a qtest) are also build inputs. Do not hash
+    # unrelated untracked artifacts or read outside source/test directories.
+    untracked = {}
+    for name in git("ls-files", "--others", "--exclude-standard", "-z",
+                    "--", "hw", "include", "tests/qtest", "tests/ci/bosc").decode().split("\0"):
+        if name and (SOURCE / name).suffix in (".c", ".h", ".py", ".json"):
+            untracked[name] = sha256(SOURCE / name)
     return {"revision": git("rev-parse", "HEAD").decode().strip(),
             "tracked_diff_sha256": hashlib.sha256(git("diff", "HEAD", "--binary")).hexdigest(),
+            "untracked_sources": untracked,
             "status": git("status", "--porcelain").decode().splitlines()}
 
 
