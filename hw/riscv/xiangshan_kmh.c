@@ -1112,8 +1112,7 @@ static void xiangshan_kmh_fdt_add_pcie(XiangshanKmhState *s,
                                FDT_IRQ_TYPE_EDGE_RISING);
         if (iommu_sys_phandle) {
             qemu_fdt_setprop_cells(fdt, name, "iommu-map",
-                                   0, iommu_sys_phandle, 0, 0,
-                                   0, iommu_sys_phandle, 0, 0xffff);
+                                   0, iommu_sys_phandle, 0, 0x10000);
         }
         qemu_fdt_setprop_string_array(fdt, name, "interrupt-names",
                                       (char **)&interrupt_names,
