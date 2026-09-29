@@ -36,6 +36,12 @@ struct RISCVIOMMUState {
     uint32_t pid_bits;    /* process identifier width */
     uint32_t bus;         /* PCI bus mapping for non-root endpoints */
 
+    /* Optional board mapping from a PCI requester to the 24-bit device_id.
+     * Called at translation time because bridge bus numbers can change.
+     */
+    uint32_t (*pci_device_id)(PCIBus *bus, int devfn, void *opaque);
+    void *pci_device_id_opaque;
+
     uint64_t cap;         /* IOMMU supported capabilities */
     uint64_t fctl;        /* IOMMU enabled features */
     uint64_t icvec_avail_vectors;  /* Available interrupt vectors in ICVEC */

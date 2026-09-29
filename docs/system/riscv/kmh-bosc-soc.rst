@@ -272,6 +272,31 @@ Machine options
       -drive file=./kmh-nvme.raw,format=raw,if=none,id=nvme0 \
       -device nvme,drive=nvme0,serial=kmh-nvme0,bus=pcie-d0-p0
 
+   This machine models a 44-bit PCIe AXI master: memory requests leaving an
+   RC are truncated to bits [43:0]. Local MMIO then resolves through the
+   requester's existing die address space. DDR keeps its global fixed-slot
+   layout. CPU, APLIC, and DMAC accesses retain their existing address widths;
+   other machines using DesignWare PCIe are not truncated.
+
+   Each RC enables 256 integrated MSI receiver (iMSI-RX) vectors, in eight
+   banks of 32. A matching PCIe memory write is consumed before AXI address
+   truncation or system IOMMU translation. It sets the corresponding status
+   bit and asserts the RC's summary interrupt into its local APLIC. Reads of
+   the receiver address remain ordinary DMA. Receiver addresses and pending
+   bits belong to individual RCs, including when they use the same address.
+
+   Generated DT PCIe nodes omit ``msi-parent`` and ``msi-map`` so the Linux
+   ``snps,dw-pcie`` driver selects iMSI-RX. They retain ``msi`` and ``hp``
+   interrupt resources; the APLIC nodes still reference IMSIC as their MSI
+   parent. External DTs must describe this same wiring to use iMSI-RX.
+   ACPI does not describe this DWC-specific receiver path.
+
+   ``kmh-bosc-pcie-test`` exercises all 256 vectors, interrupt masking/W1C,
+   RC isolation, full-address MSI matching, AXI truncation, global DDR DMA,
+   IOMMU Off/Bare behavior, and an existing other-machine DMA/MSI path.
+   The shared DWC model defaults to 32 vectors; this board explicitly sets
+   its ``num-msi-vectors`` property to 256.
+
 ``iommu-sys=auto|on|off``
    是否启用 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
    ``off``。需要建模 IOMMU MMIO 设备并在生成的设备树中加入
@@ -280,6 +305,13 @@ Machine options
    PCIe 节点也会加入覆盖完整 requester-ID 空间的 ``iommu-map``。该选项
    不改变 DesignWare AXI DMAC 的 DMA 路径。使用外部 ``-dtb`` 时需要由
    外部设备树提供相同的 IOMMU 描述；当前 QEMU 生成的 ACPI 尚不包含 RIMT。
+
+   PCIe device_id 为 ``(segment << 16) | RID``，其中
+   ``segment = die_index * 3 + port``，RID 是当前 bridge bus number 和
+   devfn。DT ``iommu-map`` 使用 ``<0 iommu-phandle (segment << 16) 0x10000>``。
+   因此四个 die 的 p0 endpoint（均为 ``01:00.0``）分别使用
+   ``0x100``、``0x30100``、``0x60100``、``0x90100``，避免不同 root 的
+   翻译上下文相互覆盖。此映射只用于 PCIe，AXI traffic 的显式 DID/PID 不变。
 
 ``autotest-dtb=on|off``
    是否在 QEMU 生成的设备树中加入 automated-test 节点。默认 ``off``。

@@ -82,6 +82,10 @@ static uint32_t riscv_iommu_space_devid(RISCVIOMMUSpace *as)
     if (as->platform) {
         return as->devid & 0xffffff;
     }
+    if (as->iommu->pci_device_id) {
+        return as->iommu->pci_device_id(as->bus, as->devfn,
+                                       as->iommu->pci_device_id_opaque);
+    }
 
     uint32_t devid = PCI_BUILD_BDF(pci_bus_num(as->bus), as->devfn);
 

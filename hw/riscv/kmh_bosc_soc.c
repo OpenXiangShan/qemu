@@ -40,6 +40,7 @@
 #include "hw/riscv/riscv_hart.h"
 #include "system/address-spaces.h"
 #include "system/device_tree.h"
+#include "system/memory.h"
 #include "system/reset.h"
 #include "system/runstate.h"
 #include "system/kvm.h"
@@ -49,6 +50,7 @@
 #include <libfdt.h>
 
 #define KMH_BOSC_MACHINE_TYPE             MACHINE_TYPE_NAME("kmh-bosc-soc")
+#define TYPE_KMH_BOSC_PCIE_DMA            "kmh-bosc-pcie-dma"
 
 #define KMH_BOSC_DIES                     4
 #define KMH_BOSC_PCIE_PER_DIE             3
@@ -224,6 +226,29 @@ static const KmhBoscPciePortMemMap kmh_bosc_pcie_memmap[] = {
 
 typedef struct KmhBoscState KmhBoscState;
 
+typedef struct KmhBoscPcieDma KmhBoscPcieDma;
+
+typedef struct KmhBoscPcieRequester {
+    IOMMUMemoryRegion mr;
+    AddressSpace as;
+    KmhBoscPcieDma *port;
+    AddressSpace *downstream;
+    PCIBus *bus;
+    int devfn;
+    struct KmhBoscPcieRequester *next;
+} KmhBoscPcieRequester;
+
+struct KmhBoscPcieDma {
+    DesignwarePCIEHost *host;
+    AddressSpace *die_as;
+    AddressSpace msi_as;
+    const PCIIOMMUOps *downstream_ops;
+    void *downstream_opaque;
+    int die;
+    int port;
+    KmhBoscPcieRequester *requesters;
+};
+
 typedef struct KmhBoscBootCtlState {
     MemoryRegion mr;
     KmhBoscState *machine;
@@ -255,6 +280,7 @@ struct KmhBoscState {
     DeviceState *irqchip[KMH_BOSC_DIES];
 
     DesignwarePCIEHost pcie[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
+    KmhBoscPcieDma pcie_dma[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
 
     MemoryRegion ddr_alias[KMH_BOSC_DIES];
     MemoryRegion mcu_bootrom[KMH_BOSC_DIES];
@@ -1730,8 +1756,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                              2, KMH_BOSC_PCIE_WINDOW_SIZE);
                 qemu_fdt_setprop_cell(fdt, pcie_name, "interrupt-parent",
                                       aplic_s_phandles[die]);
-                qemu_fdt_setprop_cell(fdt, pcie_name, "msi-parent",
-                                      imsic_s_phandle);
+                /* Omit msi-parent to select the DWC integrated receiver. */
                 qemu_fdt_setprop_cells(fdt, pcie_name, "interrupts",
                                        kmh_bosc_pcie_msi_irq(port),
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH,
@@ -1739,7 +1764,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH);
                 if (iommu_phandle) {
                     qemu_fdt_setprop_cells(fdt, pcie_name, "iommu-map",
-                                           0, iommu_phandle, 0, 0x10000);
+                                           0, iommu_phandle,
+                                           segment << 16, 0x10000);
                 }
                 {
                     static const char *const interrupt_names[] = { "msi", "hp" };
@@ -2135,9 +2161,79 @@ static void kmh_bosc_init_uart(KmhBoscState *s)
     }
 }
 
+/* iMSI-RX precedes the 44-bit AXI master and optional system IOMMU. */
+static IOMMUTLBEntry kmh_bosc_pcie_dma_translate(IOMMUMemoryRegion *mr,
+                                               hwaddr addr,
+                                               IOMMUAccessFlags flag,
+                                               int iommu_idx)
+{
+    KmhBoscPcieRequester *r = container_of(mr, KmhBoscPcieRequester, mr);
+    DesignwarePCIEMSI *msi = &r->port->host->root.msi;
+    hwaddr mask = 0xfff;
+    AddressSpace *target = r->downstream;
+    hwaddr translated = addr & MAKE_64BIT_MASK(0, 44);
+
+    if ((flag & IOMMU_WO) && msi->enabled &&
+        (addr & ~mask) == (msi->base & ~mask)) {
+        /* Do not map DMA across the four-byte receiver in the same page. */
+        mask = 3;
+        if ((addr & ~mask) == msi->base) {
+            target = &r->port->msi_as;
+            translated = addr;
+        }
+    }
+
+    return (IOMMUTLBEntry) {
+        .target_as = target,
+        .iova = addr & ~mask,
+        .translated_addr = translated & ~mask,
+        .addr_mask = mask,
+        .perm = flag,
+    };
+}
+
+static uint64_t kmh_bosc_pcie_dma_min_page_size(IOMMUMemoryRegion *mr)
+{
+    return 4;
+}
+
+static void kmh_bosc_pcie_dma_class_init(ObjectClass *klass, const void *data)
+{
+    IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_CLASS(klass);
+
+    imrc->translate = kmh_bosc_pcie_dma_translate;
+    imrc->get_min_page_size = kmh_bosc_pcie_dma_min_page_size;
+}
+
 static AddressSpace *kmh_bosc_pcie_dma_as(PCIBus *bus, void *opaque, int devfn)
 {
-    return opaque;
+    KmhBoscPcieDma *port = opaque;
+    KmhBoscPcieRequester *requester;
+    g_autofree char *name = NULL;
+
+    for (requester = port->requesters; requester;
+         requester = requester->next) {
+        if (requester->bus == bus && requester->devfn == devfn) {
+            return &requester->as;
+        }
+    }
+
+    requester = g_new0(KmhBoscPcieRequester, 1);
+    name = g_strdup_printf("kmh-bosc-pcie-d%d-p%d-dma-%02x",
+                           port->die, port->port, devfn);
+    memory_region_init_iommu(&requester->mr, sizeof(requester->mr),
+                             TYPE_KMH_BOSC_PCIE_DMA, OBJECT(port->host),
+                             name, UINT64_MAX);
+    requester->port = port;
+    requester->bus = bus;
+    requester->devfn = devfn;
+    requester->downstream = port->downstream_ops ?
+        port->downstream_ops->get_address_space(bus, port->downstream_opaque,
+                                                devfn) : port->die_as;
+    address_space_init(&requester->as, MEMORY_REGION(&requester->mr), name);
+    requester->next = port->requesters;
+    port->requesters = requester;
+    return &requester->as;
 }
 
 static const PCIIOMMUOps kmh_bosc_pcie_dma_ops = {
@@ -2184,6 +2280,7 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             qdev_prop_set_string(DEVICE(host), "root-bus-name", root_bus_name);
             qdev_prop_set_string(DEVICE(host), "sec-bus-name", sec_bus_name);
             qdev_prop_set_string(DEVICE(host), "root-bus-path", root_bus_path);
+            qdev_prop_set_uint32(DEVICE(host), "num-msi-vectors", 256);
 
             pcie = SYS_BUS_DEVICE(host);
             sysbus_realize(pcie, &error_fatal);
@@ -2205,15 +2302,11 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
                                                 kmh_bosc_pcie_msi_irq(port)));
             /*
              * DWC installs an inbound-iATU address space as PCI's default
-             * IOMMU. This machine uses requester-local DMA unless the
-             * RISC-V IOMMU below replaces it.
+             * IOMMU. Install the board DMA filter after the optional system
+             * IOMMU has registered its per-requester address spaces.
              */
             PCI_HOST_BRIDGE(host)->bus->iommu_ops = NULL;
             PCI_HOST_BRIDGE(host)->bus->iommu_opaque = NULL;
-            if (!kmh_bosc_is_iommu_sys_enabled(s)) {
-                pci_setup_iommu(PCI_HOST_BRIDGE(host)->bus,
-                                &kmh_bosc_pcie_dma_ops, &s->die_as[die]);
-            }
             pcie_host_mmcfg_map(PCIE_HOST_BRIDGE(host), ecam_base,
                                 pcie_map->ecam.size);
 
@@ -2235,6 +2328,29 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
                                         memmap[KMH_BOSC_PCIE_PHY].size);
         }
     }
+}
+
+static uint32_t kmh_bosc_pcie_device_id(PCIBus *bus, int devfn, void *opaque)
+{
+    KmhBoscState *s = opaque;
+    PCIBus *root = bus;
+
+    while (!pci_bus_is_root(root)) {
+        root = pci_get_bus(root->parent_dev);
+    }
+    for (int die = 0; die < kmh_bosc_die_count(s); die++) {
+        if (!kmh_bosc_die_selected(s, die)) {
+            continue;
+        }
+        for (int port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
+            if (PCI_HOST_BRIDGE(&s->pcie[die][port])->bus == root) {
+                /* Match the per-root DT iommu-map; RID alone aliases roots. */
+                return (kmh_bosc_pcie_domain(die, port) << 16) |
+                       PCI_BUILD_BDF(pci_bus_num(bus), devfn);
+            }
+        }
+    }
+    g_assert_not_reached();
 }
 
 static void kmh_bosc_init_iommu(KmhBoscState *s)
@@ -2261,6 +2377,8 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
         exit(1);
     }
     iommu = RISCV_IOMMU(iommu_obj);
+    iommu->pci_device_id = kmh_bosc_pcie_device_id;
+    iommu->pci_device_id_opaque = s;
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
 
@@ -2308,6 +2426,31 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
                                 kmh_bosc_die_memmap_base(
                                     s, 0, KMH_BOSC_IOMMU_CFG1),
                                 memmap[KMH_BOSC_IOMMU_CFG1].size);
+}
+
+static void kmh_bosc_init_pcie_dma(KmhBoscState *s)
+{
+    for (int die = 0; die < kmh_bosc_die_count(s); die++) {
+        if (!kmh_bosc_die_selected(s, die)) {
+            continue;
+        }
+        for (int port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
+            KmhBoscPcieDma *dma = &s->pcie_dma[die][port];
+            DesignwarePCIEHost *host = &s->pcie[die][port];
+            PCIBus *bus = PCI_HOST_BRIDGE(host)->bus;
+
+            dma->host = host;
+            dma->die = die;
+            dma->port = port;
+            dma->die_as = &s->die_as[die];
+            dma->downstream_ops = bus->iommu_ops;
+            dma->downstream_opaque = bus->iommu_opaque;
+            /* The receiver's region retains its programmed MSI address. */
+            address_space_init(&dma->msi_as, &host->root.msi.iomem,
+                               host->sec_bus_name);
+            pci_setup_iommu(bus, &kmh_bosc_pcie_dma_ops, dma);
+        }
+    }
 }
 
 static void kmh_bosc_load_mcu_bios(KmhBoscState *s)
@@ -2840,6 +2983,9 @@ static void kmh_bosc_machine_init(MachineState *machine)
     if (kmh_bosc_is_iommu_sys_enabled(s)) {
         kmh_bosc_init_iommu(s);
     }
+    if (s->dw_pcie) {
+        kmh_bosc_init_pcie_dma(s);
+    }
     kmh_bosc_load_mcu_bios(s);
     if (kmh_bosc_boot_from_mcu(s)) {
         kmh_bosc_load_mcu_payload(s);
@@ -3031,6 +3177,14 @@ static const TypeInfo kmh_bosc_machine_typeinfo = {
 
 static void kmh_bosc_machine_register_types(void)
 {
+    static const TypeInfo dma_type = {
+        .name = TYPE_KMH_BOSC_PCIE_DMA,
+        .parent = TYPE_IOMMU_MEMORY_REGION,
+        .instance_size = sizeof(IOMMUMemoryRegion),
+        .class_init = kmh_bosc_pcie_dma_class_init,
+    };
+
+    type_register_static(&dma_type);
     type_register_static(&kmh_bosc_machine_typeinfo);
 }
 
