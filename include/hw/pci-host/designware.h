@@ -61,9 +61,10 @@ typedef struct DesignwarePCIEMSIBank {
 
 typedef struct DesignwarePCIEMSI {
     uint64_t     base;
+    bool         enabled;
     MemoryRegion iomem;
 
-#define DESIGNWARE_PCIE_NUM_MSI_BANKS        1
+#define DESIGNWARE_PCIE_NUM_MSI_BANKS        8
 
     DesignwarePCIEMSIBank intr[DESIGNWARE_PCIE_NUM_MSI_BANKS];
 } DesignwarePCIEMSI;
@@ -88,6 +89,7 @@ struct DesignwarePCIEHost {
     char *root_bus_name;
     char *sec_bus_name;
     char *root_bus_path;
+    uint32_t num_msi_vectors;
 
     struct {
         AddressSpace address_space;

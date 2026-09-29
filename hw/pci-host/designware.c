@@ -42,6 +42,7 @@
 #define DESIGNWARE_PCIE_MSI_INTR0_ENABLE           0x828
 #define DESIGNWARE_PCIE_MSI_INTR0_MASK             0x82C
 #define DESIGNWARE_PCIE_MSI_INTR0_STATUS           0x830
+#define DESIGNWARE_PCIE_MSI_BANK_STRIDE            12
 #define PCIE_VERSION_NUMBER                        0x8F8
 #define PCIE_VERSION_TYPE                          0x8FC
 #define DESIGNWARE_PCIE_ATU_VIEWPORT               0x900
@@ -97,17 +98,33 @@ static uint64_t designware_pcie_root_msi_read(void *opaque, hwaddr addr,
     return 0;
 }
 
+static void designware_pcie_root_update_msi_irq(DesignwarePCIERoot *root)
+{
+    DesignwarePCIEHost *host = designware_pcie_root_to_host(root);
+    bool pending = false;
+
+    for (unsigned i = 0; i < host->num_msi_vectors / 32; i++) {
+        DesignwarePCIEMSIBank *bank = &root->msi.intr[i];
+
+        pending |= (bank->status & bank->enable & ~bank->mask) != 0;
+    }
+    qemu_set_irq(host->pci.msi, pending);
+}
+
 static void designware_pcie_root_msi_write(void *opaque, hwaddr addr,
                                            uint64_t val, unsigned len)
 {
     DesignwarePCIERoot *root = DESIGNWARE_PCIE_ROOT(opaque);
     DesignwarePCIEHost *host = designware_pcie_root_to_host(root);
 
-    root->msi.intr[0].status |= BIT(val) & root->msi.intr[0].enable;
-
-    if (root->msi.intr[0].status & ~root->msi.intr[0].mask) {
-        qemu_set_irq(host->pci.msi, 1);
+    if (val >= host->num_msi_vectors) {
+        qemu_log_mask(LOG_GUEST_ERROR, "DWC PCIe: invalid MSI vector %" PRIu64
+                      "\n", val);
+        return;
     }
+    root->msi.intr[val / 32].status |=
+        (1U << (val % 32)) & root->msi.intr[val / 32].enable;
+    designware_pcie_root_update_msi_irq(root);
 }
 
 static const MemoryRegionOps designware_pci_host_msi_ops = {
@@ -125,10 +142,30 @@ static void designware_pcie_root_update_msi_mapping(DesignwarePCIERoot *root)
 {
     MemoryRegion *mem   = &root->msi.iomem;
     const uint64_t base = root->msi.base;
-    const bool enable   = root->msi.intr[0].enable;
+    DesignwarePCIEHost *host = designware_pcie_root_to_host(root);
+    bool enable = false;
+
+    for (unsigned i = 0; i < host->num_msi_vectors / 32; i++) {
+        enable |= root->msi.intr[i].enable != 0;
+    }
 
     memory_region_set_address(mem, base);
+    root->msi.enabled = enable;
     memory_region_set_enabled(mem, enable);
+}
+
+static DesignwarePCIEMSIBank *designware_pcie_msi_bank(
+    DesignwarePCIERoot *root, uint32_t address, unsigned *reg)
+{
+    DesignwarePCIEHost *host = designware_pcie_root_to_host(root);
+    unsigned offset = address - DESIGNWARE_PCIE_MSI_INTR0_ENABLE;
+
+    if (offset >= (host->num_msi_vectors / 32) *
+                  DESIGNWARE_PCIE_MSI_BANK_STRIDE || (offset & 3)) {
+        return NULL;
+    }
+    *reg = offset % DESIGNWARE_PCIE_MSI_BANK_STRIDE;
+    return &root->msi.intr[offset / DESIGNWARE_PCIE_MSI_BANK_STRIDE];
 }
 
 static DesignwarePCIEViewport *
@@ -148,6 +185,19 @@ designware_pcie_root_config_read(PCIDevice *d, uint32_t address, int len)
         designware_pcie_root_get_current_viewport(root);
 
     uint32_t val;
+    unsigned reg;
+    DesignwarePCIEMSIBank *bank = designware_pcie_msi_bank(root, address, &reg);
+
+    if (bank) {
+        switch (reg) {
+        case 0:
+            return bank->enable;
+        case 4:
+            return bank->mask;
+        case 8:
+            return bank->status;
+        }
+    }
 
     switch (address) {
     case PCIE_VERSION_NUMBER:
@@ -176,18 +226,6 @@ designware_pcie_root_config_read(PCIDevice *d, uint32_t address, int len)
     case DESIGNWARE_PCIE_MSI_ADDR_HI:
         val = extract64(root->msi.base,
                         address == DESIGNWARE_PCIE_MSI_ADDR_LO ? 0 : 32, 32);
-        break;
-
-    case DESIGNWARE_PCIE_MSI_INTR0_ENABLE:
-        val = root->msi.intr[0].enable;
-        break;
-
-    case DESIGNWARE_PCIE_MSI_INTR0_MASK:
-        val = root->msi.intr[0].mask;
-        break;
-
-    case DESIGNWARE_PCIE_MSI_INTR0_STATUS:
-        val = root->msi.intr[0].status;
         break;
 
     case DESIGNWARE_PCIE_PHY_DEBUG_R1:
@@ -351,9 +389,27 @@ static void designware_pcie_root_config_write(PCIDevice *d, uint32_t address,
                                               uint32_t val, int len)
 {
     DesignwarePCIERoot *root = DESIGNWARE_PCIE_ROOT(d);
-    DesignwarePCIEHost *host = designware_pcie_root_to_host(root);
     DesignwarePCIEViewport *viewport =
         designware_pcie_root_get_current_viewport(root);
+    unsigned reg;
+    DesignwarePCIEMSIBank *bank = designware_pcie_msi_bank(root, address, &reg);
+
+    if (bank) {
+        switch (reg) {
+        case 0:
+            bank->enable = val;
+            designware_pcie_root_update_msi_mapping(root);
+            break;
+        case 4:
+            bank->mask = val;
+            break;
+        case 8:
+            bank->status &= ~val;
+            break;
+        }
+        designware_pcie_root_update_msi_irq(root);
+        return;
+    }
 
     switch (address) {
     case DESIGNWARE_PCIE_PORT_LINK_CONTROL:
@@ -368,22 +424,6 @@ static void designware_pcie_root_config_write(PCIDevice *d, uint32_t address,
                                    address == DESIGNWARE_PCIE_MSI_ADDR_LO
                                    ? 0 : 32, 32, val);
         designware_pcie_root_update_msi_mapping(root);
-        break;
-
-    case DESIGNWARE_PCIE_MSI_INTR0_ENABLE:
-        root->msi.intr[0].enable = val;
-        designware_pcie_root_update_msi_mapping(root);
-        break;
-
-    case DESIGNWARE_PCIE_MSI_INTR0_MASK:
-        root->msi.intr[0].mask = val;
-        break;
-
-    case DESIGNWARE_PCIE_MSI_INTR0_STATUS:
-        root->msi.intr[0].status ^= val;
-        if (!root->msi.intr[0].status) {
-            qemu_set_irq(host->pci.msi, 0);
-        }
         break;
 
     case DESIGNWARE_PCIE_ATU_VIEWPORT:
@@ -635,6 +675,17 @@ static const VMStateDescription vmstate_designware_pcie_root G_GNUC_UNUSED = {
     }
 };
 
+static void designware_pcie_root_reset(DeviceState *dev)
+{
+    DesignwarePCIERoot *root = DESIGNWARE_PCIE_ROOT(dev);
+
+    pci_bridge_reset(dev);
+    root->msi.base = 0;
+    memset(root->msi.intr, 0, sizeof(root->msi.intr));
+    designware_pcie_root_update_msi_mapping(root);
+    designware_pcie_root_update_msi_irq(root);
+}
+
 static void designware_pcie_root_class_init(ObjectClass *klass,
                                             const void *data)
 {
@@ -652,7 +703,7 @@ static void designware_pcie_root_class_init(ObjectClass *klass,
     k->config_read = designware_pcie_root_config_read;
     k->config_write = designware_pcie_root_config_write;
 
-    device_class_set_legacy_reset(dc, pci_bridge_reset);
+    device_class_set_legacy_reset(dc, designware_pcie_root_reset);
     /*
      * PCI-facing part of the host bridge, not usable without the
      * host-facing part, which can't be device_add'ed, yet.
@@ -721,6 +772,13 @@ static void designware_pcie_host_realize(DeviceState *dev, Error **errp)
     const char *root_bus_name = s->root_bus_name ? s->root_bus_name : "pcie";
     size_t i;
 
+    if (!s->num_msi_vectors || s->num_msi_vectors > 256 ||
+        s->num_msi_vectors % 32) {
+        error_setg(errp,
+                   "num-msi-vectors must be a multiple of 32 from 32 to 256");
+        return;
+    }
+
     for (i = 0; i < ARRAY_SIZE(s->pci.irqs); i++) {
         sysbus_init_irq(sbd, &s->pci.irqs[i]);
     }
@@ -780,6 +838,8 @@ static const Property designware_pcie_host_properties[] = {
     DEFINE_PROP_STRING("root-bus-name", DesignwarePCIEHost, root_bus_name),
     DEFINE_PROP_STRING("sec-bus-name", DesignwarePCIEHost, sec_bus_name),
     DEFINE_PROP_STRING("root-bus-path", DesignwarePCIEHost, root_bus_path),
+    DEFINE_PROP_UINT32("num-msi-vectors", DesignwarePCIEHost,
+                       num_msi_vectors, 32),
 };
 
 static void designware_pcie_host_class_init(ObjectClass *klass,
