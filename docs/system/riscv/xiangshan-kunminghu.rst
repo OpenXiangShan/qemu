@@ -93,11 +93,15 @@ Machine options
    外部 ``-dtb`` 时，需要外部设备树自己描述同样的 PCIe host。
 
 ``iommu-sys=auto|on|off``
-   是否创建 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
+   是否创建两个独立的 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
    ``off``。如果 QEMU 当前使用生成的设备树，打开 ``on`` 后会加入
    ``riscv,iommu`` 节点；如果同时打开 ``dw-pcie=on``，PCIe 节点会加入
-   ``iommu-map``。使用外部 ``-dtb`` 时，需要外部设备树自己描述同一个
-   IOMMU。
+   ``iommu-map``，每个 root 指向自己的 IOMMU，DID 保留原始 PCI RID。
+   root0 使用原有 ``0x311f0000/0x1000``、IRQ ``0x24..0x27``；root1 使用
+   QEMU 模型新增的 ``0x311f1000/0x1000``、IRQ ``0x28..0x2b``。
+   两个 root 的 ``linux,pci-domain`` 固定为 0、1，均使用从 0 开始、覆盖
+   ``0x10000`` 个 RID 的映射。使用外部 ``-dtb`` 时，需要同步描述两个 IOMMU
+   及各自的 PCIe 绑定；原先将两个 root 绑定到同一 IOMMU 的 DT 不再适用。
 
 ``my-virtio-devices=<list>``
    所有已启用 my-virtio 设备的有序列表。支持 ``blk``、``net``、

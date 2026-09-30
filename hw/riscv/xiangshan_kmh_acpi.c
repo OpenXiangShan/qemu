@@ -42,6 +42,7 @@ static const MemMapEntry xiangshan_kmh_acpi_memmap[] = {
     },
     [XIANGSHAN_KMH_UART0]    =        { 0x310B0000,       0x10000 },
     [XIANGSHAN_KMH_IOMMU_SYS] =       { 0x311f0000,       0x1000 },
+    [XIANGSHAN_KMH_IOMMU_SYS1] =      { 0x311f1000,       0x1000 },
     [XIANGSHAN_KMH_PCIE0_DBI] =       { 0x32000000,     0x1000000 },
     [XIANGSHAN_KMH_PCIE1_DBI] =       { 0x40000000,      0x400000 },
     [XIANGSHAN_KMH_CLINT]    =        { 0x38000000,       0x10000 },

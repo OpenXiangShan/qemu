@@ -240,17 +240,11 @@ static void test_pcie(const void *opaque)
     qtest_quit(q);
 }
 
-/* Another DWC user must retain full-width DMA and the default 32 vectors. */
-static void test_generic_dwc(void)
+static void setup_kmh_edu(QTestState *q, unsigned port)
 {
-    QTestState *q = qtest_init(
-        "-M xiangshan-kunminghu,dw-pcie=on,generated-dtb=on "
-        "-smp 1 -m 256M -device edu,bus=dw-pcie,dma_mask=0xffffffffffffffff");
-    uint64_t dbi = 0x32000000;
-    uint64_t cfg = 0x67ff0000;
-    uint64_t bar = 0x60000000;
-    uint64_t high_msi = DOORBELL | (2ULL << 44);
-    unsigned cap;
+    uint64_t dbi = port ? 0x40000000 : 0x32000000;
+    uint64_t cfg = 0x67ff0000 + port * 0x10000000;
+    uint64_t bar = 0x60000000 + port * 0x10000000;
 
     qtest_writew(q, dbi + 4, 6);
     qtest_writel(q, dbi + 0x18, 0x00010100);
@@ -271,6 +265,21 @@ static void test_generic_dwc(void)
     qtest_writel(q, cfg + 0x10, 0x40000000);
     qtest_writew(q, cfg + 4, 6);
     g_assert_cmphex(qtest_readl(q, bar), ==, 0x010000ed);
+}
+
+/* Another DWC user must retain full-width DMA and the default 32 vectors. */
+static void test_generic_dwc(void)
+{
+    QTestState *q = qtest_init(
+        "-M xiangshan-kunminghu,dw-pcie=on,generated-dtb=on "
+        "-smp 1 -m 256M -device edu,bus=dw-pcie,dma_mask=0xffffffffffffffff");
+    uint64_t dbi = 0x32000000;
+    uint64_t cfg = 0x67ff0000;
+    uint64_t bar = 0x60000000;
+    uint64_t high_msi = DOORBELL | (2ULL << 44);
+    unsigned cap;
+
+    setup_kmh_edu(q, 0);
     cap = qtest_readb(q, cfg + 0x34);
     {
         QDict *rsp = qtest_qmp(q, "{'execute':'qom-get', 'arguments':"
@@ -355,6 +364,58 @@ static void test_iommu_root_contexts(void)
     qtest_quit(q);
 }
 
+/* The same RID, PSCID and IOVA must be independent across KMH IOMMUs. */
+static void test_kmh_iommu_root_contexts(void)
+{
+    QTestState *q = qtest_init(
+        "-M xiangshan-kunminghu,dw-pcie=on,generated-dtb=on,iommu-sys=on "
+        "-smp 1 -m 256M "
+        "-device edu,bus=dw-pcie,dma_mask=0xffffffffffffffff "
+        "-device edu,bus=dw-pcie1,dma_mask=0xffffffffffffffff");
+
+    for (unsigned port = 0; port < 2; port++) {
+        uint64_t ddt = 0x82000000 + port * 0x10000;
+        uint64_t dir = ddt + 0x1000;
+        uint64_t leaf = dir + 0x1000;
+        uint64_t pt = dir + 0x2000;
+        uint64_t pa = 0x83000000 + port * 0x1000;
+        const uint32_t did = 0x100;
+
+        setup_kmh_edu(q, port);
+        qtest_writeq(q, ddt + (did >> 15) * 8, (dir >> 2) | 1);
+        qtest_writeq(q, dir + ((did >> 6) & 0x1ff) * 8, (leaf >> 2) | 1);
+        qtest_writeq(q, leaf, RISCV_IOMMU_DC_TC_V);
+        qtest_writeq(q, leaf + 16, 1ULL << 12);
+        qtest_writeq(q, leaf + 24, (8ULL << 60) | (pt >> 12));
+        qtest_writeq(q, pt, ((pt + 0x1000) >> 2) | 1);
+        qtest_writeq(q, pt + 0x1000, ((pt + 0x2000) >> 2) | 1);
+        qtest_writeq(q, pt + 0x2000 + 8, (pa >> 2) | 0xc7);
+        qtest_writel(q, pa, 0xcafe0000 + port);
+        qtest_writeq(q, 0x311f0000 + port * 0x1000 + RISCV_IOMMU_REG_DDTP,
+                     (ddt >> 2) | RISCV_IOMMU_DDTP_MODE_3LVL);
+    }
+    for (unsigned port = 0; port < 2; port++) {
+        uint64_t bar = 0x60000000 + port * 0x10000000;
+
+        qtest_writeq(q, bar + 0x80, 0x1000);
+        qtest_writeq(q, bar + 0x88, 0x40000);
+        qtest_writeq(q, bar + 0x90, 4);
+        qtest_writeq(q, bar + 0x98, 1);
+        qtest_clock_step(q, 100000000);
+        g_assert_cmphex(qtest_readq(q, bar + 0x98) & 1, ==, 0);
+        qtest_writeq(q, bar + 0x80, 0x40000);
+        qtest_writeq(q, bar + 0x88, 0x1004);
+        qtest_writeq(q, bar + 0x98, 3);
+        qtest_clock_step(q, 100000000);
+        g_assert_cmphex(qtest_readq(q, bar + 0x98) & 1, ==, 0);
+        for (unsigned p = 0; p < 2; p++) {
+            g_assert_cmphex(qtest_readl(q, 0x83000004 + p * 0x1000), ==,
+                            p <= port ? 0xcafe0000 + p : 0);
+        }
+    }
+    qtest_quit(q);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -364,6 +425,8 @@ int main(int argc, char **argv)
                    test_iommu_root_contexts);
     if (qtest_has_machine("xiangshan-kunminghu")) {
         qtest_add_func("/kmh-bosc/pcie/generic-dwc", test_generic_dwc);
+        qtest_add_func("/kmh-bosc/pcie/kmh-iommu-root-contexts",
+                       test_kmh_iommu_root_contexts);
     }
     return g_test_run();
 }
