@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import time
@@ -121,6 +122,15 @@ def catalog():
     if len({c["id"] for c in cases}) != len(cases):
         raise ValueError("duplicate case ID")
     return cases
+
+
+def pcie_segment(bus):
+    if bus in ("dw-pcie", "dw-pcie1"):
+        return int(bus == "dw-pcie1")
+    match = re.fullmatch(r"pcie-d([0-3])-p([0-2])", bus)
+    if not match:
+        raise ValueError(f"unknown PCIe bus: {bus}")
+    return int(match[1]) * 3 + int(match[2])
 
 
 def config_hash():

@@ -88,7 +88,8 @@ class SelectionTests(unittest.TestCase):
             with patch("selection.changed_paths", return_value=["hw/riscv/xiangshan_kmh.c"]) as diff:
                 result = select(Path(tmp))
             diff.assert_called_once_with("base", "head")
-            self.assertEqual(result["selected"], ["qtest-pcie", "kmh-linux-1", "kmh-linux-16", "kmh-iommu-linux"])
+            self.assertEqual(result["selected"], ["qtest-pcie", "kmh-linux-1", "kmh-linux-16",
+                                                   "kmh-iommu-linux", "kmh-iommu-linux-dual-root"])
 
     def test_schedule_ignores_path_filter(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"CI_PIPELINE_SOURCE": "schedule"}, clear=True):
@@ -96,14 +97,15 @@ class SelectionTests(unittest.TestCase):
 
 
     def test_iommu_impact_and_tiers(self):
-        multi = "bosc-iommu-linux-multi"
+        extended = {"bosc-iommu-linux-multi", "bosc-iommu-linux-all-roots"}
         for path in ("hw/riscv/riscv-iommu.c", "hw/riscv/riscv-iommu.h",
                      "hw/pci-host/designware.c", "hw/pci/pci.c", "hw/nvme/ctrl.c"):
             result = choose([path])
-            self.assertTrue({"kmh-iommu-linux", "bosc-iommu-linux-single"}.issubset(result["selected"]))
-            self.assertIn(multi, result["not_selected"])
-            self.assertIn(multi, choose([path], extended=True)["selected"])
-        self.assertIn(multi, choose(["unknown.c"])["not_selected"])
+            self.assertTrue({"kmh-iommu-linux", "kmh-iommu-linux-dual-root",
+                             "bosc-iommu-linux-single"}.issubset(result["selected"]))
+            self.assertTrue(extended.issubset(result["not_selected"]))
+            self.assertTrue(extended.issubset(choose([path], extended=True)["selected"]))
+        self.assertTrue(extended.issubset(choose(["unknown.c"])["not_selected"]))
 
     def test_pipeline_extended_rules(self):
         for env, expected in [
@@ -117,6 +119,7 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(env=env), tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, env, clear=True):
                 result = select(Path(tmp))
                 self.assertEqual("bosc-iommu-linux-multi" in result["selected"], expected)
+                self.assertEqual("bosc-iommu-linux-all-roots" in result["selected"], expected)
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
             self.assertIn("bosc-iommu-linux-multi", select(Path(tmp), full=True)["selected"])
 
@@ -269,29 +272,61 @@ class CheckTests(unittest.TestCase):
 class IommuTests(unittest.TestCase):
     case = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-single")
 
-    def valid_log(self, count=1):
-        text = "iommu: Default domain type: Translated\nriscv,iommu 4f80200000.iommu: using MSIs\n"
+    def valid_log(self, segments=(0,), kmh=False):
+        text = "iommu: Default domain type: Translated\n"
         rows = []
-        for i in range(count):
-            bdf = f"{i * 3:04x}:01:00.0"
+        for i, segment in enumerate(segments):
+            bdf = f"{segment:04x}:01:00.0"
+            addr = f"{0x311f0000 + segment * 0x1000:x}" if kmh else "4f80200000"
+            text += f"riscv,iommu {addr}.iommu: using MSIs\n"
             text += f"pci {bdf}: Adding to iommu group {i}\nnvme nvme{i}: pci function {bdf}\nnvme nvme{i}: 1/0/0 default/read/poll queues\n"
-            rows += [f"TOKEN:DEVICE=BOSC-CI-{i}|nvme{i}|{bdf}|{i}|DMA-FQ|live|nvme",
+            rows += [f"TOKEN:DEVICE=BOSC-CI-{i}|nvme{i}|{bdf}|{i}|DMA-FQ|live|nvme|riscv-iommu@{addr}.iommu",
                      f"TOKEN:DMA=BOSC-CI-{i}|{'a'*64}|{'a'*64}|10|20|1048576|direct|msi"]
-        return text + "TOKEN:IOMMU_BEGIN\n" + "\n".join(rows) + f"\nTOKEN:NVME_COUNT={count}\nTOKEN:IOMMU_RC=0\nTOKEN:IOMMU_END\n"
+        return text + "TOKEN:IOMMU_BEGIN\n" + "\n".join(rows) + f"\nTOKEN:NVME_COUNT={len(segments)}\nTOKEN:IOMMU_RC=0\nTOKEN:IOMMU_END\n"
 
     def test_valid_single_and_multi(self):
         self.assertEqual(len(checks.iommu_assertions(self.valid_log(), "TOKEN", self.case)), 1)
         case = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-multi")
-        result = checks.iommu_assertions(self.valid_log(4), "TOKEN", case)
+        result = checks.iommu_assertions(self.valid_log((0, 3, 6, 9)), "TOKEN", case)
         self.assertEqual([r["did"] for r in result], [0x100, 0x30100, 0x60100, 0x90100])
 
-    def test_kmh_linux_domain_numbering_and_unrelated_dmac_probe(self):
+    def test_kmh_fixed_domain_numbering_and_unrelated_dmac_probe(self):
         case = next(c for c in catalog() if c["id"] == "kmh-iommu-linux")
-        text = self.valid_log().replace("0000:01:00.0", "0001:01:00.0")
+        text = self.valid_log(kmh=True)
         result = checks.iommu_assertions(text, "TOKEN", case)
         self.assertEqual(result[0]["did"], 0x100)
+        with self.assertRaises(AssertionError):
+            checks.iommu_assertions(text.replace("0000:01:00.0", "0001:01:00.0"), "TOKEN", case)
         text = self.valid_log() + "dw_axi_dmac_platform b000000.dma-controller: probe with driver dw_axi_dmac_platform failed with error -2\n"
         checks.iommu_assertions(text, "TOKEN", self.case)
+
+    def test_dual_and_all_roots(self):
+        for case_id, segments, kmh in (("kmh-iommu-linux-dual-root", range(2), True),
+                                       ("bosc-iommu-linux-all-roots", range(12), False)):
+            case = next(c for c in catalog() if c["id"] == case_id)
+            text = self.valid_log(segments, kmh)
+            result = checks.iommu_assertions(text, "TOKEN", case)
+            self.assertEqual([r["did"] for r in result],
+                             [0x100 if kmh else (s << 16) | 0x100 for s in segments])
+            self.assertEqual([r["bus"] for r in result], case["nvme_buses"])
+            # Enumeration order is not controller/serial order (nvme10 sorts before nvme2).
+            lines = text.splitlines()
+            start, end = lines.index("TOKEN:IOMMU_BEGIN") + 1, lines.index(f"TOKEN:NVME_COUNT={len(segments)}")
+            lines[start:end] = reversed(lines[start:end])
+            self.assertEqual(len(checks.iommu_assertions("\n".join(lines), "TOKEN", case)), len(segments))
+            for old, new in (("0001:01:00.0", "0000:01:00.0"),
+                             ("|1|DMA-FQ", "|0|DMA-FQ"),
+                             ("BOSC-CI-1|", "BOSC-CI-0|"),
+                             ("TOKEN:DMA=BOSC-CI-1|", "echo TOKEN:DMA=BOSC-CI-1|")):
+                with self.subTest(case=case_id, old=old), self.assertRaises(AssertionError):
+                    checks.iommu_assertions(text.replace(old, new), "TOKEN", case)
+            if kmh:
+                with self.assertRaises(AssertionError):
+                    checks.iommu_assertions(text.replace("311f1000", "311f0000"), "TOKEN", case)
+            else:
+                for index in (10, 11):
+                    with self.assertRaises(AssertionError):
+                        checks.iommu_assertions(text.replace(f"TOKEN:DMA=BOSC-CI-{index}|", "missing|"), "TOKEN", case)
 
     def test_missing_bad_and_echo_evidence(self):
         good = self.valid_log()
@@ -319,24 +354,29 @@ class IommuTests(unittest.TestCase):
     def test_sparse_private_disks_and_failure_cleanup(self):
         from runner import nvme_disks, cleanup_nvme
         from common import read_json
-        for error in (None, RuntimeError, KeyboardInterrupt):
+        scenarios = [(c, e) for c in catalog() if c["kind"] == "iommu-linux"
+                     for e in (None, RuntimeError, KeyboardInterrupt)]
+        for case, error in scenarios:
             with tempfile.TemporaryDirectory() as tmp:
                 work = Path(tmp)
-                directory = work / "results" / self.case["id"]
+                directory = work / "results" / case["id"]
                 directory.mkdir(parents=True)
                 try:
-                    with nvme_disks(work, self.case, directory) as args:
-                        disk = work / "scratch" / self.case["id"] / "nvme0.raw"
-                        self.assertEqual(disk.stat().st_size, 64*1024*1024)
-                        self.assertEqual(disk.stat().st_blocks, 0)
-                        self.assertIn("bus=pcie-d0-p0", " ".join(args))
+                    with nvme_disks(work, case, directory) as args:
+                        disks = list((work / "scratch" / case["id"]).glob("*.raw"))
+                        self.assertEqual(len(disks), case["disks"])
+                        for disk in disks:
+                            self.assertEqual(disk.stat().st_size, 64*1024*1024)
+                            self.assertEqual(disk.stat().st_blocks, 0)
+                        for i, bus in enumerate(case["nvme_buses"]):
+                            self.assertIn(f"nvme,drive=nvme{i},bus={bus},addr=0,serial=BOSC-CI-{i}", args)
                         if error:
                             raise error()
                 except (RuntimeError, KeyboardInterrupt):
                     pass
-                self.assertFalse(disk.exists())
+                self.assertFalse(any(d.exists() for d in disks))
                 self.assertTrue(read_json(directory / "nvme-disks.json")["cleaned"])
-                cleanup_nvme(work, self.case, directory)  # Parent cleanup is idempotent.
+                cleanup_nvme(work, case, directory)  # Parent cleanup is idempotent.
 
     def test_parent_cleans_killed_worker_disks(self):
         import ci
@@ -370,6 +410,16 @@ class IommuTests(unittest.TestCase):
                       {"tier": "xfail"}, {"nvme_buses": ["wrong"]}):
             with self.assertRaises(ValueError):
                 validate_cases([dict(self.case, **edits)], specs)
+        for case_id in ("kmh-iommu-linux-dual-root", "bosc-iommu-linux-all-roots"):
+            case = next(c for c in catalog() if c["id"] == case_id)
+            for edits in ({"nvme_buses": case["nvme_buses"][:-1]}, {"topology": "single-root"},
+                          {"cpus": 16}, {"owner": "other"}):
+                with self.assertRaises(ValueError):
+                    validate_cases([dict(case, **edits)], specs)
+        case = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-all-roots")
+        for edits in ({"mode": "single"}, {"die_mask": "0x1"}, {"tier": "mr"}):
+            with self.assertRaises(ValueError):
+                validate_cases([dict(case, **edits)], specs)
 
     def test_iommu_missing_result_is_failure(self):
         with tempfile.TemporaryDirectory() as tmp:

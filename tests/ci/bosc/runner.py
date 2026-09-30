@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 
-from common import SOURCE, run_logged, sha256, write_json
+from common import SOURCE, pcie_segment, run_logged, sha256, write_json
 from checks import BOOTARGS, FATAL, clean, iommu_assertions, itgen_assertions, linux_assertions, mcu_assertions, qtest_assertions
 
 sys.path.insert(0, str(SOURCE / "python"))
@@ -63,19 +63,30 @@ def prepare_dtb(binary, case, paths, directory):
     evidence = {"model": model, "sha256": sha256(dtb)}
     if case["kind"] == "iommu-linux":
         nodes = subprocess.check_output(["fdtget", "-l", str(dtb), "/soc"], timeout=10).decode().split()
+        iommus = {}
+        for node in nodes:
+            if node.startswith("iommu@") and prop("/soc/" + node, "compatible") == "riscv,iommu":
+                phandle = int(prop("/soc/" + node, "phandle", "x"), 16)
+                iommus[phandle] = "riscv-iommu@" + node.split("@")[1] + ".iommu"
         roots = []
         for node in nodes:
             if not node.startswith(("pcie@", "pci@")):
                 continue
             node = "/soc/" + node
             mapping = [int(x, 16) for x in prop(node, "iommu-map", "x").split()]
-            segment = int(prop(node, "linux,pci-domain", "i")) if case["owner"] == "bosc" else 0
+            segment = int(prop(node, "linux,pci-domain", "i"))
             base = segment << 16 if case["owner"] == "bosc" else 0
-            if len(mapping) != 4 or mapping[0] != 0 or mapping[2:] != [base, 0x10000]:
+            if (len(mapping) != 4 or mapping[0] != 0 or mapping[2:] != [base, 0x10000]
+                    or mapping[1] not in iommus):
                 raise AssertionError(f"incorrect DT IOMMU mapping for {node}: {mapping}")
-            roots.append({"node": node, "segment": segment, "iommu_map": mapping})
-        if not roots:
-            raise AssertionError("missing PCIe iommu-map in DT")
+            roots.append({"node": node, "segment": segment, "iommu_map": mapping,
+                          "iommu": iommus[mapping[1]]})
+        count = 2 if case["owner"] == "kmh" else 3 if case["mode"] == "single" else 12
+        if sorted(r["segment"] for r in roots) != list(range(count)):
+            raise AssertionError("missing or duplicate PCIe roots in DT")
+        targets = {r["iommu_map"][1] for r in roots}
+        if len(iommus) != (2 if case["owner"] == "kmh" else 1) or targets != set(iommus):
+            raise AssertionError("incorrect per-root IOMMU attachment in DT")
         evidence["pcie_roots"] = roots
     if case["owner"] == "bosc":
         single = case["mode"] == "single"
@@ -132,8 +143,10 @@ for p in /sys/class/nvme/nvme*; do
     group=$(basename "$(readlink -f "$p/device/iommu_group")")
     domain=$(cat "$p/device/iommu_group/type")
     driver=$(basename "$(readlink -f "$p/device/driver")")
+    [ -L "$p/device/iommu" ]
+    iommu=$(basename "$(readlink -f "$p/device/iommu")")
     msis=$(cat "$p/device/msi_irqs/"*)
-    printf '%s:DEVICE=%s|%s|%s|%s|%s|%s|%s\n' "$t" "$serial" "$c" "$bdf" "$group" "$domain" "$state" "$driver"
+    printf '%s:DEVICE=%s|%s|%s|%s|%s|%s|%s|%s\n' "$t" "$serial" "$c" "$bdf" "$group" "$domain" "$state" "$driver" "$iommu"
     [ "$state" = live ] && [ "$driver" = nvme ]
     case "$domain" in DMA|DMA-FQ) ;; *) exit 1;; esac
     case "$msis" in *msi*) ;; *) exit 1;; esac
@@ -188,6 +201,7 @@ def nvme_disks(work, case, directory):
     scratch = work / "scratch" / case["id"]
     scratch.mkdir(parents=True, exist_ok=False)
     disks = [{"path": str(scratch / f"nvme{i}.raw"), "bus": bus,
+              "segment": pcie_segment(bus),
               "serial": f"BOSC-CI-{i}", "size": 64 * 1024 * 1024}
              for i, bus in enumerate(case["nvme_buses"])]
     write_json(directory / "nvme-disks.json", {"disks": disks, "cleaned": False})
@@ -339,6 +353,7 @@ def execute(work, case, paths, directory):
                 "-smp", "64,maxcpus=68", "-m", "256M", "-accel", "tcg", "-bios", paths["itgen"]]
         return run_vm(binary, args, directory, case["timeout"], "itgen", case)
     dtb, dt_evidence = prepare_dtb(binary, case, paths, directory)
+    write_json(directory / "dt-evidence.json", dt_evidence)
     trigger = directory / "boot-rootfs.trigger"
     trigger.write_text(f'[cmd]\nbootargs: "{bootargs(case)}"\n[cmd_end]\n[task]\n[task_end]\n')
     if case["kind"] == "mcu":
@@ -355,5 +370,10 @@ def execute(work, case, paths, directory):
             args += ["-serial", f"file:{directory / f'uart{die}.log'}"]
     with nvme_disks(work, case, directory) as disk_args:
         evidence, checks = run_vm(binary, args + disk_args, directory, case["timeout"], case["kind"], case)
+    if case["kind"] == "iommu-linux":
+        roots = {r["segment"]: r for r in dt_evidence["pcie_roots"]}
+        for endpoint in evidence["iommu"]:
+            if endpoint["iommu"] != roots[endpoint["segment"]]["iommu"]:
+                raise AssertionError(f"NVMe IOMMU differs from DT: {endpoint['bdf']}")
     evidence["dt"] = dt_evidence
     return evidence, checks

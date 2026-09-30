@@ -239,6 +239,27 @@
       ]
     },
     {
+      "id": "kmh-iommu-linux-dual-root",
+      "group": "iommu",
+      "owner": "kmh",
+      "kind": "iommu-linux",
+      "tier": "mr",
+      "machine": "xiangshan-kunminghu",
+      "topology": "dual-root",
+      "nvme_buses": [
+        "dw-pcie",
+        "dw-pcie1"
+      ],
+      "disks": 2,
+      "cpus": 1,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "iommu_kernel",
+        "rootfs"
+      ]
+    },
+    {
       "id": "bosc-iommu-linux-single",
       "group": "iommu",
       "owner": "bosc",
@@ -276,6 +297,40 @@
         "pcie-d3-p0"
       ],
       "disks": 4,
+      "cpus": 4,
+      "timeout": 600,
+      "assets": [
+        "fw_jump",
+        "iommu_kernel",
+        "rootfs"
+      ],
+      "mode": "multi",
+      "die_mask": "0xf",
+      "core_mask": "0x1"
+    },
+    {
+      "id": "bosc-iommu-linux-all-roots",
+      "group": "iommu",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "tier": "extended",
+      "machine": "kmh-bosc-soc",
+      "topology": "all-roots",
+      "nvme_buses": [
+        "pcie-d0-p0",
+        "pcie-d0-p1",
+        "pcie-d0-p2",
+        "pcie-d1-p0",
+        "pcie-d1-p1",
+        "pcie-d1-p2",
+        "pcie-d2-p0",
+        "pcie-d2-p1",
+        "pcie-d2-p2",
+        "pcie-d3-p0",
+        "pcie-d3-p1",
+        "pcie-d3-p2"
+      ],
+      "disks": 12,
       "cpus": 4,
       "timeout": 600,
       "assets": [

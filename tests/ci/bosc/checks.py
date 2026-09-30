@@ -1,7 +1,7 @@
 """Strict assertions, separated for negative self-tests. GPL-2.0-or-later."""
 import re
 
-from common import HERE, read_json
+from common import HERE, pcie_segment, read_json
 
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 FATAL = re.compile(r"Kernel panic|Oops:|BUG:|Unable to handle kernel|"
@@ -88,24 +88,32 @@ def iommu_assertions(text, token, case, qemu_log=""):
     result = []
     seen = set()
     bdfs = set()
+    groups = set()
+    controllers = set()
     for line in devices:
         fields = line.split("|")
-        if len(fields) != 7:
+        if len(fields) != 8:
             raise AssertionError("malformed endpoint evidence")
-        serial, ctrl, bdf, group, domain, state, driver = fields
+        serial, ctrl, bdf, group, domain, state, driver, iommu = fields
         if not re.fullmatch(r"BOSC-CI-\d+", serial) or serial in seen:
             raise AssertionError("unknown or duplicate NVMe serial")
         index = int(serial.removeprefix("BOSC-CI-"))
-        segment = index * 3 if case.get("topology") == "four-die" else 0
-        # KMH leaves Linux domain numbering to enumeration (its empty root
-        # can be visited first). The fixed serial still binds the QEMU bus.
-        valid_bdf = (bool(re.fullmatch(r"[0-9a-f]{4}:01:00\.0", bdf))
-                     if case["owner"] == "kmh" else bdf == f"{segment:04x}:01:00.0")
-        if not valid_bdf or bdf in bdfs:
+        if index >= len(case["nvme_buses"]):
+            raise AssertionError("unknown NVMe serial index")
+        bus = case["nvme_buses"][index]
+        segment = pcie_segment(bus)
+        if bdf != f"{segment:04x}:01:00.0" or bdf in bdfs:
             raise AssertionError(f"unexpected endpoint BDF: {bdf}")
         if (not re.fullmatch(r"nvme\d+", ctrl) or not group.isdigit()
                 or domain not in ("DMA", "DMA-FQ") or state != "live" or driver != "nvme"):
             raise AssertionError("NVMe lacks live driver/translated IOMMU group")
+        if group in groups or ctrl in controllers:
+            raise AssertionError("roots share an IOMMU group or controller")
+        if not re.fullmatch(r"riscv-iommu@[0-9a-f]+\.iommu", iommu):
+            raise AssertionError("missing endpoint IOMMU device")
+        device = iommu.removeprefix("riscv-iommu@")
+        if not re.search(rf"riscv,iommu {re.escape(device)}: using MSIs", text):
+            raise AssertionError("endpoint IOMMU is not using MSIs")
         if not re.search(rf"pci {re.escape(bdf)}: Adding to iommu group {group}\b", text):
             raise AssertionError("missing NVMe IOMMU group attachment")
         if not re.search(rf"nvme {ctrl}: pci function {re.escape(bdf)}\b", text):
@@ -122,12 +130,19 @@ def iommu_assertions(text, token, case, qemu_log=""):
             raise AssertionError("direct DMA hash or interrupt delta failed")
         seen.add(serial)
         bdfs.add(bdf)
+        groups.add(group)
+        controllers.add(ctrl)
         result.append({"serial": serial, "controller": ctrl, "bdf": bdf,
-                       "did": (segment << 16) | 0x100, "group": int(group),
+                       "bus": bus, "segment": segment,
+                       "iommu": iommu,
+                       "did": 0x100 if case["owner"] == "kmh" else (segment << 16) | 0x100,
+                       "group": int(group),
                        "domain": domain, "sha256": source, "bytes": int(size),
                        "irq_before": int(before), "irq_after": int(after)})
     if seen != {f"BOSC-CI-{i}" for i in range(case["disks"])}:
         raise AssertionError("unexpected NVMe endpoints")
+    if len({r["iommu"] for r in result}) != (case["disks"] if case["owner"] == "kmh" else 1):
+        raise AssertionError("unexpected shared/independent endpoint IOMMUs")
     return result
 
 

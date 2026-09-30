@@ -131,9 +131,9 @@ release 升级通过独立制品验证和锁文件 MR，普通 MR 不使用 late
 
 ## 首批覆盖和结果
 
-共 16 个执行单元（含 extended）：原有 9 个 Linux 配置、3 个原生 IOMMU Linux
-配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 13 个子测试。MR 最多选中
-15 个执行单元，四 die IOMMU Linux 属于 extended。
+共 18 个执行单元（含 extended）：原有 9 个 Linux 配置、5 个原生 IOMMU Linux
+配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 14 个子测试。MR 最多选中
+16 个执行单元，四 die 的两种 IOMMU Linux 配置属于 extended。
 JSON/JUnit 另外保留 qtest 容器结果与 3 个 MCU 已知缺陷断言，不能将行数等同于用例数。
 
 Linux 检查实际在线 CPU 集合、固定 kernel release、机器 model、pmem0 挂载/overlay
@@ -172,15 +172,23 @@ PASS、FAIL、XFAIL、XPASS、NOT_SELECTED 分开统计。选中结果缺失、�
 | 用例 | 拓扑 | 层级 |
 | --- | --- | --- |
 | kmh-iommu-linux | KMH，dw-pcie 上一个 NVMe，1 核 | mr |
+| kmh-iommu-linux-dual-root | KMH，dw-pcie、dw-pcie1 各一个 NVMe，1 核 | mr |
 | bosc-iommu-linux-single | BOSC single、die-mask=0x1，p0 一个 NVMe，1 核 | mr |
 | bosc-iommu-linux-multi | BOSC multi、四 die，每 die p0 一个 NVMe、1 核 | extended |
+| bosc-iommu-linux-all-roots | BOSC multi、四 die，每 die p0/p1/p2 各一个 NVMe、1 核，共 12 盘 | extended |
 
-三者均使用 `dw-pcie=on,iommu-sys=on,generated-dtb=on`，要求 Linux translated
+以上均使用 `dw-pcie=on,iommu-sys=on,generated-dtb=on`，要求 Linux translated
 默认域、IOMMU 使用 MSIs、每个 endpoint 绑定 DMA/DMA-FQ group、controller live
-且 I/O queue 初始化。逐盘用随机 1 MiB 数据执行 `oflag=direct` 写入和
+且 I/O queue 初始化。按 serial 核对 bus/PCI segment/BDF，要求各 root 的 group
+独立，并核对 sysfs IOMMU 归属与 DT phandle 一致。逐盘用随机 1 MiB 数据执行 `oflag=direct` 写入和
 `iflag=direct` 读回，对比 SHA256，并核对该 controller 的非 admin 队列中断计数增长。
 只枚举 IOMMU 或 `/dev/nvme*` 不会通过；UART/QEMU 中的 IOMMU fault、NVMe timeout、
 I/O error、panic 都失败。四 die 不使用 XFAIL。
+
+KMH 两个 root 各连接一个 system IOMMU，DID 均为原始 RID（endpoint `01:00.0`
+为 `0x100`）；两个 DT `iommu-map` 均从 0 开始，但指向不同 phandle。
+BOSC 保持一个共享 system IOMMU，segment 为 `die * 3 + port`，
+DID 为 `(segment << 16) | RID`。12 root 用例覆盖 segment 0 至 11。
 
 每次在 `work/scratch/<case>/` 创建私有 64 MiB sparse raw 盘，避免写 JF/rootfs
 源文件。worker finally 和父进程超时/取消清理会删除测试盘；scratch 不在 artifacts
@@ -189,8 +197,9 @@ I/O error、panic 都失败。四 die 不使用 XFAIL。
 快照和完整 UART/QEMU 日志。手动 replay 前按盘元数据重新创建已清理的测试盘。
 
 qtest 组继续运行 AXI translation/requester/error 测试，并运行 PCIe Off/Bare、
-iMSI receiver、跨 root 地址与 translated context 隔离测试。最后一项为四个 root
-的同 RID/IOVA 安装不同页表，防止 DID 碰撞回归。PCIe qtest 在 KMH/BOSC 任一
+iMSI receiver、跨 root 地址与 translated context 隔离测试。BOSC 为四个 root
+的同 RID/IOVA 安装不同页表，防止 DID 碰撞回归；KMH 两个独立 IOMMU 使用相同
+RID/PSCID/IOVA、不同物理页，验证实例隔离。PCIe qtest 在 KMH/BOSC 任一
 平台改动时均选中；共享 IOMMU、PCI requester、PCIe host、NVMe 代码取两者并集。
 不包含 my-virtio-IOMMU、ITGen 65 项套件、nested KVM 或 RTL/VCS。
 

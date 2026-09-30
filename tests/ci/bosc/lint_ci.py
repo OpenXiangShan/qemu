@@ -37,15 +37,25 @@ def validate_cases(cases, assets):
             raise ValueError(f"unknown asset in {case['id']}")
         if case["kind"] == "iommu-linux":
             buses = case.get("nvme_buses", [])
-            expected = ([f"pcie-d{i}-p0" for i in range(4)]
-                        if case.get("topology") == "four-die" else
-                        ["dw-pcie" if case["owner"] == "kmh" else "pcie-d0-p0"])
+            topology = case.get("topology")
+            expected = {
+                ("kmh", "single-root"): ["dw-pcie"],
+                ("kmh", "dual-root"): ["dw-pcie", "dw-pcie1"],
+                ("bosc", "single-root"): ["pcie-d0-p0"],
+                ("bosc", "four-die"): [f"pcie-d{i}-p0" for i in range(4)],
+                ("bosc", "all-roots"): [f"pcie-d{d}-p{p}" for d in range(4) for p in range(3)],
+            }.get((case["owner"], topology))
+            multi = topology in ("four-die", "all-roots")
             if (buses != expected or case.get("disks") != len(buses)
                     or set(case["assets"]) != {"fw_jump", "iommu_kernel", "rootfs"}
                     or case["group"] != "iommu"
                     or case.get("machine") != ("xiangshan-kunminghu" if case["owner"] == "kmh" else "kmh-bosc-soc")
-                    or case.get("topology") not in ("single-root", "four-die")
-                    or case.get("topology") == "four-die" and case["tier"] != "extended"):
+                    or case.get("cpus") != (4 if multi else 1)
+                    or multi and case["tier"] != "extended"
+                    or case["owner"] == "bosc" and (
+                        case.get("mode") != ("multi" if multi else "single")
+                        or case.get("die_mask") != ("0xf" if multi else "0x1")
+                        or case.get("core_mask") != "0x1")):
                 raise ValueError(f"invalid IOMMU Linux topology/assets: {case['id']}")
 
 
