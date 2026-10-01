@@ -32,6 +32,7 @@
 #include "hw/pci/pci.h"
 #include "hw/pci/pcie_host.h"
 #include "hw/riscv/boot.h"
+#include "hw/riscv/kmh_bosc_soc.h"
 #ifdef CONFIG_ACPI
 #include "hw/riscv/kmh_bosc_acpi.h"
 #endif
@@ -82,7 +83,6 @@
 #define KMH_BOSC_APLIC_NUM_SOURCES        KMH_BOSC_APLIC_TEST_NUM_IRQS
 #define KMH_BOSC_IMSIC_NUM_IDS            255
 #define KMH_BOSC_IMSIC_GUEST_INDEX_BITS   3
-#define KMH_BOSC_CLINT_TIMEBASE_FREQ      1000000
 #define KMH_BOSC_IRQ_TYPE_LEVEL_HIGH      0x4
 #define KMH_BOSC_PCIE_MEMMAP_COUNT         6
 

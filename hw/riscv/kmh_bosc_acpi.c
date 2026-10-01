@@ -16,6 +16,7 @@
 #include "hw/pci/pci.h"
 #include "hw/pci/pcie_host.h"
 #include "hw/riscv/kmh_bosc_acpi.h"
+#include "hw/riscv/kmh_bosc_soc.h"
 #include "system/address-spaces.h"
 #include "target/riscv/cpu.h"
 
@@ -52,7 +53,6 @@
 #define KMH_BOSC_IMSIC_GUEST_INDEX_BITS   3
 #define KMH_BOSC_IMSIC_HART_INDEX_BITS    4
 #define KMH_BOSC_IMSIC_GROUP_INDEX_BITS   3
-#define KMH_BOSC_CLINT_TIMEBASE_FREQ      1000000
 
 #define KMH_BOSC_PCIE_ECAM_SIZE           PCIE_MMCFG_SIZE_MAX
 #define KMH_BOSC_PCIE_MEM_BUS_BASE        0x0000000100000000ULL

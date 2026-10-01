@@ -6,6 +6,7 @@
 #include "libqtest.h"
 #include "qemu/bswap.h"
 #include "qemu/units.h"
+#include <libfdt.h>
 
 #define APLIC_M 0x1e020000
 #define FORCE_REG 0x0409014c
@@ -56,6 +57,81 @@ static void test_single_soc_addresses(void)
                     0x1122334455667788ULL);
 
 
+    qtest_quit(qts);
+}
+
+static void test_timebase(gconstpointer opaque)
+{
+    bool single = GPOINTER_TO_INT(opaque);
+    const uint64_t acpi_base = 0x81000000;
+    const uint64_t acpi_size = 0x20000;
+    const uint64_t mtime = 0x1900bff8;
+    /* The packed DT occupies the last 2 MiB of the boot DDR slot. */
+    uint64_t dtb_addr = 0x80000000 + (single ? 256 : 64) * MiB - 2 * MiB;
+    QTestState *qts = qtest_initf(
+        "-M kmh-bosc-soc,soc-mode=%s,core-mask=0x1,generated-dtb=on,"
+        "generated-acpi=on,acpi-handoff-addr=0x81000000 "
+        "-smp %s -m 256M",
+        single ? "single" : "multi",
+        single ? "16,maxcpus=17" : "64,maxcpus=68");
+    struct fdt_header header;
+    g_autofree uint8_t *dtb = NULL;
+    const fdt32_t *frequency;
+    uint64_t before, after, xsdt;
+    uint32_t size, xsdt_size;
+    unsigned rhct_count = 0;
+    char signature[8];
+    int cpus, len;
+
+    before = qtest_readq(qts, mtime);
+    qtest_clock_step(qts, 1000000000);
+    after = qtest_readq(qts, mtime);
+    g_assert_cmpuint(after - before, ==, 13000000);
+    if (!single) {
+        for (unsigned die = 0; die < 4; die++) {
+            g_assert_cmpuint(qtest_readq(qts, global_addr(die, mtime)),
+                             ==, after);
+        }
+    }
+
+    qtest_memread(qts, dtb_addr, &header, sizeof(header));
+    g_assert_cmpint(fdt_check_header(&header), ==, 0);
+    size = fdt_totalsize(&header);
+    g_assert_cmpuint(size, >=, sizeof(header));
+    g_assert_cmpuint(size, <, 2 * MiB);
+    dtb = g_malloc(size);
+    qtest_memread(qts, dtb_addr, dtb, size);
+    cpus = fdt_path_offset(dtb, "/cpus");
+    g_assert_cmpint(cpus, >=, 0);
+    frequency = fdt_getprop(dtb, cpus, "timebase-frequency", &len);
+    g_assert_nonnull(frequency);
+    g_assert_cmpint(len, ==, sizeof(*frequency));
+    g_assert_cmpuint(fdt32_to_cpu(*frequency), ==, 13000000);
+
+    qtest_memread(qts, acpi_base, signature, sizeof(signature));
+    g_assert_cmpmem(signature, sizeof(signature), "RSD PTR ", 8);
+    xsdt = qtest_readq(qts, acpi_base + 24);
+    g_assert_cmpuint(xsdt, >=, acpi_base);
+    g_assert_cmpuint(xsdt, <=, acpi_base + acpi_size - 36);
+    qtest_memread(qts, xsdt, signature, 4);
+    g_assert_cmpmem(signature, 4, "XSDT", 4);
+    xsdt_size = qtest_readl(qts, xsdt + 4);
+    g_assert_cmpuint(xsdt_size, >=, 36);
+    g_assert_cmpuint(xsdt_size, <=, acpi_base + acpi_size - xsdt);
+    g_assert_cmpuint((xsdt_size - 36) % 8, ==, 0);
+    for (unsigned offset = 36; offset < xsdt_size; offset += 8) {
+        uint64_t table = qtest_readq(qts, xsdt + offset);
+
+        g_assert_cmpuint(table, >=, acpi_base);
+        g_assert_cmpuint(table, <=, acpi_base + acpi_size - 48);
+        qtest_memread(qts, table, signature, 4);
+        if (!memcmp(signature, "RHCT", 4)) {
+            g_assert_cmpuint(qtest_readl(qts, table + 4), >=, 48);
+            g_assert_cmpuint(qtest_readq(qts, table + 40), ==, 13000000);
+            rhct_count++;
+        }
+    }
+    g_assert_cmpuint(rhct_count, ==, 1);
     qtest_quit(qts);
 }
 
@@ -207,6 +283,10 @@ int main(int argc, char **argv)
 
     g_test_init(&argc, &argv, NULL);
     qtest_add_func("/kmh-bosc/single/addresses", test_single_soc_addresses);
+    qtest_add_data_func("/kmh-bosc/timebase/single", GINT_TO_POINTER(1),
+                        test_timebase);
+    qtest_add_data_func("/kmh-bosc/timebase/multi", GINT_TO_POINTER(0),
+                        test_timebase);
     qtest_add_func("/kmh-bosc/die-routing", test_die_routing);
     qtest_add_data_func("/kmh-bosc/ddr/16g", &small, test_ddr_layout);
     qtest_add_data_func("/kmh-bosc/ddr/128g", &full, test_ddr_layout);

@@ -20,6 +20,8 @@
       "assets": [],
       "tests": [
         "/kmh-bosc/single/addresses",
+        "/kmh-bosc/timebase/single",
+        "/kmh-bosc/timebase/multi",
         "/kmh-bosc/die-routing",
         "/kmh-bosc/ddr/16g",
         "/kmh-bosc/ddr/128g",

@@ -359,6 +359,13 @@ Generated device tree
 Direct DDR boot
 ---------------
 
+The ACLINT timebase is 13 MHz in both SoC modes, matching the Linux
+``kmh-bosc-soc-1die1c`` and ``kmh-bosc-soc-1die16c`` board device trees.
+Generated device trees and ACPI RHCT advertise the same frequency. External
+device trees must describe this timebase too; a 1 MHz DT from an older QEMU
+build must be updated before reuse. The ``xiangshan-kunminghu`` machine
+retains its separate 1 MHz timebase.
+
 使用 ``-bios none`` 直接启动 ELF：
 
 .. code-block:: bash

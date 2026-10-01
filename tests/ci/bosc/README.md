@@ -132,7 +132,7 @@ release 升级通过独立制品验证和锁文件 MR，普通 MR 不使用 late
 ## 首批覆盖和结果
 
 共 18 个执行单元（含 extended）：原有 9 个 Linux 配置、5 个原生 IOMMU Linux
-配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 14 个子测试。MR 最多选中
+配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 16 个子测试。MR 最多选中
 16 个执行单元，四 die 的两种 IOMMU Linux 配置属于 extended。
 JSON/JUnit 另外保留 qtest 容器结果与 3 个 MCU 已知缺陷断言，不能将行数等同于用例数。
 
