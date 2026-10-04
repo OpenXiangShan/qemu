@@ -755,16 +755,22 @@ static bool riscv_iommu_validate_device_ctx(RISCVIOMMUState *s,
         return false;
     }
 
-    if (s->cap & RISCV_IOMMU_CAP_MSI_FLAT) {
-        msi_mode = get_field(ctx->msiptp, RISCV_IOMMU_DC_MSIPTP_MODE);
+    msi_mode = get_field(ctx->msiptp, RISCV_IOMMU_DC_MSIPTP_MODE);
+    gatp = get_field(ctx->gatp, RISCV_IOMMU_ATP_MODE_FIELD);
 
+    /* The spec reserves every MSI mode except Off when G-stage is Bare. */
+    if (gatp == RISCV_IOMMU_DC_IOHGATP_MODE_BARE &&
+        msi_mode != RISCV_IOMMU_DC_MSIPTP_MODE_OFF) {
+        return false;
+    }
+
+    if (s->cap & RISCV_IOMMU_CAP_MSI_FLAT) {
         if (msi_mode != RISCV_IOMMU_DC_MSIPTP_MODE_OFF &&
             msi_mode != RISCV_IOMMU_DC_MSIPTP_MODE_FLAT) {
             return false;
         }
     }
 
-    gatp = get_field(ctx->gatp, RISCV_IOMMU_ATP_MODE_FIELD);
     if (ctx->tc & RISCV_IOMMU_DC_TC_T2GPA &&
         gatp == RISCV_IOMMU_DC_IOHGATP_MODE_BARE) {
         return false;
