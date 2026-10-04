@@ -416,6 +416,80 @@ static void test_kmh_iommu_root_contexts(void)
     qtest_quit(q);
 }
 
+/* Check DC legality on real PCIe DMA, including Off with a nonzero PPN. */
+static void test_iommu_msi_mode(const void *opaque)
+{
+    bool bosc = (uintptr_t)opaque;
+    const uint64_t ddt = 0x82000000;
+    const uint64_t dir = ddt + 0x1000;
+    const uint64_t dc = ddt + 0x2000;
+    const uint64_t pt = ddt + 0x4000;
+    const uint64_t fq = ddt + 0x8000;
+    const uint64_t pa = 0x83000000;
+    const uint64_t iommu = bosc ? ga(0, 0x4f80200000ULL) : 0x311f0000;
+    const uint64_t bar = bosc ? ga(0, WINDOW) : 0x60000000;
+
+    for (unsigned gstage = 0; gstage < 2; gstage++) {
+        for (unsigned flat = 0; flat < 2; flat++) {
+            QTestState *q = qtest_initf(
+                "-M %s,dw-pcie=on,generated-dtb=on,iommu-sys=on "
+                "-smp %s -m 256M -device edu,bus=%s,"
+                "dma_mask=0xffffffffffffffff",
+                bosc ? "kmh-bosc-soc,die-mask=0xf,core-mask=0x1" :
+                       "xiangshan-kunminghu",
+                bosc ? "64,maxcpus=68" : "1",
+                bosc ? "pcie-d0-p0" : "dw-pcie");
+
+            if (bosc) {
+                setup_edu(q, 0);
+            } else {
+                setup_kmh_edu(q, 0);
+            }
+            /* DID 0x100, extended DC. Identity Sv39/Sv39x4 1-GiB leaf. */
+            qtest_writeq(q, ddt, (dir >> 2) | 1);
+            qtest_writeq(q, dir + 4 * 8, (dc >> 2) | 1);
+            qtest_writeq(q, dc, RISCV_IOMMU_DC_TC_V);
+            qtest_writeq(q, dc + (gstage ? 8 : 24),
+                         (8ULL << 60) | (pt >> 12));
+            qtest_writeq(q, pt + 2 * 8, (0x80000000ULL >> 2) | 0xd7);
+            qtest_writeq(q, dc + 32,
+                         ((uint64_t)flat << 60) | ((ddt + 0xc000) >> 12));
+            qtest_writeq(q, iommu + RISCV_IOMMU_REG_FQB, (fq >> 2) | 2);
+            qtest_writel(q, iommu + RISCV_IOMMU_REG_FQCSR,
+                         RISCV_IOMMU_FQCSR_FQEN);
+            g_assert_true(qtest_readl(q, iommu + RISCV_IOMMU_REG_FQCSR) &
+                          RISCV_IOMMU_FQCSR_FQON);
+            qtest_writeq(q, iommu + RISCV_IOMMU_REG_DDTP,
+                         (ddt >> 2) | RISCV_IOMMU_DDTP_MODE_3LVL);
+
+            qtest_writel(q, pa, 0x12345678);
+            /* EDU's initially zeroed buffer attempts to overwrite the marker. */
+            qtest_writeq(q, bar + 0x80, 0x40000);
+            qtest_writeq(q, bar + 0x88, pa);
+            qtest_writeq(q, bar + 0x90, 4);
+            qtest_writeq(q, bar + 0x98, 3);
+            qtest_clock_step(q, 100000000);
+            g_assert_cmphex(qtest_readq(q, bar + 0x98) & 1, ==, 0);
+
+            if (!gstage && flat) {
+                uint64_t fault = qtest_readq(q, fq);
+
+                g_assert_cmphex(qtest_readl(q, pa), ==, 0x12345678);
+                g_assert_cmpuint(qtest_readl(q, iommu + RISCV_IOMMU_REG_FQT),
+                                 ==, 1);
+                g_assert_cmpuint(fault & RISCV_IOMMU_FQ_HDR_CAUSE, ==,
+                                 RISCV_IOMMU_FQ_CAUSE_DDT_MISCONFIGURED);
+                g_assert_cmphex(fault >> 40, ==, 0x100);
+            } else {
+                g_assert_cmphex(qtest_readl(q, pa), ==, 0);
+                g_assert_cmpuint(qtest_readl(q, iommu + RISCV_IOMMU_REG_FQT),
+                                 ==, 0);
+            }
+            qtest_quit(q);
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -423,10 +497,14 @@ int main(int argc, char **argv)
     qtest_add_data_func("/kmh-bosc/pcie/imsi-iommu", (void *)1, test_pcie);
     qtest_add_func("/kmh-bosc/pcie/iommu-root-contexts",
                    test_iommu_root_contexts);
+    qtest_add_data_func("/kmh-bosc/pcie/iommu-msi-mode", (void *)1,
+                       test_iommu_msi_mode);
     if (qtest_has_machine("xiangshan-kunminghu")) {
         qtest_add_func("/kmh-bosc/pcie/generic-dwc", test_generic_dwc);
         qtest_add_func("/kmh-bosc/pcie/kmh-iommu-root-contexts",
                        test_kmh_iommu_root_contexts);
+        qtest_add_data_func("/kmh-bosc/pcie/kmh-iommu-msi-mode", (void *)0,
+                           test_iommu_msi_mode);
     }
     return g_test_run();
 }

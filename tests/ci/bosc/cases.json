@@ -59,7 +59,9 @@
         "/kmh-bosc/pcie/imsi-iommu",
         "/kmh-bosc/pcie/generic-dwc",
         "/kmh-bosc/pcie/kmh-iommu-root-contexts",
-        "/kmh-bosc/pcie/iommu-root-contexts"
+        "/kmh-bosc/pcie/iommu-root-contexts",
+        "/kmh-bosc/pcie/iommu-msi-mode",
+        "/kmh-bosc/pcie/kmh-iommu-msi-mode"
       ],
       "owners": [
         "bosc",

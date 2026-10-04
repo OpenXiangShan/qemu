@@ -132,7 +132,7 @@ release 升级通过独立制品验证和锁文件 MR，普通 MR 不使用 late
 ## 首批覆盖和结果
 
 共 18 个执行单元（含 extended）：原有 9 个 Linux 配置、5 个原生 IOMMU Linux
-配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 16 个子测试。MR 最多选中
+配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 18 个子测试。MR 最多选中
 16 个执行单元，四 die 的两种 IOMMU Linux 配置属于 extended。
 JSON/JUnit 另外保留 qtest 容器结果与 3 个 MCU 已知缺陷断言，不能将行数等同于用例数。
 
@@ -201,6 +201,9 @@ iMSI receiver、跨 root 地址与 translated context 隔离测试。BOSC 为四
 的同 RID/IOVA 安装不同页表，防止 DID 碰撞回归；KMH 两个独立 IOMMU 使用相同
 RID/PSCID/IOVA、不同物理页，验证实例隔离。PCIe qtest 在 KMH/BOSC 任一
 平台改动时均选中；共享 IOMMU、PCI requester、PCIe host、NVMe 代码取两者并集。
+两个平台还覆盖 G-stage Bare/Sv39x4 与 MSIPTP Off/Flat 的四种组合：
+Bare + Flat 必须阻止 DMA 并上报 DDT misconfigured（cause 259），
+其余组合允许 DMA；Off 模式保留非零 PPN，避免把整个 MSIPTP 非零误判为启用。
 不包含 my-virtio-IOMMU、ITGen 65 项套件、nested KVM 或 RTL/VCS。
 
 ## 实时串口与失败诊断
