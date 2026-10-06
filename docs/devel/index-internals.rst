@@ -18,6 +18,8 @@ Details about QEMU's various subsystems including how to add features to them.
    migration/index
    multi-process
    libqemu
+   libqemu-compose
+   libqemu-architecture
    reset
    s390-cpu-topology
    s390-dasd-ipl

@@ -193,3 +193,37 @@ requests from four host threads while requesting shutdown.
 
 Use ``--split-init`` with ``tests/libqemu/check.py`` to run the full Kunminghu
 Linux and block regression through ``init`` followed by ``finish_qemu_init``.
+
+A Linux-capable host assembly example is provided in
+``libqemu/examples/kunminghu.c``, with a readable ``kunminghu.dts`` and usage in
+``libqemu/examples/README.kunminghu.md``. Starting from ``-M none``, it creates
+one Kunminghu CPU, RAM/ROM, AIA, CLINT, UART, my-virtio-blk, and DWC RC0 with an
+NVMe endpoint through the public ABI. It loads OpenSBI fw_dynamic and Linux
+without calling the existing Kunminghu board initializer. This is a selected
+Kunminghu configuration, not a replacement for every machine option.
+
+``LIBQEMU_ROM`` creates read-only guest memory. ``core->rom_add_blob`` copies a
+host buffer into QEMU's reset loader during assembly; the destination must fit
+in one mapped RAM/ROM region. Payloads become visible at initial reset in
+``finish_qemu_init``. The new function is appended to the core table; hosts
+using it must check ``core->struct_size``. The Linux example queries the realized
+CPU's read-only ``isa-string`` QOM property to keep its DTB consistent.
+
+Run ``tests/libqemu/kunminghu.py`` with the same ``--build``, ``--output``,
+``--kernel`` and ``--disk`` arguments as above to validate Linux boot, both
+storage paths, interrupt delivery, remount/readback and backend closure.
+
+Host-side C composition modules
+-------------------------------
+
+``libqemu/compose.h`` and the separately linked ``libqemu-compose.a`` provide
+typed memory, CPU, AIA, ACLINT, UART, my-virtio-blk, DWC RC and NVMe builders.
+The Kunminghu example now uses these modules explicitly. Board defaults live
+in ``compose-kmh.c``; DTB generation reads successfully assembled module records,
+and boot placement is validated before any ROM blob is registered.
+Use ``--dump-dtb FILE`` on the example to inspect the generated tree.
+
+The helpers use only the existing public core ABI and add no worker threads.
+They currently support one RV64 hart with TCG. See :doc:`libqemu-compose` for
+the API map, ownership, validation, extension boundaries and tests. Installation
+includes the compose header, static library and ``libqemu-compose.pc``.
