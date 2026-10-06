@@ -68,7 +68,7 @@ def stop_group(proc):
     proc.wait(timeout=5)
 
 
-def run_logged(argv, log, *, cwd=None, env=None, timeout=120, on_poll=None):
+def run_logged(argv, log, *, cwd=None, env=None, timeout=120, on_poll=None, expected_exit=0):
     """Bounded command with process-group cleanup, including cancellation."""
     log = Path(log)
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +92,7 @@ def run_logged(argv, log, *, cwd=None, env=None, timeout=120, on_poll=None):
                         break
                     except subprocess.TimeoutExpired:
                         continue
-            if code:
+            if code != expected_exit:
                 raise RuntimeError(f"command exited {code}; see {log}")
         finally:
             stop_group(proc)
@@ -108,7 +108,8 @@ def source_identity():
     # unrelated untracked artifacts or read outside source/test directories.
     untracked = {}
     for name in git("ls-files", "--others", "--exclude-standard", "-z",
-                    "--", "hw", "include", "tests/qtest", "tests/ci/bosc").decode().split("\0"):
+                    "--", "hw", "include", "libqemu", "my-virtio-lib", "tests/libqemu",
+                    "tests/qtest", "tests/ci/bosc").decode().split("\0"):
         if name and (SOURCE / name).suffix in (".c", ".h", ".py", ".json"):
             untracked[name] = sha256(SOURCE / name)
     return {"revision": git("rev-parse", "HEAD").decode().strip(),

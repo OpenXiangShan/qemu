@@ -45,7 +45,7 @@ bosc:build:
   dependencies: ["bosc:check"]
   script:
     - python3 tests/ci/bosc/ci.py doctor --work-dir "$BOSC_CI_WORK"
-    - python3 tests/ci/bosc/ci.py build --work-dir "$BOSC_CI_WORK" --jobs "$BOSC_CI_JOBS"
+    - python3 tests/ci/bosc/ci.py build --work-dir "$BOSC_CI_WORK" --jobs "$BOSC_CI_JOBS" --profile system
   artifacts:
     when: always
     expire_in: 14 days
@@ -54,6 +54,25 @@ bosc:build:
       - build/ci/pipeline/doctor.json
       - build/ci/pipeline/configure.log*
       - build/ci/pipeline/build.log*
+      - build/ci/pipeline/native-dependencies.json
+      - build/ci/pipeline/asset-evidence/
+      - build/ci/pipeline/stage-errors/
+
+bosc:build-libqemu:
+  stage: build
+  timeout: 80m
+  dependencies: ["bosc:check"]
+  script:
+    - python3 tests/ci/bosc/ci.py doctor --work-dir "$BOSC_CI_WORK" --group libqemu
+    - python3 tests/ci/bosc/ci.py build --work-dir "$BOSC_CI_WORK" --group libqemu --profile libqemu --jobs "$BOSC_CI_JOBS"
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build/ci/pipeline/bundle-libqemu/
+      - build/ci/pipeline/libqemu-configure.log*
+      - build/ci/pipeline/libqemu-build.log*
+      - build/ci/pipeline/doctor.json
       - build/ci/pipeline/native-dependencies.json
       - build/ci/pipeline/asset-evidence/
       - build/ci/pipeline/stage-errors/
@@ -105,11 +124,17 @@ bosc:iommu:
   variables:
     BOSC_CI_GROUP: iommu
 
+bosc:libqemu:
+  extends: .bosc:test
+  dependencies: ["bosc:check", "bosc:build-libqemu"]
+  variables:
+    BOSC_CI_GROUP: libqemu
+
 bosc:report:
   stage: report
   timeout: 10m
   when: always
-  dependencies: ["bosc:check", "bosc:build", "bosc:qtest", "bosc:kmh-linux", "bosc:ddr", "bosc:mcu", "bosc:itgen", "bosc:iommu"]
+  dependencies: ["bosc:check", "bosc:build", "bosc:build-libqemu", "bosc:qtest", "bosc:kmh-linux", "bosc:ddr", "bosc:mcu", "bosc:itgen", "bosc:iommu", "bosc:libqemu"]
   script:
     - python3 tests/ci/bosc/ci.py report --work-dir "$BOSC_CI_WORK"
   artifacts:

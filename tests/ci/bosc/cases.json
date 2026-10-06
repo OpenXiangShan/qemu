@@ -1,13 +1,14 @@
 {
   "schema": 1,
   "deferred": [
-    "my-virtio",
+    "my-virtio beyond compose Linux blk",
     "ACPI/UEFI boot",
     "KVM/M-mode/nested",
     "VFIO",
     "cosim/devproxy and default DMA fallback",
     "RTL/FPGA",
-    "direct generated-DTB MCU boot"
+    "direct generated-DTB MCU boot",
+    "libqemu installed SDK/old-host ABI compatibility"
   ],
   "cases": [
     {
@@ -345,6 +346,232 @@
       "mode": "multi",
       "die_mask": "0xf",
       "core_mask": "0x1"
+    },
+    {
+      "id": "libqemu-lifecycle",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-lifecycle",
+      "arguments": [],
+      "pass_marker": "LIFECYCLE_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-rom",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-rom",
+      "arguments": [],
+      "pass_marker": "ROM_RESET_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-assembly",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-assemble",
+      "arguments": [],
+      "pass_marker": "ASSEMBLY_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-autostart",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-assemble",
+      "arguments": [
+        "running"
+      ],
+      "pass_marker": "ASSEMBLY_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-cancel",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-assemble",
+      "arguments": [
+        "cancel"
+      ],
+      "pass_marker": "ASSEMBLY_CANCEL_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-concurrency",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-concurrency",
+      "arguments": [],
+      "pass_marker": "CONCURRENCY_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-compose",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-compose-test",
+      "arguments": [],
+      "pass_marker": "COMPOSE_MODULE_DTB_PREFLIGHT_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-compose-profile",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-unit",
+      "tier": "mr",
+      "binary": "libqemu-compose-test",
+      "arguments": [
+        "profile"
+      ],
+      "pass_marker": "COMPOSE_PROFILE_PASS",
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-exit-start",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-exit",
+      "tier": "mr",
+      "binary": "libqemu-run",
+      "split_init": false,
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-linux-start",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-linux",
+      "tier": "mr",
+      "binary": "libqemu-run",
+      "split_init": false,
+      "cpus": 4,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ]
+    },
+    {
+      "id": "libqemu-exit-split",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-exit",
+      "tier": "mr",
+      "binary": "libqemu-run",
+      "split_init": true,
+      "timeout": 120,
+      "assets": []
+    },
+    {
+      "id": "libqemu-linux-split",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-linux",
+      "tier": "mr",
+      "binary": "libqemu-run",
+      "split_init": true,
+      "cpus": 4,
+      "timeout": 300,
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ]
+    },
+    {
+      "id": "libqemu-compose-linux-minimal",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-compose-linux",
+      "tier": "mr",
+      "binary": "libqemu-kunminghu",
+      "devices": [],
+      "builder": "explicit",
+      "cpus": 1,
+      "timeout": 600,
+      "assets": [
+        "iommu_kernel"
+      ]
+    },
+    {
+      "id": "libqemu-compose-linux-blk",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-compose-linux",
+      "tier": "mr",
+      "binary": "libqemu-kunminghu",
+      "devices": [
+        "vda"
+      ],
+      "builder": "explicit",
+      "cpus": 1,
+      "timeout": 600,
+      "assets": [
+        "iommu_kernel",
+        "rootfs"
+      ]
+    },
+    {
+      "id": "libqemu-compose-linux-nvme",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-compose-linux",
+      "tier": "mr",
+      "binary": "libqemu-kunminghu",
+      "devices": [
+        "nvme0n1"
+      ],
+      "builder": "explicit",
+      "cpus": 1,
+      "timeout": 600,
+      "assets": [
+        "iommu_kernel",
+        "rootfs"
+      ]
+    },
+    {
+      "id": "libqemu-compose-linux-dual",
+      "group": "libqemu",
+      "owner": "kmh",
+      "kind": "libqemu-compose-linux",
+      "tier": "extended",
+      "binary": "libqemu-kunminghu",
+      "devices": [
+        "vda",
+        "nvme0n1"
+      ],
+      "builder": "profile",
+      "cpus": 1,
+      "timeout": 600,
+      "assets": [
+        "iommu_kernel",
+        "rootfs"
+      ]
     }
   ]
 }

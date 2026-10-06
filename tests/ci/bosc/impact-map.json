@@ -29,6 +29,18 @@
     },
     {
       "patterns": [
+        "libqemu/*.c",
+        "libqemu/*.h",
+        "libqemu/*.version",
+        "tests/libqemu/*"
+      ],
+      "owners": [
+        "kmh"
+      ],
+      "reason": "libqemu lifecycle/core/compose and KMH control regressions"
+    },
+    {
+      "patterns": [
         "hw/riscv/riscv-iommu*",
         "include/hw/riscv/*iommu*",
         "hw/pci-host/*",

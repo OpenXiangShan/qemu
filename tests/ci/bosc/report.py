@@ -3,6 +3,7 @@ from collections import Counter
 import xml.etree.ElementTree as ET
 
 from common import HERE, catalog, read_json, write_json
+from checks import libqemu_evidence
 
 
 def aggregate(work, group=None):
@@ -25,6 +26,8 @@ def aggregate(work, group=None):
             if result["status"] not in ("PASS", "FAIL"):
                 raise ValueError("invalid case status")
             if result["status"] == "PASS":
+                if case["kind"].startswith("libqemu"):
+                    libqemu_evidence(case, result.get("evidence", {}))
                 ids = [c["id"] for c in result.get("checks", [])]
                 if case["kind"] == "qtest" and sorted(ids) != sorted("/riscv64" + n for n in case["tests"]):
                     raise ValueError("qtest sub-results missing or duplicated")
@@ -62,6 +65,9 @@ def aggregate(work, group=None):
     build_manifest = work / "bundle/build.json"
     if build_manifest.exists():
         report["build"] = read_json(build_manifest)
+    library_manifest = work / "bundle-libqemu/build.json"
+    if library_manifest.exists():
+        report["libqemu_build"] = read_json(library_manifest)
     report["counting_note"] = "Counts include qtest executable containers AND their subtests; MCU count assertions are separate. Consult the selected case manifest for MR/extended coverage."
     report_dir = work / "reports" / (group or "all")
     write_json(report_dir / "summary.json", report)

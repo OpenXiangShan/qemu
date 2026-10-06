@@ -162,3 +162,13 @@ python3 tests/libqemu/kunminghu.py \
 
 加上 `--normal` 并指定普通 QEMU 构建目录，可对原 `xiangshan-kunminghu` machine
 做相同的四核、双磁盘回归。
+# Optional CI topologies
+
+The launcher accepts `--devices none|blk|nvme|blk-nvme` (default `blk-nvme`).
+Pass `-` in unused BLK_IMAGE/NVME_IMAGE positional slots. Disabled devices and
+their backends are omitted from the assembled SoC and generated DTB.
+`--profile-builder` selects `kmh_soc_build()` instead of the explicit builder
+sequence; both start from `-M none` through the public compose API.
+
+The locked-image CI, including an initramfs shell and fully unmounted storage
+checks, is described in `tests/ci/bosc/LIBQEMU.md`.

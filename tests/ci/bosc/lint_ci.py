@@ -35,6 +35,34 @@ def validate_cases(cases, assets):
             raise ValueError(f"invalid case tier: {case['id']}")
         if not set(case["assets"]).issubset(assets):
             raise ValueError(f"unknown asset in {case['id']}")
+        if case["kind"].startswith("libqemu"):
+            linux = case["kind"] == "libqemu-linux"
+            compose = case["kind"] == "libqemu-compose-linux"
+            inputs = {"fw_jump", "kernel", "rootfs"} if linux else set()
+            if compose:
+                inputs = {"iommu_kernel"} | ({"rootfs"} if case.get("devices") else set())
+            if (case["group"] != "libqemu" or case["owner"] != "kmh"
+                    or case["kind"] not in ("libqemu-unit", "libqemu-exit", "libqemu-linux", "libqemu-compose-linux")
+                    or not compose and case["tier"] != "mr"
+                    or set(case["assets"]) != inputs):
+                raise ValueError(f"invalid libqemu case/assets: {case['id']}")
+            if compose:
+                if (case.get("devices") not in ([], ["vda"], ["nvme0n1"], ["vda", "nvme0n1"])
+                        or case.get("builder") not in ("explicit", "profile")
+                        or case.get("cpus") != 1 or case.get("binary") != "libqemu-kunminghu"
+                        or len(case["devices"]) == 2 and case["tier"] != "extended"):
+                    raise ValueError(f"invalid composed Linux topology: {case['id']}")
+            elif case["kind"] == "libqemu-unit":
+                if (case.get("binary") not in ("libqemu-lifecycle", "libqemu-rom", "libqemu-assemble",
+                                              "libqemu-concurrency", "libqemu-compose-test")
+                        or not isinstance(case.get("arguments"), list)
+                        or case["arguments"] not in ([], ["running"], ["cancel"], ["profile"])
+                        or not re.fullmatch(r"[A-Z_]+PASS", case.get("pass_marker", ""))):
+                    raise ValueError(f"invalid libqemu native test: {case['id']}")
+            elif (case.get("binary") != "libqemu-run"
+                  or not isinstance(case.get("split_init"), bool)
+                  or linux and case.get("cpus") != 4):
+                raise ValueError(f"invalid libqemu host mode: {case['id']}")
         if case["kind"] == "iommu-linux":
             buses = case.get("nvme_buses", [])
             topology = case.get("topology")
@@ -80,6 +108,10 @@ def main():
     validate_cases(catalog(), assets)
     if "bosc:iommu" not in config["bosc:report"]["dependencies"]:
         raise ValueError("final report must consume IOMMU results")
+    if not {"bosc:build-libqemu", "bosc:libqemu"}.issubset(config["bosc:report"]["dependencies"]):
+        raise ValueError("final report must consume libqemu build and results")
+    if config["bosc:libqemu"]["dependencies"] != ["bosc:check", "bosc:build-libqemu"]:
+        raise ValueError("libqemu job must consume its separate library bundle")
     if config["bosc:report"]["when"] != "always":
         raise ValueError("final report must run after failures")
     print("PASS: offline YAML/manifest checks (target GitLab CI Lint still required)")

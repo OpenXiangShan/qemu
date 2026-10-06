@@ -8,7 +8,8 @@ import sys
 import time
 
 UART_LOGS = tuple(f"uart{index}.log" for index in range(4))
-LIVE_LOGS = (*UART_LOGS, "qemu.log", "qtest.log")
+LIVE_LOGS = (*UART_LOGS, "qemu.log", "qtest.log", "exit-0.log", "exit-7.log",
+             "vda-fsck.log", "nvme0n1-fsck.log")
 DIAGNOSTIC_LOGS = (*LIVE_LOGS, "exception.log", "worker.log",
                    "dumpdtb.log", "fdtput.log")
 READ_CHUNK = 64 * 1024

@@ -13,6 +13,36 @@ def clean(text):
     return ANSI.sub("", text).replace("\r", "")
 
 
+def libqemu_host_assertions(text, code):
+    text = clean(text)
+    if (FATAL.search(text) or len(re.findall(r"(?m)^HOST_STARTED$", text)) != 1
+            or re.findall(r"(?m)^HOST_CONTINUES status=(-?\d+)$", text) != [str(code)]
+            or text.index("HOST_STARTED") > text.index("HOST_CONTINUES")):
+        raise AssertionError("missing/invalid libqemu host survival or exit status")
+
+
+def libqemu_evidence(case, evidence):
+    if case["kind"] == "libqemu-unit":
+        valid = evidence == {"marker": case["pass_marker"], "exitcode": 0}
+    elif case["kind"] == "libqemu-exit":
+        valid = evidence == {"exit_statuses": [0, 7], "host_continues": [0, 7],
+                             "split_init": case["split_init"]}
+    elif case["kind"] == "libqemu-compose-linux":
+        from compose_checks import validate_evidence
+        validate_evidence(case, evidence)
+        return
+    else:
+        valid = (evidence.get("exitcode") == 0 and evidence.get("host_continues") == 0
+                 and evidence.get("host_alive_after_wait") is True
+                 and evidence.get("split_init") == case["split_init"]
+                 and evidence.get("online") == "0-3"
+                 and evidence.get("kernel") == read_json(HERE / "images.lock.json")["assets"]["kernel"]["kernel_release"]
+                 and evidence.get("root") == "pmem0 + overlay"
+                 and bool(evidence.get("dt", {}).get("sha256")))
+    if not valid:
+        raise ValueError("libqemu acceptance evidence missing or invalid")
+
+
 def cpu_set(value):
     result = set()
     for part in value.split(","):

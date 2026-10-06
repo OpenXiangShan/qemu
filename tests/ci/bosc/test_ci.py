@@ -89,7 +89,8 @@ class SelectionTests(unittest.TestCase):
                 result = select(Path(tmp))
             diff.assert_called_once_with("base", "head")
             self.assertEqual(result["selected"], ["qtest-pcie", "kmh-linux-1", "kmh-linux-16",
-                                                   "kmh-iommu-linux", "kmh-iommu-linux-dual-root"])
+                                                   "kmh-iommu-linux", "kmh-iommu-linux-dual-root"] +
+                             [c["id"] for c in catalog() if c["group"] == "libqemu" and c["tier"] == "mr"])
 
     def test_schedule_ignores_path_filter(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"CI_PIPELINE_SOURCE": "schedule"}, clear=True):
@@ -450,6 +451,194 @@ class IommuTests(unittest.TestCase):
                 src.write_text("changed")
                 second = common.source_identity()
             self.assertNotEqual(first["untracked_sources"], second["untracked_sources"])
+
+
+class LibqemuTests(unittest.TestCase):
+    cases = [c for c in catalog() if c["group"] == "libqemu"]
+
+    def test_selection_and_schema(self):
+        from lint_ci import validate_cases
+        specs = assets.read_json(HERE / "images.lock.json")["assets"]
+        validate_cases(self.cases, specs)
+        for path in ("libqemu/core.c", "libqemu/compose-boot.c", "tests/libqemu/rom.c",
+                     "system/vl.c", "util/main-loop.c", "chardev/char-stdio.c"):
+            self.assertTrue({c["id"] for c in self.cases if c["tier"] == "mr"}.issubset(choose([path])["selected"]))
+        self.assertTrue({c["id"] for c in self.cases}.isdisjoint(
+            choose(["docs/devel/libqemu.rst"])["selected"]))
+        for field, value in (("binary", "qemu-system-riscv64"), ("assets", ["iommu_kernel"]),
+                             ("split_init", "yes"), ("cpus", 1)):
+            case = dict(next(c for c in self.cases if c["kind"] == "libqemu-linux"))
+            case[field] = value
+            with self.assertRaises(ValueError):
+                validate_cases([case], specs)
+
+    def test_host_survival_rejects_echo_wrong_status_and_fatal(self):
+        good = "HOST_STARTED\nHOST_CONTINUES status=7\n"
+        checks.libqemu_host_assertions(good, 7)
+        for bad in ("echo " + good, good.replace("status=7", "status=0"),
+                    good + "Kernel panic\n", good + good, "HOST_CONTINUES status=7\n"):
+            with self.assertRaises(AssertionError):
+                checks.libqemu_host_assertions(bad, 7)
+
+    def test_report_requires_library_evidence(self):
+        for case in self.cases:
+            with self.subTest(case=case["id"]), tempfile.TemporaryDirectory() as tmp:
+                work = Path(tmp)
+                selection = select(work, case_ids=[case["id"]])
+                write_json(work / "results" / case["id"] / "result.json",
+                           {"id": case["id"], "status": "PASS", "checks": [],
+                            "selection_sha256": selection["config_sha256"],
+                            "run_id": selection["run_id"], "evidence": {}})
+                self.assertEqual(aggregate(work, "libqemu")["status"], "FAIL")
+        case = next(c for c in self.cases if c["kind"] == "libqemu-exit")
+        evidence = {"exit_statuses": [0, 7], "host_continues": [0, 7], "split_init": False}
+        checks.libqemu_evidence(case, evidence)
+        for field, value in (("exit_statuses", [0]), ("host_continues", []), ("split_init", True)):
+            with self.assertRaises(ValueError):
+                checks.libqemu_evidence(case, dict(evidence, **{field: value}))
+
+    def test_library_hash_and_source_identity(self):
+        import build
+        from common import sha256
+        case = self.cases[0]
+        identity = {"revision": "head", "tracked_diff_sha256": "diff", "untracked_sources": {}}
+        with tempfile.TemporaryDirectory() as tmp, patch("build.source_identity", return_value=identity):
+            work = Path(tmp)
+            bundle = build.bundle_dir(work, case)
+            files = {}
+            for target in build.case_targets(case):
+                path = bundle / target
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("binary")
+                files[target] = sha256(path)
+            manifest = {"status": "PASS", "profile": "libqemu", "source": identity, "files": files}
+            write_json(bundle / "build.json", manifest)
+            with patch("build.subprocess.run", return_value=subprocess.CompletedProcess([], 0, "libc")):
+                build.verify_bundle(work, case)
+                (bundle / "libqemu-system-riscv64.so").write_text("changed")
+                with self.assertRaisesRegex(ValueError, "artifact hash mismatch"):
+                    build.verify_bundle(work, case)
+            manifest["profile"] = "system"
+            write_json(bundle / "build.json", manifest)
+            with self.assertRaisesRegex(ValueError, "library build"):
+                build.verify_bundle(work, case)
+
+    def test_expected_nonzero_exit_is_not_a_blanket_waiver(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "exit.log"
+            run_logged([sys.executable, "-c", "raise SystemExit(7)"], log, expected_exit=7)
+            with self.assertRaises(RuntimeError):
+                run_logged([sys.executable, "-c", "raise SystemExit(0)"], log, expected_exit=7)
+
+    def test_linux_timeout_cleans_owned_host(self):
+        from libqemu_runner import linux_host
+        from common import read_json
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            script = directory / "host.py"
+            script.write_text("import time\nprint('HOST_STARTED', flush=True)\ntime.sleep(60)\n")
+            case = dict(next(c for c in self.cases if c["kind"] == "libqemu-linux"), timeout=0.2)
+            with self.assertRaises(TimeoutError):
+                linux_host([sys.executable, str(script)], case, directory)
+            cleanup = read_json(directory / "cleanup.json")
+            self.assertFalse(cleanup["running"])
+            self.assertTrue(cleanup["forced"])
+
+
+class ComposeLinuxTests(unittest.TestCase):
+    cases = [c for c in catalog() if c["kind"] == "libqemu-compose-linux"]
+
+    def fixture(self, case):
+        from compose_checks import device_mode
+        body = ""
+        for name in case["devices"]:
+            path = ("/sys/devices/platform/310a0000.virtio/virtio0/block/vda" if name == "vda"
+                    else "/sys/devices/platform/32000000.pcie/0000:01:00.0/nvme/nvme0/nvme0n1")
+            serial = "-" if name == "vda" else "LIBQEMU-KMH-NVME"
+            body += f"T:DEVICE={name}|{path}|{serial}\n"
+            irq = "APLIC-MSI- 15 Edge virtio0" if name == "vda" else "PCI-MSIX-0000:01:00.0 1-edge nvme0q1"
+            body += f"T:IRQ_BEFORE={name}\n 18: 4 {irq}\n"
+            body += f"T:IRQ_AFTER={name}\n 18: 7 {irq}\n"
+            body += f"T:DISK={name}|{'a'*64}|{'a'*64}|262144|unmounted\n"
+        return (f"HOST_ASSEMBLED Kunminghu: devices={device_mode(case)} builder={case['builder']}\n"
+                "OpenSBI\nLinux version\nMachine model: Host-assembled Xiangshan Kunminghu\n"
+                "T:COMPOSE_BEGIN\nT:CPU\n0\nT:KERNEL\n20260824_6.18_g3520522921abc-xiangshan\n"
+                "T:MODEL\nHost-assembled Xiangshan Kunminghu\nT:MOUNTS_BEFORE\nrootfs / rootfs rw 0 0\n"
+                "T:DEVICES\n" + body + "T:MOUNTS_AFTER\nrootfs / rootfs rw 0 0\n"
+                "T:COMPOSE_RC=0\nT:COMPOSE_END\n")
+
+    def test_guest_and_report_contracts(self):
+        from compose_checks import guest_assertions, validate_evidence
+        for case in self.cases:
+            text = self.fixture(case)
+            evidence = guest_assertions(text, "T", case)
+            evidence.update({"dt": {"sha256": "a"*64}, "exitcode": 0, "cleaned": True,
+                             "host_alive_after_wait": True, "disk_fds_closed": True,
+                             "fsck": {n: "PASS" for n in case["devices"]}})
+            validate_evidence(case, evidence)
+            for field in ("disk_fds_closed", "host_alive_after_wait", "cleaned", "dt"):
+                bad = dict(evidence)
+                del bad[field]
+                with self.assertRaises(ValueError):
+                    validate_evidence(case, bad)
+            for bad in (text.replace("rootfs / rootfs", "/dev/vda / ext4"),
+                        text.replace("T:COMPOSE_RC=0", "T:COMPOSE_RC=1"),
+                        text + "Kernel panic\n", text.replace("T:COMPOSE_BEGIN", "echo T:COMPOSE_BEGIN"),
+                        text.replace("T:CPU\n0", "T:CPU\n0-3")):
+                with self.assertRaises(AssertionError):
+                    guest_assertions(bad, "T", case)
+            if case["devices"]:
+                for bad in (text.replace("18: 7", "18: 4"),
+                            text.replace("|unmounted", "|mounted"),
+                            text.replace("a"*64, "wrong", 1),
+                            text.replace("310a0000.virtio", "deadbeef.virtio").replace("32000000.pcie", "deadbeef.pcie"),
+                            text.replace("T:MOUNTS_AFTER\n", "T:MOUNTS_AFTER\n/dev/vda /mnt/vda ext4 rw 0 0\n"),
+                            text + "nvme nvme0: I/O timeout\n"):
+                    with self.assertRaises(AssertionError):
+                        guest_assertions(bad, "T", case)
+
+    def test_fsck_warning_is_failure_even_with_zero_exit(self):
+        from compose_checks import fsck_assertions
+        good = "\n".join(f"Pass {n}: Checking" for n in range(1, 6)) + "\nopenEuler: 1/2 files, 3/4 blocks\n"
+        fsck_assertions(good)
+        for bad in (good + "Free blocks count wrong\n", good + "Warning: skipping journal recovery\n", ""):
+            with self.assertRaises(AssertionError):
+                fsck_assertions(bad)
+
+    def test_private_copies_cleanup_and_fd_leak(self):
+        from compose_runner import prepare_disks, cleanup_disks, disk_fds_closed
+        from common import read_json
+        case = next(c for c in self.cases if len(c["devices"]) == 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            directory = work / "results" / case["id"]
+            directory.mkdir(parents=True)
+            source = work / "source.ext4"
+            source.write_bytes(b"immutable source")
+            source.chmod(0o444)
+            disks = prepare_disks(work, case, {"rootfs": str(source)}, directory)
+            self.assertEqual(len(disks), 2)
+            with disks["vda"].open("r+b") as fd:
+                fd.write(b"changed")
+                with self.assertRaises(AssertionError):
+                    disk_fds_closed(os.getpid(), disks)
+            disk_fds_closed(os.getpid(), disks)
+            cleanup_disks(work, case, directory)  # Also the parent kill path.
+            self.assertEqual(source.read_bytes(), b"immutable source")
+            self.assertFalse(source.stat().st_mode & 0o222)
+            self.assertTrue(read_json(directory / "compose-disks.json")["cleaned"])
+            self.assertTrue(all(not p.exists() for p in disks.values()))
+            cleanup_disks(work, case, directory)
+
+    def test_probe_shell_syntax_and_tier(self):
+        from compose_runner import probe
+        for case in self.cases:
+            script = probe("TOKEN", case)
+            subprocess.run(["bash", "-n"], input=script, text=True, check=True)
+            self.assertLess(max(map(len, script.splitlines())), 4096)
+        dual = "libqemu-compose-linux-dual"
+        self.assertNotIn(dual, choose(["libqemu/compose.c"])["selected"])
+        self.assertIn(dual, choose(["libqemu/compose.c"], extended=True)["selected"])
 
 
 class LiveLogTests(unittest.TestCase):

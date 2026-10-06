@@ -42,9 +42,9 @@ def bootargs(case):
     return BOOTARGS + (" iommu.passthrough=0" if case["kind"] == "iommu-linux" else "")
 
 
-def prepare_dtb(binary, case, paths, directory):
+def prepare_dtb(binary, case, paths, directory, launcher=None):
     dtb = directory / "machine.dtb"
-    argv = [binary, "-L", binary.parent / "share/qemu", *machine(case, extra=dt_options() + [f"dumpdtb={dtb}"]),
+    argv = [*(launcher or [binary]), "-L", binary.parent / "share/qemu", *machine(case, extra=dt_options() + [f"dumpdtb={dtb}"]),
             "-display", "none", "-monitor", "none", "-serial", "null",
             "-bios", paths["fw_jump"]]
     run_logged(argv, directory / "dumpdtb.log", timeout=30)
@@ -335,6 +335,9 @@ def run_vm(binary, args, directory, timeout, kind, case):
 
 
 def execute(work, case, paths, directory):
+    if case["kind"].startswith("libqemu"):
+        from libqemu_runner import execute as execute_libqemu
+        return execute_libqemu(work, case, paths, directory)
     binary = work / "bundle" / "qemu-system-riscv64"
     if case["kind"] == "qtest":
         env = os.environ.copy()

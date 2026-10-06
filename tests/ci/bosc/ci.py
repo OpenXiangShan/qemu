@@ -100,6 +100,9 @@ def run_cases(args, work, cases):
                 if case.get("kind") == "iommu-linux":
                     from runner import cleanup_nvme
                     cleanup_nvme(work, case, directory)
+                if case.get("kind") == "libqemu-compose-linux":
+                    from compose_runner import cleanup_disks
+                    cleanup_disks(work, case, directory)
         result = read_json(directory / "result.json")
         print(f"{result['status']} {case['id']} {result.get('message', '')}", flush=True)
         if result["status"] != "PASS":
@@ -123,11 +126,15 @@ def parser():
     p.add_argument("--case", action="append", help="select explicit local case(s), or filter already selected run cases")
     p.add_argument("--group", choices=sorted({c["group"] for c in catalog()}))
     p.add_argument("--jobs", type=int, default=8)
+    p.add_argument("--profile", choices=("all", "system", "libqemu"), default="all",
+                   help="build only: choose executable/library build (default both as selected)")
     return p
 
 
 def main():
     args = parser().parse_args()
+    if args.profile != "all" and args.command != "build":
+        raise ValueError("--profile is only supported by build")
     if not 1 <= args.jobs <= 64:
         raise ValueError("--jobs must be between 1 and 64")
     if args.group and args.command in ("all", "select"):
@@ -184,7 +191,7 @@ def main():
                         read_json(args.jf_paths) if args.jf_paths else None)
             if args.command in ("all", "build"):
                 prepare_dependencies(work, cases, args.dependencies_dir, args.cache_dir)
-                build(work, cases, args.jobs)
+                build(work, cases, args.jobs, args.profile)
             if args.command in ("all", "run"):
                 run_cases(args, work, cases)
             if args.command in ("all", "run", "report"):

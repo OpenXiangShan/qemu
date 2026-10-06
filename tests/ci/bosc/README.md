@@ -131,9 +131,9 @@ release 升级通过独立制品验证和锁文件 MR，普通 MR 不使用 late
 
 ## 首批覆盖和结果
 
-共 18 个执行单元（含 extended）：原有 9 个 Linux 配置、5 个原生 IOMMU Linux
-配置、1 个 ITGen、3 个 qtest 可执行文件；qtest 共 18 个子测试。MR 最多选中
-16 个执行单元，四 die 的两种 IOMMU Linux 配置属于 extended。
+共 34 个执行单元（含 extended）：原有 9 个 Linux 配置、5 个原生 IOMMU Linux
+配置、1 个 ITGen、3 个 qtest 可执行文件，以及 16 个 libqemu 用例；qtest 共 18 个
+子测试。MR 最多选中 31 个执行单元；四 die 的两种 IOMMU Linux 和 compose 双盘配置属于 extended。
 JSON/JUnit 另外保留 qtest 容器结果与 3 个 MCU 已知缺陷断言，不能将行数等同于用例数。
 
 Linux 检查实际在线 CPU 集合、固定 kernel release、机器 model、pmem0 挂载/overlay
@@ -163,6 +163,16 @@ QMP quit → TERM → KILL，只处理本次创建的进程/进程组；不会�
 
 PASS、FAIL、XFAIL、XPASS、NOT_SELECTED 分开统计。选中结果缺失、混入其他 run、
 脚本变更、qtest 子结果缺失均不能全绿。失败由脚本退出码阻塞，JUnit 只是展示。
+
+## libqemu 门禁
+
+`bosc:build-libqemu` 在独立 build 目录开启 `--enable-libqemu`，传递
+`bundle-libqemu/` 给 `bosc:libqemu`。后者执行 8 个原生 API/组装测试、start/split
+两种 guest exit 检查、两种四核 KMH Linux boot/API shutdown，以及四种从零组装的
+单核 Linux 拓扑（minimal、blk、NVMe、extended 双盘/profile）。库 profile 启用
+my-virtio；组装存储用例从 RAM shell 执行真实 I/O、完全卸载、fd 关闭和 fsck。
+普通 QEMU 构建显式关闭 libqemu，两个 profile 的来源和 hash 分别校验。
+用例表、PASS 条件、配置、复现命令和后续双盘覆盖条件见 [LIBQEMU.md](LIBQEMU.md)。
 
 ## 原生 system IOMMU Linux 门禁
 

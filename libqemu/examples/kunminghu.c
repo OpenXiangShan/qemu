@@ -32,7 +32,8 @@ static void usage(const char *program)
 {
     fprintf(stderr, "Usage: %s LIBRARY FW_DYNAMIC Image BLK_IMAGE NVME_IMAGE "
             "[--control-fd FD] [--hold-after-wait] "
-            "[--append BOOTARGS] [--dump-dtb FILE]\n", program);
+            "[--append BOOTARGS] [--dump-dtb FILE] "
+            "[--devices none|blk|nvme|blk-nvme] [--profile-builder]\n", program);
 }
 
 /* Board assembly stays explicit; each call owns QOM, wiring and DT metadata.
@@ -81,6 +82,8 @@ int main(int argc, char **argv)
     char *error = NULL;
     const char *bootargs = NULL;
     const char *dump_dtb = NULL;
+    const char *devices = "blk-nvme";
+    bool profile_builder = false;
     bool controller_started = false;
     bool hold_after_wait = false;
     int status;
@@ -107,6 +110,15 @@ int main(int argc, char **argv)
             dump_dtb = argv[++i];
         } else if (!strcmp(argv[i], "--hold-after-wait")) {
             hold_after_wait = true;
+        } else if (!strcmp(argv[i], "--devices") && i + 1 < argc) {
+            devices = argv[++i];
+            if (strcmp(devices, "none") && strcmp(devices, "blk") &&
+                strcmp(devices, "nvme") && strcmp(devices, "blk-nvme")) {
+                usage(argv[0]);
+                return 2;
+            }
+        } else if (!strcmp(argv[i], "--profile-builder")) {
+            profile_builder = true;
         } else {
             usage(argv[0]);
             return 2;
@@ -130,11 +142,16 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    kmh_profile_init_defaults(&profile);
+    profile.blk_enabled = !strcmp(devices, "blk") || !strcmp(devices, "blk-nvme");
+    profile.pcie_enabled = profile.nvme_enabled =
+        !strcmp(devices, "nvme") || !strcmp(devices, "blk-nvme");
     backend = (LibQemuComposeBackend) {
         .id = "nvmedisk", .path = argv[5], .format = "raw",
     };
     launch = (LibQemuComposeLaunch) {
-        .accel = "tcg", .smp = 1, .backends = &backend, .backend_count = 1,
+        .accel = "tcg", .smp = 1, .backends = &backend,
+        .backend_count = profile.nvme_enabled ? 1 : 0,
         .chardevs = &chardev, .chardev_count = 1,
     };
     if (libqemu_compose_init(api, &launch, &compose, &error)) {
@@ -143,7 +160,6 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    kmh_profile_init_defaults(&profile);
     profile.blk.image = argv[4];
     profile.nvme.backend_id = backend.id;
     profile.boot.firmware = argv[2];
@@ -151,7 +167,9 @@ int main(int argc, char **argv)
     if (bootargs) {
         profile.boot.bootargs = bootargs;
     }
-    if (assemble(compose, &profile, &soc, &error) ||
+    int (*builder)(LibQemuCompose *, const KmhProfile *, LibQemuSoc **, char **) =
+        profile_builder ? kmh_soc_build : assemble;
+    if (builder(compose, &profile, &soc, &error) ||
         libqemu_soc_build_dtb(soc, profile.boot.bootargs, &dtb, &error) ||
         (dump_dtb && libqemu_dtb_write(dtb, dump_dtb, &error)) ||
         libqemu_riscv_boot_load(soc, &profile.boot, dtb, &error)) {
@@ -172,8 +190,8 @@ int main(int argc, char **argv)
         libqemu_compose_free(compose);
         return 2;
     }
-    puts("HOST_ASSEMBLED Kunminghu: typed profile + AIA + ACLINT + UART + "
-         "my-virtio-blk + DWC/NVMe");
+    printf("HOST_ASSEMBLED Kunminghu: devices=%s builder=%s\n", devices,
+           profile_builder ? "profile" : "explicit");
     fflush(stdout);
 
     if (control_fd >= 0) {
