@@ -8,6 +8,7 @@
 #include "hw/qdev-core.h"
 #include "hw/sysbus.h"
 #include "hw/irq.h"
+#include "hw/loader.h"
 #include "hw/core/cpu.h"
 #include "system/address-spaces.h"
 #include "system/memory.h"
@@ -345,7 +346,7 @@ static int memory_new_work(void *opaque, char **errp)
     CoreMemory *m;
     Error *error = NULL;
     if (!c || !c->name || !*c->name || !c->size ||
-        c->kind < LIBQEMU_CONTAINER || c->kind > LIBQEMU_ALIAS ||
+        c->kind < LIBQEMU_CONTAINER || c->kind > LIBQEMU_ROM ||
         (c->kind == LIBQEMU_RAM_PTR && !c->ram_ptr) ||
         (c->kind == LIBQEMU_ALIAS && (!c->alias ||
          c->alias_offset > memory_region_size((MemoryRegion *)c->alias) ||
@@ -365,6 +366,9 @@ static int memory_new_work(void *opaque, char **errp)
         break;
     case LIBQEMU_RAM:
         memory_region_init_ram(&m->mr, NULL, c->name, c->size, &error);
+        break;
+    case LIBQEMU_ROM:
+        memory_region_init_rom(&m->mr, NULL, c->name, c->size, &error);
         break;
     case LIBQEMU_RAM_PTR:
         memory_region_init_ram_ptr(&m->mr, NULL, c->name, c->size, c->ram_ptr);
@@ -689,6 +693,38 @@ static int core_cpu_reset(LibQemuObject *obj, char **errp)
     return libqemu_call(cpu_reset_work, &r, true, false, errp);
 }
 
+static int rom_blob_work(void *opaque, char **errp)
+{
+    Request *r = opaque;
+    MemoryRegionSection section;
+    bool valid;
+
+    if (!r->name || !*r->name || !r->buffer || !r->size ||
+        r->size > UINT64_MAX - r->value) {
+        return fail(errp, "invalid boot blob");
+    }
+    section = memory_region_find(get_system_memory(), r->value, r->size);
+    valid = section.mr && memory_region_is_ram(section.mr) &&
+            int128_ge(section.size, int128_make64(r->size));
+    if (section.mr) {
+        memory_region_unref(section.mr);
+    }
+    if (!valid) {
+        return fail(errp, "boot blob must fit in one mapped RAM/ROM region");
+    }
+    rom_add_blob_fixed_as(r->name, r->buffer, r->size, r->value,
+                         &address_space_memory);
+    return 0;
+}
+
+static int core_rom_blob(const char *name, uint64_t addr, const void *buf,
+                         size_t size, char **errp)
+{
+    Request r = { .name = name, .value = addr, .buffer = (void *)buf,
+                  .size = size };
+    return libqemu_call(rom_blob_work, &r, true, false, errp);
+}
+
 void libqemu_core_cleanup(void)
 {
     for (GSList *p = timers; p; p = p->next) {
@@ -748,4 +784,5 @@ const LibQemuCoreExports libqemu_core_exports = {
     .timer_del = core_timer_del,
     .clock_get_ns = core_clock,
     .cpu_register_reset = core_cpu_reset,
+    .rom_add_blob = core_rom_blob,
 };

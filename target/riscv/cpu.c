@@ -1086,12 +1086,18 @@ static bool riscv_cpu_is_dynamic(Object *cpu_obj)
     return object_dynamic_cast(cpu_obj, TYPE_RISCV_DYNAMIC_CPU) != NULL;
 }
 
+static char *riscv_cpu_get_isa_string(Object *obj, Error **errp)
+{
+    return riscv_isa_string(RISCV_CPU(obj));
+}
+
 static void riscv_cpu_init(Object *obj)
 {
     RISCVCPUClass *mcc = RISCV_CPU_GET_CLASS(obj);
     RISCVCPU *cpu = RISCV_CPU(obj);
     CPURISCVState *env = &cpu->env;
 
+    object_property_add_str(obj, "isa-string", riscv_cpu_get_isa_string, NULL);
     env->misa_mxl = mcc->def->misa_mxl_max;
 
 #ifndef CONFIG_USER_ONLY

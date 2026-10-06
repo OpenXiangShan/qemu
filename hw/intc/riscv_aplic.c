@@ -907,6 +907,18 @@ static void riscv_aplic_realize(DeviceState *dev, Error **errp)
 
     aplic->msi_as = &address_space_memory;
 
+    if (aplic->delegate_parent) {
+        RISCVAPLICState *parent = aplic->delegate_parent;
+
+        if (aplic->parent || !DEVICE(parent)->realized ||
+            parent->num_irqs != aplic->num_irqs ||
+            parent->num_children >= QEMU_APLIC_MAX_CHILDREN) {
+            error_setg(errp, "invalid APLIC delegation parent");
+            return;
+        }
+        riscv_aplic_add_child(DEVICE(parent), dev);
+    }
+
     if (riscv_use_emulated_aplic(aplic->msimode)) {
         /* Create output IRQ lines for non-MSI mode */
         if (!aplic->msimode) {
@@ -966,6 +978,8 @@ static void riscv_aplic_realize(DeviceState *dev, Error **errp)
 }
 
 static const Property riscv_aplic_properties[] = {
+    DEFINE_PROP_LINK("delegate-parent", RISCVAPLICState, delegate_parent,
+                     TYPE_RISCV_APLIC, RISCVAPLICState *),
     DEFINE_PROP_UINT32("aperture-size", RISCVAPLICState, aperture_size, 0),
     DEFINE_PROP_UINT32("hartid-base", RISCVAPLICState, hartid_base, 0),
     DEFINE_PROP_UINT32("num-harts", RISCVAPLICState, num_harts, 0),

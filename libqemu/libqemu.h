@@ -35,7 +35,7 @@ typedef void (*LibQemuTimerFn)(void *);
 
 typedef enum LibQemuMemoryKind {
     LIBQEMU_CONTAINER, LIBQEMU_RAM, LIBQEMU_RAM_PTR,
-    LIBQEMU_MMIO, LIBQEMU_ALIAS,
+    LIBQEMU_MMIO, LIBQEMU_ALIAS, LIBQEMU_ROM,
 } LibQemuMemoryKind;
 
 typedef struct LibQemuMemoryConfig {
@@ -98,6 +98,12 @@ typedef struct LibQemuCoreExports {
     int (*timer_del)(LibQemuTimer *, char **); /* Runtime. */
     int (*clock_get_ns)(int64_t *, char **); /* QEMU virtual clock; runtime. */
     int (*cpu_register_reset)(LibQemuObject *, char **);
+    /* ASSEMBLY: copy a boot blob into QEMU's reset loader. The destination
+     * must be mapped RAM/ROM; bytes are installed at finish/reset, not now.
+     * The caller may release buf after return. ROM contents stay read-only.
+     */
+    int (*rom_add_blob)(const char *name, uint64_t addr,
+                        const void *buf, size_t size, char **errp);
 } LibQemuCoreExports;
 
 /* One runtime per process, resident until process exit. Never dlclose().

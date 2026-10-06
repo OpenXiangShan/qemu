@@ -7,6 +7,7 @@
 #include "hw/irq.h"
 #include "hw/virtio/virtio-mmio.h"
 #include "hw/sysbus.h"
+#include "hw/qdev-properties.h"
 #include "virtio_wrapper.h"
 #include "virtio_backend.h"
 #include "hw/misc/my_virtio.h"
@@ -36,6 +37,8 @@ struct MyVirtioStateBlk {
     Notifier exit_notifier;
     bool exit_registered;
 #endif
+    uint64_t mmio_base;
+    uint32_t mmio_size;
     char *image_path;
     bool packed;
     void *iommu;
@@ -44,9 +47,6 @@ struct MyVirtioStateBlk {
 
 #define TYPE_MY_VIRTIO_BLK "my-virtio-blk"
 OBJECT_DECLARE_SIMPLE_TYPE(MyVirtioStateBlk, MY_VIRTIO_BLK)
-
-static hwaddr base;
-static int len;
 
 static void my_blk_rw_bh(void *opaque)
 {
@@ -60,7 +60,7 @@ static uint64_t my_virtio_mmio_read(void *opaque, hwaddr offset, unsigned size)
     MyVirtioStateBlk *s = opaque;
     uint32_t val;
 
-    virtio_mmio_read(s->handle, base + offset, &val, size);
+    virtio_mmio_read(s->handle, s->mmio_base + offset, &val, size);
 //    printf("%s offset:0x%lx size:%d value:0x%x\n", __FUNCTION__, offset, size, val);
     return (uint64_t)val;
 }
@@ -73,7 +73,8 @@ static void my_virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
     int ret;
 
 //    printf("%s offset:0x%lx size:%d value:0x%lx\n", __FUNCTION__, offset, size, value);
-    ret = virtio_mmio_write(s->handle, base + offset, (uint32_t)value, size, &is_doorbell);
+    ret = virtio_mmio_write(s->handle, s->mmio_base + offset,
+                           (uint32_t)value, size, &is_doorbell);
 
     if (!ret && is_doorbell) {
         qemu_bh_schedule(s->rw_bh);
@@ -183,15 +184,16 @@ void my_virtio_blk_create(hwaddr start, hwaddr size, qemu_irq irq,
 {
     MyVirtioStateBlk *s = MY_VIRTIO_BLK(qdev_new("my-virtio-blk"));
 
-    base = start;
-    len = size;
-    s->image_path = g_strdup(image_path && *image_path ? image_path : "disk.img");
-    s->packed = packed;
+    qdev_prop_set_uint64(DEVICE(s), "mmio-base", start);
+    qdev_prop_set_uint32(DEVICE(s), "mmio-size", size);
+    qdev_prop_set_string(DEVICE(s), "image-path",
+                         image_path && *image_path ? image_path : "disk.img");
+    qdev_prop_set_bit(DEVICE(s), "packed", packed);
     s->iommu = dma ? dma->iommu : NULL;
     s->endpoint_id = dma ? dma->endpoint_id : 0;
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
-    sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, base);
+    sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, start);
     //sysbus_create_simple("my-virtio", start, 0);
 
     sysbus_connect_irq(SYS_BUS_DEVICE(s), 0, irq);
@@ -232,7 +234,7 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
     };
 
     memory_region_init_io(&s->iomem, OBJECT(dev), &my_virtio_blk_mmio_ops, s,
-        "my-virtio-blk-regs", 0x1000);
+        "my-virtio-blk-regs", s->mmio_size);
 
     sysbus_init_mmio(sbd, &s->iomem);
 
@@ -248,7 +250,8 @@ static void my_virtio_blk_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_BLK, base, len, &ops,
+    s->handle = virtio_mmio_create_ex(VIRTIO_EMU_NAME_BLK,
+                                      s->mmio_base, s->mmio_size, &ops,
                                       (void *)s, &opts);
     if (s->handle) {
 #ifdef CONFIG_LIBQEMU
@@ -273,14 +276,20 @@ static void my_virtio_blk_unrealize(DeviceState *dev)
     }
 #endif
     my_virtio_blk_release(s);
-    g_free(s->image_path);
-    s->image_path = NULL;
 }
+
+static const Property my_virtio_blk_properties[] = {
+    DEFINE_PROP_UINT64("mmio-base", MyVirtioStateBlk, mmio_base, 0),
+    DEFINE_PROP_UINT32("mmio-size", MyVirtioStateBlk, mmio_size, 0x1000),
+    DEFINE_PROP_STRING("image-path", MyVirtioStateBlk, image_path),
+    DEFINE_PROP_BOOL("packed", MyVirtioStateBlk, packed, false),
+};
 
 static void my_virtio_blk_class_init(ObjectClass *klass, const void* data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
+    device_class_set_props(dc, my_virtio_blk_properties);
     dc->realize = my_virtio_blk_realize;
     dc->unrealize = my_virtio_blk_unrealize;
 }

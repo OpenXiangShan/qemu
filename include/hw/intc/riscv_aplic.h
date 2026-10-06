@@ -58,6 +58,7 @@ struct RISCVAPLICState {
     /* topology */
 #define QEMU_APLIC_MAX_CHILDREN        16
     struct RISCVAPLICState *parent;
+    struct RISCVAPLICState *delegate_parent;
     struct RISCVAPLICState *children[QEMU_APLIC_MAX_CHILDREN];
     uint16_t num_children;
 

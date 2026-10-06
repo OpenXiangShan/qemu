@@ -4571,6 +4571,12 @@ foreach target : target_dirs
       link_args: ['-Wl,--version-script=' + meson.project_source_root() / 'libqemu/libqemu.version'],
       link_depends: files('libqemu/libqemu.version'),
       install: true)
+    test('libqemu-rom', libqemu_rom,
+         args: [libqemu_shared.full_path()], depends: libqemu_shared)
+    test('libqemu-compose', libqemu_compose_test,
+         args: [libqemu_shared.full_path()], depends: libqemu_shared)
+    test('libqemu-compose-profile', libqemu_compose_test,
+         args: [libqemu_shared.full_path(), 'profile'], depends: libqemu_shared)
     test('libqemu-lifecycle', libqemu_lifecycle,
          args: [libqemu_shared.full_path()], depends: libqemu_shared)
     test('libqemu-assembly', libqemu_assemble,

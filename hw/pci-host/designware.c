@@ -815,7 +815,9 @@ static void designware_pcie_host_realize(DeviceState *dev, Error **errp)
     address_space_init(&s->pci.address_space,
                        &s->pci.address_space_root,
                        "pcie-bus-address-space");
-    pci_setup_iommu(pci->bus, &designware_iommu_ops, s);
+    if (!s->dma_to_system_memory) {
+        pci_setup_iommu(pci->bus, &designware_iommu_ops, s);
+    }
 
     qdev_realize(DEVICE(&s->root), BUS(pci->bus), &error_fatal);
 }
@@ -835,6 +837,8 @@ static const VMStateDescription vmstate_designware_pcie_host G_GNUC_UNUSED = {
 };
 
 static const Property designware_pcie_host_properties[] = {
+    DEFINE_PROP_BOOL("dma-to-system-memory", DesignwarePCIEHost,
+                     dma_to_system_memory, false),
     DEFINE_PROP_STRING("root-bus-name", DesignwarePCIEHost, root_bus_name),
     DEFINE_PROP_STRING("sec-bus-name", DesignwarePCIEHost, sec_bus_name),
     DEFINE_PROP_STRING("root-bus-path", DesignwarePCIEHost, root_bus_path),

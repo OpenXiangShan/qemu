@@ -1,0 +1,138 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+/ {
+    #address-cells = <2>;
+    #size-cells = <2>;
+    model = "Host-assembled Xiangshan Kunminghu";
+    compatible = "bosc,kmh-v2-dev";
+
+    chosen {
+        stdout-path = "/soc/serial@310b0000";
+        bootargs = "console=ttyS0,115200 earlycon=sbi loglevel=8 rdinit=/bin/sh";
+    };
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0 0x80000000 4 0>; /* 16 GiB */
+    };
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        timebase-frequency = <1000000>;
+        cpu@0 {
+            device_type = "cpu";
+            reg = <0>;
+            status = "okay";
+            compatible = "bosc,kmh-v2", "riscv";
+            mmu-type = "riscv,sv48";
+            /* The host replaces this with the realized CPU's ISA string. */
+            riscv,isa = "rv64imafdc";
+            riscv,cbom-block-size = <64>;
+            riscv,cboz-block-size = <64>;
+            cpu_intc: interrupt-controller {
+                #interrupt-cells = <1>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+            };
+        };
+    };
+    /* Extra demo-only device used for clean Linux poweroff/reboot. */
+    poweroff {
+        compatible = "syscon-poweroff";
+        regmap = <&test>;
+        offset = <0>;
+        value = <0x5555>;
+    };
+    reboot {
+        compatible = "syscon-reboot";
+        regmap = <&test>;
+        offset = <0>;
+        value = <0x7777>;
+    };
+    soc {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        compatible = "bosc,kmh-v2-soc", "simple-bus";
+        ranges;
+        test: test@100000 {
+            compatible = "sifive,test1", "sifive,test0", "syscon";
+            reg = <0 0x100000 0 0x1000>;
+        };
+        serial@310b0000 {
+            compatible = "ns16550a";
+            reg = <0 0x310b0000 0 0x10000>;
+            reg-shift = <2>;
+            reg-io-width = <4>;
+            clock-frequency = <50000000>;
+            current-speed = <115200>;
+            interrupt-parent = <&aplic_s>;
+            interrupts = <10 1>;
+        };
+        clint@38000000 {
+            compatible = "sifive,clint0", "riscv,clint0";
+            reg = <0 0x38000000 0 0x10000>;
+            interrupts-extended = <&cpu_intc 3 &cpu_intc 7>;
+        };
+        imsic_m: imsics@3a800000 {
+            compatible = "riscv,imsics";
+            reg = <0 0x3a800000 0 0x1000>;
+            interrupt-controller;
+            msi-controller;
+            #interrupt-cells = <0>;
+            riscv,num-ids = <255>;
+            interrupts-extended = <&cpu_intc 11>;
+        };
+        imsic_s: imsics@3b000000 {
+            compatible = "riscv,imsics";
+            reg = <0 0x3b000000 0 0x8000>;
+            interrupt-controller;
+            msi-controller;
+            #interrupt-cells = <0>;
+            riscv,num-ids = <255>;
+            riscv,guest-index-bits = <3>;
+            interrupts-extended = <&cpu_intc 9>;
+        };
+        aplic_m: aplic@31100000 {
+            compatible = "riscv,aplic";
+            reg = <0 0x31100000 0 0x4000>;
+            interrupt-controller;
+            #interrupt-cells = <2>;
+            riscv,num-sources = <96>;
+            msi-parent = <&imsic_m>;
+            riscv,children = <&aplic_s>;
+            riscv,delegate = <&aplic_s 1 96>;
+        };
+        aplic_s: aplic@31120000 {
+            compatible = "riscv,aplic";
+            reg = <0 0x31120000 0 0x4000>;
+            interrupt-controller;
+            #interrupt-cells = <2>;
+            riscv,num-sources = <96>;
+            msi-parent = <&imsic_s>;
+        };
+        virtio@310a0000 {
+            compatible = "virtio,mmio";
+            reg = <0 0x310a0000 0 0x1000>;
+            interrupt-parent = <&aplic_s>;
+            interrupts = <15 1>;
+            dma-coherent;
+        };
+        pcie@32000000 {
+            compatible = "snps,dw-pcie";
+            reg = <0 0x32000000 0 0x1000000>,
+                  <0 0x67ff0000 0 0x10000>;
+            reg-names = "dbi", "config";
+            #address-cells = <3>;
+            #size-cells = <2>;
+            device_type = "pci";
+            bus-range = <0 0xff>;
+            ranges = <0x02000000 0 0x40000000 0 0x60000000 0 0x07ff0000>;
+            num-ib-windows = <1>;
+            interrupt-parent = <&aplic_s>;
+            interrupts = <12 1 13 1>;
+            interrupt-names = "msi", "hp";
+            msi-parent = <&imsic_s>;
+            num-lanes = <1>;
+        };
+    };
+};

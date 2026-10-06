@@ -86,6 +86,7 @@ struct DesignwarePCIEHost {
     PCIExpressHost parent_obj;
 
     DesignwarePCIERoot root;
+    bool dma_to_system_memory;
     char *root_bus_name;
     char *sec_bus_name;
     char *root_bus_path;
