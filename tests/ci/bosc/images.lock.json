@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "baseline": "st-v0.9.99-mcu-20260927-itgen-dieid2-20260924",
-  "publication_note": "2026-09-27: six remote files verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen published without overwriting existing content. path is offline layout; jf_path is repository-relative remote location.",
+  "publication_note": "2026-10-07: initial six files plus iommu_kernel verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen and the Linux IOMMU image were published in independent paths without overwriting existing content. path is offline layout; jf_path is repository-relative remote location.",
   "assets": {
     "fw_jump": {
       "path": "st-release-v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin",
@@ -62,12 +62,17 @@
       "publication": "verified-20260927"
     },
     "iommu_kernel": {
-      "path": "st-release-v0.9.99/xiangshan/Image",
-      "jf_path": "xs-sw/st-release/v0.9.99/xiangshan/Image",
-      "size": 29575680,
-      "sha256": "1162d06c684404d9e54a79ab9a46fed36b9f3e511019ce1afd016d25bde9872e",
-      "source": "st-release-v0.9.99",
-      "kernel_release": "20260824_6.18_g3520522921abc-xiangshan"
+      "path": "riscv-linux-devel-clean/d3e51a02cc62/Image",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261007/d3e51a02cc62/Image",
+      "size": 29611520,
+      "sha256": "1c75064fa376a4286bad372ce2f4a67154f23aec0c8f8010b20f8867d821798a",
+      "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config",
+      "source_commit": "d3e51a02cc629221404c9a871da9aec8ec42767d",
+      "kernel_release": "6.18.34",
+      "config_sha256": "8621012714b457f9b099fb8cd68104c717096cd0aadfa1ee756c0da69b81c04a",
+      "initramfs_sha256": "718411d17729997a2258f6b1646b564da8be25673bdf59035017f140f1bec547",
+      "compiler": "riscv64-unknown-linux-gnu-gcc (ge97179bacd0) 15.0.0 20241107 (experimental)",
+      "license": "GPL-2.0-only WITH Linux-syscall-note"
     }
   }
 }

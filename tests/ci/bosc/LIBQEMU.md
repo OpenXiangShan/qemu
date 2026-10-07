@@ -48,7 +48,7 @@ PASS 要求：model 正确，OpenSBI/Linux/pmem0/overlay 成功，随机 token �
 | `libqemu-compose-linux-nvme` | mr | 显式 builders，DWC/NVMe | 上述启动 + NVMe probe/ext4/direct I/O/重挂校验 + PCI-MSIX |
 | `libqemu-compose-linux-dual` | extended | `kmh_soc_build()`，两种盘并存 | profile 组装、双盘路径/数据隔离、逐盘中断与 backend 清理 |
 
-使用已锁定的 `iommu_kernel`（st-release-v0.9.99/xiangshan/Image），此处名称表示
+使用已锁定的 `iommu_kernel`（Linux `d3e51a02cc62`，来源见 [ASSETS.md](ASSETS.md)），此处名称表示
 资产 ID，不表示启用 IOMMU。已检查该 Image 的压缩 initramfs 中有 `bin/sh` →
 `busybox`，内核配置内建 virtio-blk、DWC/NVMe 和 ext4。无需新增/编译 Linux。
 固件使用同次源码 bundle 中有 SHA256 的 `opensbi-riscv64-xiangshan-kmh-fw_dynamic.bin`；

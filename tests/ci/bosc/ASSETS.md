@@ -1,9 +1,10 @@
 # 固定制品来源与发布要求
 
-2026-09-27 已完成 JF 发布及远端大小/SHA256 核验。运行需要
-`images.lock.json` 中的六个文件；release 三项复用现有正式文件，其他三项新上传。
+2026-09-27 已完成首批 JF 发布及远端大小/SHA256 核验，当时包括
+六个文件；release 三项复用现有正式文件，其他三项新上传。
 随后从空缓存下载全部六项，在独立 checkout 构建 QEMU 并通过第一阶段全量验证。
 CI 本身仍只有读取接口，不执行上传或固件构建。
+当前锁文件另含独立发布的 `iommu_kernel`，共七项运行输入，按选中用例取用。
 
 JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 镜像锁的 `jf_path` 为实际远端位置，`path` 保留原离线布局：
@@ -13,6 +14,7 @@ JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 | OpenSBI、Image、rootfs | `xs-sw/st-release/v0.9.99/` 下各原发布目录 |
 | MCU BIN、QSPI payload、源码/构建证据 | `hejian-workspace/guoyaxing/qemu-ci/mcu/20260927/` |
 | ITGen BIN、源码/ELF/原始 log | `hejian-workspace/guoyaxing/qemu-ci/itgen/aplic-cross-die/dieid2-20260924/` |
+| IOMMU/compose Linux Image、配置和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261007/d3e51a02cc62/` |
 | 固定构建依赖源码 tar | `hejian-workspace/guoyaxing/qemu-ci/native-deps/` |
 
 发布索引目录为 `hejian-workspace/guoyaxing/qemu-ci/baselines/` 下的
@@ -99,8 +101,31 @@ Python/Meson 使用仓库内 wheels，宿主系统开发包仍由服务器管理
 
 ## 原生 IOMMU Linux 内核
 
-`iommu_kernel` 复用 `xs-sw/st-release/v0.9.99/xiangshan/Image`：29,575,680 bytes，
-SHA256 `1162d06c684404d9e54a79ab9a46fed36b9f3e511019ce1afd016d25bde9872e`。
-2026-09-28 只读核验 JF metadata 与本地 release 一致；未发布或覆盖远端文件。
-release 为 `20260824_6.18_g3520522921abc-xiangshan`，包含 RISC-V IOMMU、DWC 和
-NVMe 驱动。复用锁定 fw_jump/rootfs；测试盘由 runner 独立创建并清理。
+`iommu_kernel` 来自 `riscv-linux-devel-clean` 提交
+`d3e51a02cc629221404c9a871da9aec8ec42767d`（Disable MSI page-table mode），
+修复 IOHGATP Bare 时错误启用 MSIPTP 的问题。QEMU 提交 `65af1cde6c03`
+会拒绝该非法 device context，因此原 v0.9.99 Image 不能作为此门禁的内核。
+
+新 Image 为 29,611,520 bytes，release 为 `6.18.34`，SHA256 为
+`1c75064fa376a4286bad372ce2f4a67154f23aec0c8f8010b20f8867d821798a`。
+远端为上表独立版本目录中的 `Image`，离线路径为
+`riscv-linux-devel-clean/d3e51a02cc62/Image`；旧 release 保留。
+若部署设置了 `BOSC_CI_JF_PATHS`，须同步更新其中的 `iommu_kernel` 映射；
+离线部署也须更新目录，旧缓存无法通过新锁的大小/SHA256 校验。
+
+发布构建使用该提交的干净 `git archive`，不包含 Linux 工作树改动。
+在归档源码目录执行以下命令（`out` 为独立绝对路径，`cross` 为工具链前缀）：
+
+```sh
+make O="$out" ARCH=riscv CROSS_COMPILE="$cross" defconfig xiangshan.config
+make O="$out" ARCH=riscv CROSS_COMPILE="$cross" -j8 Image
+```
+
+工具链为 GCC 15.0.0 20241107 (ge97179bacd0)。归档构建的 release 不带 Git 后缀，
+准确身份由锁中的源码 commit 和 Image SHA256 标识。`.config`、内嵌
+`initramfs.cpio` 的 SHA256 也记录在锁中；同版本发布 `source-provenance.json`
+和 `source-evidence.tar.gz`，保留配置、initramfs、许可证及完整构建日志。
+
+配置内建 RISC-V IOMMU、DWC、NVMe、virtio-blk、pmem 和 ext4。IOMMU 用例复用
+锁定 fw_jump/rootfs；libqemu compose Linux 用例也消费此 Image 的 RAM shell。
+测试盘由 runner 独立创建并清理。普通 CI 仅下载并校验，不编译 Linux。

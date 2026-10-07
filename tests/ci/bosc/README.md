@@ -107,7 +107,8 @@ python3 tests/ci/bosc/ci.py report --work-dir build/ci/focused-01
 
 锁文件的 `path` 保留离线布局，`jf_path` 是已核验的远端 repo-relative 路径。
 现有 release 复用 `xs-sw/st-release/v0.9.99/`；新 MCU/QSPI/ITGen 和构建依赖位于
-`hejian-workspace/guoyaxing/qemu-ci/`。可用路径映射适配其他部署，但只能改变位置，
+`hejian-workspace/guoyaxing/qemu-ci/`，更新后的 `iommu_kernel` 也位于该目录。
+可用路径映射适配其他部署，但只能改变位置，
 不能改变大小/hash。例：`{"kernel":"existing-repo/v0.9.99/minimal/Image"}`。
 CI 不读取个人 JF 配置或推断认证信息。
 
@@ -176,8 +177,10 @@ my-virtio；组装存储用例从 RAM shell 执行真实 I/O、完全卸载、fd
 
 ## 原生 system IOMMU Linux 门禁
 
-`bosc:iommu` 使用固定 `st-release-v0.9.99/xiangshan/Image`，不复用 minimal 内核。
-新资产大小和 SHA256 已与 JF metadata 核对；所有离线/cache/JF 输入仍须逐次校验。
+`bosc:iommu` 使用 Linux `d3e51a02cc62` 的固定 Image（release `6.18.34`），
+包含 IOHGATP Bare 下关闭 MSI page-table mode 的修复，适配 QEMU `65af1cde6c03`
+的严格检查。来源、JF 和离线路径见 [ASSETS.md](ASSETS.md)；所有输入逐次校验
+大小/SHA256。设置了 `BOSC_CI_JF_PATHS` 的部署须更新旧 `iommu_kernel` 路径映射。
 
 | 用例 | 拓扑 | 层级 |
 | --- | --- | --- |
