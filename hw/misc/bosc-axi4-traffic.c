@@ -7,6 +7,7 @@
 
 #include "qemu/osdep.h"
 #include "hw/misc/bosc-axi4-traffic.h"
+#include "hw/misc/bosc-did-mapper.h"
 #include "hw/qdev-properties.h"
 #include "hw/riscv/iommu.h"
 #include "migration/vmstate.h"
@@ -51,6 +52,7 @@ struct BoscAxi4TrafficState {
 
     MemoryRegion iomem;
     RISCVIOMMUState *iommu;
+    BoscDidMapperState *did_mapper;
 
     uint32_t mux;
     uint32_t ar_cfg[BOSC_AXI4_TRAFFIC_NR_CFGS];
@@ -97,10 +99,19 @@ static void bosc_axi4_traffic_decode_req(const uint32_t cfg[static 6],
     req->translated = extract64(user, 53, 1);
 }
 
+
+static uint32_t bosc_axi4_traffic_mux(BoscAxi4TrafficState *s)
+{
+    if (s->did_mapper) {
+        return bosc_did_mapper_get_mux(s->did_mapper);
+    }
+    return s->mux;
+}
+
 static AddressSpace *bosc_axi4_traffic_get_as(BoscAxi4TrafficState *s,
                                               const BoscAxi4TrafficReq *req)
 {
-    if (s->mux & BOSC_AXI4_TRAFFIC_MUX_BYPASS) {
+    if (bosc_axi4_traffic_mux(s) & BOSC_AXI4_TRAFFIC_MUX_BYPASS) {
         return &address_space_memory;
     }
 
@@ -149,7 +160,7 @@ static bool bosc_axi4_traffic_run_write(BoscAxi4TrafficState *s)
     s->aw_done = false;
     bosc_axi4_traffic_decode_req(s->aw_cfg, &req);
 
-    if (!(s->mux & BOSC_AXI4_TRAFFIC_MUX_TRAFFIC)) {
+    if (!(bosc_axi4_traffic_mux(s) & BOSC_AXI4_TRAFFIC_MUX_TRAFFIC)) {
         return false;
     }
 
@@ -192,7 +203,7 @@ static bool bosc_axi4_traffic_run_read(BoscAxi4TrafficState *s)
 
     bosc_axi4_traffic_decode_req(s->ar_cfg, &req);
 
-    if (!(s->mux & BOSC_AXI4_TRAFFIC_MUX_TRAFFIC)) {
+    if (!(bosc_axi4_traffic_mux(s) & BOSC_AXI4_TRAFFIC_MUX_TRAFFIC)) {
         return false;
     }
 
@@ -251,6 +262,9 @@ static uint64_t bosc_axi4_traffic_read(void *opaque, hwaddr addr,
     BoscAxi4TrafficState *s = opaque;
     unsigned idx;
 
+    if (s->did_mapper) {
+        addr += BOSC_AXI4_TRAFFIC_AR_CFG_BASE;
+    }
     if (addr == BOSC_AXI4_TRAFFIC_MUX) {
         return s->mux;
     }
@@ -324,6 +338,9 @@ static void bosc_axi4_traffic_write(void *opaque, hwaddr addr,
     uint32_t val = value;
     unsigned idx;
 
+    if (s->did_mapper) {
+        addr += BOSC_AXI4_TRAFFIC_AR_CFG_BASE;
+    }
     if (addr == BOSC_AXI4_TRAFFIC_MUX) {
         s->mux = val & (BOSC_AXI4_TRAFFIC_MUX_BYPASS |
                         BOSC_AXI4_TRAFFIC_MUX_DID_PID_EN |
@@ -441,21 +458,28 @@ static void bosc_axi4_traffic_reset_hold(Object *obj, ResetType type)
 static void bosc_axi4_traffic_realize(DeviceState *dev, Error **errp)
 {
     BoscAxi4TrafficState *s = BOSC_AXI4_TRAFFIC(dev);
+    uint64_t mmio_size = BOSC_AXI4_TRAFFIC_MMIO_SIZE;
 
     if (!s->iommu) {
         error_setg(errp, "iommu link is required");
         return;
     }
 
+    if (s->did_mapper) {
+        /* Shared mapper owns [0,0x200) of the traffic0 window. */
+        mmio_size = BOSC_AXI4_TRAFFIC_MMIO_SIZE - BOSC_AXI4_TRAFFIC_AR_CFG_BASE;
+    }
+
     memory_region_init_io(&s->iomem, OBJECT(s), &bosc_axi4_traffic_ops, s,
-                          TYPE_BOSC_AXI4_TRAFFIC,
-                          BOSC_AXI4_TRAFFIC_MMIO_SIZE);
+                          TYPE_BOSC_AXI4_TRAFFIC, mmio_size);
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->iomem);
 }
 
 static const Property bosc_axi4_traffic_properties[] = {
     DEFINE_PROP_LINK("iommu", BoscAxi4TrafficState, iommu,
                      TYPE_RISCV_IOMMU, RISCVIOMMUState *),
+    DEFINE_PROP_LINK("did-mapper", BoscAxi4TrafficState, did_mapper,
+                     TYPE_BOSC_DID_MAPPER, BoscDidMapperState *),
 };
 
 static const VMStateDescription bosc_axi4_traffic_vmstate = {

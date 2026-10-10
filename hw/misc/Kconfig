@@ -30,8 +30,12 @@ config EDU
     default y if TEST_DEVICES
     depends on PCI && MSI_NONBROKEN
 
+config BOSC_DID_MAPPER
+    bool
+
 config BOSC_AXI4_TRAFFIC
     bool
+    select BOSC_DID_MAPPER
 
 config I2C_ECHO
     bool
