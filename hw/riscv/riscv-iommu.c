@@ -2754,6 +2754,19 @@ static const char *IOMMU_FLAG_STR[] = {
     "RW",
 };
 
+void riscv_iommu_flush_translation_caches(RISCVIOMMUState *s)
+{
+    if (!s) {
+        return;
+    }
+    if (s->ctx_cache) {
+        g_hash_table_remove_all(s->ctx_cache);
+    }
+    if (s->iot_cache) {
+        g_hash_table_remove_all(s->iot_cache);
+    }
+}
+
 /* RISC-V IOMMU Memory Region - Address Translation Space */
 static IOMMUTLBEntry riscv_iommu_memory_region_translate(
     IOMMUMemoryRegion *iommu_mr, hwaddr addr,
@@ -2769,6 +2782,25 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
         .addr_mask = ~0ULL,
         .perm = flag,
     };
+
+    if (as->iommu->did_mapper_apply) {
+        uint32_t process_id;
+        bool process_id_valid;
+
+        if (as->platform) {
+            process_id = as->process_id;
+            process_id_valid = as->process_id_valid;
+        } else {
+            process_id = (iommu_idx == RISCV_IOMMU_NOPROCID) ? 0 : iommu_idx;
+            process_id_valid = iommu_idx != RISCV_IOMMU_NOPROCID;
+        }
+
+        if (as->iommu->did_mapper_apply(as->iommu->did_mapper_opaque, addr,
+                                        &devid, &process_id,
+                                        &process_id_valid)) {
+            iommu_idx = process_id_valid ? process_id : RISCV_IOMMU_NOPROCID;
+        }
+    }
 
     ctx = riscv_iommu_ctx(as->iommu, devid, iommu_idx, &ref);
     if (ctx == NULL) {

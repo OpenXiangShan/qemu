@@ -42,6 +42,14 @@ struct RISCVIOMMUState {
     uint32_t (*pci_device_id)(PCIBus *bus, int devfn, void *opaque);
     void *pci_device_id_opaque;
 
+    /*
+     * Optional address-range DID/PID override (BOSC mapper). When set and the
+     * callback returns true, translation uses the overridden identity.
+     */
+    bool (*did_mapper_apply)(void *opaque, uint64_t iova, uint32_t *devid,
+                             uint32_t *process_id, bool *process_id_valid);
+    void *did_mapper_opaque;
+
     uint64_t cap;         /* IOMMU supported capabilities */
     uint64_t fctl;        /* IOMMU enabled features */
     uint64_t icvec_avail_vectors;  /* Available interrupt vectors in ICVEC */
@@ -104,6 +112,7 @@ void riscv_iommu_pci_setup_iommu(RISCVIOMMUState *iommu, PCIBus *bus,
 void riscv_iommu_set_cap_igs(RISCVIOMMUState *s, riscv_iommu_igs_mode mode);
 void riscv_iommu_reset(RISCVIOMMUState *s);
 void riscv_iommu_notify(RISCVIOMMUState *s, int vec_type);
+void riscv_iommu_flush_translation_caches(RISCVIOMMUState *s);
 
 typedef struct RISCVIOMMUContext RISCVIOMMUContext;
 /* Device translation context state. */
