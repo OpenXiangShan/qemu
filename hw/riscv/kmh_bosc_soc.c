@@ -27,6 +27,7 @@
 #include "hw/intc/riscv_imsic.h"
 #include "hw/misc/kmh_bosc_aplic_test.h"
 #include "hw/misc/bosc-axi4-traffic.h"
+#include "hw/misc/bosc-did-mapper.h"
 #include "hw/misc/unimp.h"
 #include "hw/pci-host/designware.h"
 #include "hw/pci/pci.h"
@@ -79,6 +80,9 @@
 #define KMH_BOSC_PCIE_HP_IRQ              18
 #define KMH_BOSC_DMAC_IRQ                 40
 #define KMH_BOSC_IOMMU_IRQ_BASE           36
+/* Per-die IOMMU instances: idx0 uses 36-39; idx1/2 skip DMAC(40). */
+#define KMH_BOSC_IOMMU_PER_DIE            KMH_BOSC_PCIE_PER_DIE
+#define KMH_BOSC_IOMMU_IRQS_PER_INST      4
 
 #define KMH_BOSC_APLIC_NUM_SOURCES        KMH_BOSC_APLIC_TEST_NUM_IRQS
 #define KMH_BOSC_IMSIC_NUM_IDS            255
@@ -100,7 +104,7 @@
 #define KMH_BOSC_PCIE_ROOT_BUS_STRIDE     0x0000000004000000ULL
 #define KMH_BOSC_PCIE_WINDOW_SIZE         0x0000000002000000ULL
 #define KMH_BOSC_IOMMU_MMIO_SIZE          0x1000
-#define KMH_BOSC_AXI4_TRAFFIC_COUNT       3
+#define KMH_BOSC_AXI4_TRAFFIC_COUNT       KMH_BOSC_IOMMU_PER_DIE
 
 #define KMH_BOSC_AUTO_TEST_TRIGGER_ADDR_DEFAULT \
                                              0x0000000090000000ULL
@@ -180,6 +184,12 @@ static const MemMapEntry kmh_bosc_memmap[] = {
                                   KMH_BOSC_IOMMU_MMIO_SIZE },
     [KMH_BOSC_IOMMU1] =         { 0x0000004f80210000ULL, 0x10000 },
     [KMH_BOSC_IOMMU2] =         { 0x0000004f80220000ULL, 0x10000 },
+};
+
+static const hwaddr kmh_bosc_iommu_reg_base[KMH_BOSC_IOMMU_PER_DIE] = {
+    0x0000004f80200000ULL,
+    0x0000004f80210000ULL,
+    0x0000004f80220000ULL,
 };
 
 static const hwaddr kmh_bosc_axi4_traffic_base[KMH_BOSC_AXI4_TRAFFIC_COUNT] = {
@@ -301,7 +311,9 @@ struct KmhBoscState {
     MemoryRegion die_local_alias[KMH_BOSC_DIES][ARRAY_SIZE(kmh_bosc_memmap) +
         KMH_BOSC_PCIE_PER_DIE * KMH_BOSC_PCIE_MEMMAP_COUNT];
     MemoryRegion clint_alias[KMH_BOSC_DIES];
-    MemoryRegion traffic0_local_alias;
+    MemoryRegion traffic_window[KMH_BOSC_DIES][KMH_BOSC_IOMMU_PER_DIE];
+    MemoryRegion traffic_local_alias[KMH_BOSC_DIES][KMH_BOSC_IOMMU_PER_DIE];
+    RISCVIOMMUState *iommu[KMH_BOSC_DIES][KMH_BOSC_IOMMU_PER_DIE];
     AddressSpace die_as[KMH_BOSC_DIES];
     KmhBoscBootCtlState bootctl[KMH_BOSC_DIES];
     KmhBoscSysCtrlState sysctrl[KMH_BOSC_DIES];
@@ -405,6 +417,17 @@ static inline int kmh_bosc_pcie_hp_irq(int port)
 static inline int kmh_bosc_pcie_domain(int die, int port)
 {
     return die * KMH_BOSC_PCIE_PER_DIE + port;
+}
+
+static inline int kmh_bosc_iommu_irq_base(int idx)
+{
+    /*
+     * Keep legacy IOMMU0 at 36-39. DMAC owns 40, so IOMMU1/2 start at 41.
+     */
+    if (idx == 0) {
+        return KMH_BOSC_IOMMU_IRQ_BASE;
+    }
+    return KMH_BOSC_DMAC_IRQ + 1 + (idx - 1) * KMH_BOSC_IOMMU_IRQS_PER_INST;
 }
 
 static hwaddr kmh_bosc_pcie_mem32_bus_base(int segment)
@@ -1300,7 +1323,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     g_autofree uint32_t *aclint_mswi_cells = NULL;
     g_autofree uint32_t *aclint_mtimer_cells = NULL;
     uint32_t imsic_m_phandle, imsic_s_phandle;
-    uint32_t iommu_phandle = 0;
+    uint32_t iommu_phandles[KMH_BOSC_DIES][KMH_BOSC_IOMMU_PER_DIE] = { { 0 } };
     const uint64_t node_size = kmh_bosc_die_ram_size(machine);
     const int boot_hartid = kmh_bosc_first_selected_hartid(s);
     const int selected_dies = kmh_bosc_selected_die_count(s);
@@ -1638,43 +1661,63 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     }
 
     if (kmh_bosc_is_iommu_sys_enabled(s)) {
-        hwaddr iommu_base = kmh_bosc_die_memmap_base(s, 0, KMH_BOSC_IOMMU);
-        g_autofree char *iommu_name = g_strdup_printf("/soc/iommu@%" HWADDR_PRIx,
-                                                      iommu_base);
-        int traffic;
+        int die_i, iommu_idx;
 
-        iommu_phandle = qemu_fdt_alloc_phandle(fdt);
-        qemu_fdt_add_subnode(fdt, iommu_name);
-        qemu_fdt_setprop_string(fdt, iommu_name, "compatible", "riscv,iommu");
-        qemu_fdt_setprop_cell(fdt, iommu_name, "#iommu-cells", 1);
-        qemu_fdt_setprop_cell(fdt, iommu_name, "phandle", iommu_phandle);
-        qemu_fdt_setprop_sized_cells(fdt, iommu_name, "reg",
-                                     2, iommu_base,
-                                     2, memmap[KMH_BOSC_IOMMU].size);
-        qemu_fdt_setprop_cell(fdt, iommu_name, "interrupt-parent",
-                              aplic_s_phandles[0]);
-        qemu_fdt_setprop_cells(fdt, iommu_name, "interrupts",
-                               KMH_BOSC_IOMMU_IRQ_BASE + 0, FDT_IRQ_TYPE_EDGE_LOW,
-                               KMH_BOSC_IOMMU_IRQ_BASE + 1, FDT_IRQ_TYPE_EDGE_LOW,
-                               KMH_BOSC_IOMMU_IRQ_BASE + 2, FDT_IRQ_TYPE_EDGE_LOW,
-                               KMH_BOSC_IOMMU_IRQ_BASE + 3, FDT_IRQ_TYPE_EDGE_LOW);
-        qemu_fdt_setprop_cell(fdt, iommu_name, "msi-parent", imsic_s_phandle);
-        qemu_fdt_setprop_string(fdt, iommu_name, "status", "okay");
+        for (die_i = 0; die_i < kmh_bosc_die_count(s); die_i++) {
+            if (!kmh_bosc_die_selected(s, die_i)) {
+                continue;
+            }
+            for (iommu_idx = 0; iommu_idx < KMH_BOSC_IOMMU_PER_DIE; iommu_idx++) {
+                hwaddr iommu_base =
+                    kmh_bosc_die_addr(s, die_i, kmh_bosc_iommu_reg_base[iommu_idx]);
+                hwaddr mapper_base =
+                    kmh_bosc_die_addr(s, die_i, kmh_bosc_axi4_traffic_base[iommu_idx]);
+                int irq_base = kmh_bosc_iommu_irq_base(iommu_idx);
+                g_autofree char *iommu_name =
+                    g_strdup_printf("/soc/iommu@%" HWADDR_PRIx, iommu_base);
+                g_autofree char *mapper_name =
+                    g_strdup_printf("/soc/did-mapper@%" HWADDR_PRIx, mapper_base);
+                g_autofree char *traffic_name =
+                    g_strdup_printf("/soc/axi4-traffic@%" HWADDR_PRIx,
+                                    mapper_base);
 
-        for (traffic = 0; traffic < KMH_BOSC_AXI4_TRAFFIC_COUNT; traffic++) {
-            hwaddr traffic_base =
-                kmh_bosc_die_addr(s, 0, kmh_bosc_axi4_traffic_base[traffic]);
-            g_autofree char *traffic_name =
-                g_strdup_printf("/soc/axi4-traffic@%" HWADDR_PRIx,
-                                traffic_base);
+                iommu_phandles[die_i][iommu_idx] = qemu_fdt_alloc_phandle(fdt);
+                qemu_fdt_add_subnode(fdt, iommu_name);
+                qemu_fdt_setprop_string(fdt, iommu_name, "compatible",
+                                        "riscv,iommu");
+                qemu_fdt_setprop_cell(fdt, iommu_name, "#iommu-cells", 1);
+                qemu_fdt_setprop_cell(fdt, iommu_name, "phandle",
+                                      iommu_phandles[die_i][iommu_idx]);
+                qemu_fdt_setprop_sized_cells(fdt, iommu_name, "reg",
+                                             2, iommu_base,
+                                             2, KMH_BOSC_IOMMU_MMIO_SIZE);
+                qemu_fdt_setprop_cell(fdt, iommu_name, "interrupt-parent",
+                                      aplic_s_phandles[die_i]);
+                qemu_fdt_setprop_cells(fdt, iommu_name, "interrupts",
+                                       irq_base + 0, FDT_IRQ_TYPE_EDGE_LOW,
+                                       irq_base + 1, FDT_IRQ_TYPE_EDGE_LOW,
+                                       irq_base + 2, FDT_IRQ_TYPE_EDGE_LOW,
+                                       irq_base + 3, FDT_IRQ_TYPE_EDGE_LOW);
+                qemu_fdt_setprop_cell(fdt, iommu_name, "msi-parent",
+                                      imsic_s_phandle);
+                qemu_fdt_setprop_string(fdt, iommu_name, "status", "okay");
 
-            qemu_fdt_add_subnode(fdt, traffic_name);
-            qemu_fdt_setprop_string(fdt, traffic_name, "compatible",
-                                    "bosc,axi4-traffic");
-            qemu_fdt_setprop_sized_cells(fdt, traffic_name, "reg",
-                                         2, traffic_base,
-                                         2, BOSC_AXI4_TRAFFIC_MMIO_SIZE);
-            qemu_fdt_setprop_string(fdt, traffic_name, "status", "okay");
+                qemu_fdt_add_subnode(fdt, mapper_name);
+                qemu_fdt_setprop_string(fdt, mapper_name, "compatible",
+                                        "bosc,did-mapper");
+                qemu_fdt_setprop_sized_cells(fdt, mapper_name, "reg",
+                                             2, mapper_base,
+                                             2, BOSC_DID_MAPPER_MMIO_SIZE);
+                qemu_fdt_setprop_string(fdt, mapper_name, "status", "okay");
+
+                qemu_fdt_add_subnode(fdt, traffic_name);
+                qemu_fdt_setprop_string(fdt, traffic_name, "compatible",
+                                        "bosc,axi4-traffic");
+                qemu_fdt_setprop_sized_cells(fdt, traffic_name, "reg",
+                                             2, mapper_base,
+                                             2, BOSC_AXI4_TRAFFIC_MMIO_SIZE);
+                qemu_fdt_setprop_string(fdt, traffic_name, "status", "okay");
+            }
         }
     }
 
@@ -1762,10 +1805,12 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH,
                                        kmh_bosc_pcie_hp_irq(port),
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH);
-                if (iommu_phandle) {
+                if (kmh_bosc_is_iommu_sys_enabled(s) &&
+                    iommu_phandles[die][port]) {
+                    /* Independent per-root IOMMU: RID maps directly. */
                     qemu_fdt_setprop_cells(fdt, pcie_name, "iommu-map",
-                                           0, iommu_phandle,
-                                           segment << 16, 0x10000);
+                                           0, iommu_phandles[die][port],
+                                           0, 0x10000);
                 }
                 {
                     static const char *const interrupt_names[] = { "msi", "hp" };
@@ -2330,94 +2375,105 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
     }
 }
 
-static uint32_t kmh_bosc_pcie_device_id(PCIBus *bus, int devfn, void *opaque)
-{
-    KmhBoscState *s = opaque;
-    PCIBus *root = bus;
-
-    while (!pci_bus_is_root(root)) {
-        root = pci_get_bus(root->parent_dev);
-    }
-    for (int die = 0; die < kmh_bosc_die_count(s); die++) {
-        if (!kmh_bosc_die_selected(s, die)) {
-            continue;
-        }
-        for (int port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
-            if (PCI_HOST_BRIDGE(&s->pcie[die][port])->bus == root) {
-                /* Match the per-root DT iommu-map; RID alone aliases roots. */
-                return (kmh_bosc_pcie_domain(die, port) << 16) |
-                       PCI_BUILD_BDF(pci_bus_num(bus), devfn);
-            }
-        }
-    }
-    g_assert_not_reached();
-}
 
 static void kmh_bosc_init_iommu(KmhBoscState *s)
 {
     const MemMapEntry *memmap = kmh_bosc_memmap;
-    DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
-    Object *iommu_obj;
-    RISCVIOMMUState *iommu;
-    int die, port, traffic;
+    int die, idx;
 
-    object_property_set_uint(OBJECT(iommu_sys), "addr",
-                             kmh_bosc_die_memmap_base(s, 0, KMH_BOSC_IOMMU),
-                             &error_fatal);
-    object_property_set_uint(OBJECT(iommu_sys), "base-irq",
-                             KMH_BOSC_IOMMU_IRQ_BASE,
-                             &error_fatal);
-    object_property_set_link(OBJECT(iommu_sys), "irqchip",
-                             OBJECT(s->irqchip[0]),
-                             &error_fatal);
+    for (die = 0; die < kmh_bosc_die_count(s); die++) {
+        if (!kmh_bosc_die_selected(s, die)) {
+            continue;
+        }
 
-    iommu_obj = object_resolve_path_component(OBJECT(iommu_sys), "iommu");
-    if (!iommu_obj) {
-        error_report("failed to resolve KMH BOSC system IOMMU child object");
-        exit(1);
-    }
-    iommu = RISCV_IOMMU(iommu_obj);
-    iommu->pci_device_id = kmh_bosc_pcie_device_id;
-    iommu->pci_device_id_opaque = s;
+        for (idx = 0; idx < KMH_BOSC_IOMMU_PER_DIE; idx++) {
+            DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
+            Object *iommu_obj;
+            RISCVIOMMUState *iommu;
+            DeviceState *mapper_dev = qdev_new(TYPE_BOSC_DID_MAPPER);
+            BoscDidMapperState *mapper;
+            DeviceState *traffic_dev = qdev_new(TYPE_BOSC_AXI4_TRAFFIC);
+            hwaddr iommu_base =
+                kmh_bosc_die_addr(s, die, kmh_bosc_iommu_reg_base[idx]);
+            hwaddr traffic_base =
+                kmh_bosc_die_addr(s, die, kmh_bosc_axi4_traffic_base[idx]);
+            MemoryRegion *window = &s->traffic_window[die][idx];
 
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
+            object_property_set_uint(OBJECT(iommu_sys), "addr", iommu_base,
+                                     &error_fatal);
+            object_property_set_uint(OBJECT(iommu_sys), "base-irq",
+                                     kmh_bosc_iommu_irq_base(idx),
+                                     &error_fatal);
+            object_property_set_link(OBJECT(iommu_sys), "irqchip",
+                                     OBJECT(s->irqchip[die]),
+                                     &error_fatal);
 
-    for (traffic = 0; traffic < KMH_BOSC_AXI4_TRAFFIC_COUNT; traffic++) {
-        DeviceState *dev = qdev_new(TYPE_BOSC_AXI4_TRAFFIC);
+            iommu_obj = object_resolve_path_component(OBJECT(iommu_sys),
+                                                      "iommu");
+            if (!iommu_obj) {
+                error_report("failed to resolve IOMMU die %d idx %d", die, idx);
+                exit(1);
+            }
+            iommu = RISCV_IOMMU(iommu_obj);
+            /*
+             * Per-die / per-root IOMMUs are independent: requester ID is the
+             * PCI RID. DID overrides come from the paired did-mapper.
+             */
+            sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
 
-        object_property_set_link(OBJECT(dev), "iommu", OBJECT(iommu),
-                                 &error_fatal);
-        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0,
-                        kmh_bosc_die_addr(
-                            s, 0, kmh_bosc_axi4_traffic_base[traffic]));
-    }
-    if (!s->single_soc) {
-        /* traffic0 sits immediately after the 4 KiB IOMMU register aperture. */
-        memory_region_init_alias(&s->traffic0_local_alias, OBJECT(s),
-                                 "kmh-bosc.traffic0-local", get_system_memory(),
-                                 kmh_bosc_die_addr(
-                                     s, 0, kmh_bosc_axi4_traffic_base[0]),
-                                 BOSC_AXI4_TRAFFIC_MMIO_SIZE);
-        memory_region_add_subregion(&s->die_mem[0], kmh_bosc_axi4_traffic_base[0],
-                                    &s->traffic0_local_alias);
-    }
+            object_property_set_link(OBJECT(mapper_dev), "iommu", OBJECT(iommu),
+                                     &error_fatal);
+            sysbus_realize(SYS_BUS_DEVICE(mapper_dev), &error_fatal);
+            mapper = BOSC_DID_MAPPER(mapper_dev);
+            iommu->did_mapper_apply = bosc_did_mapper_apply;
+            iommu->did_mapper_opaque = mapper;
 
-    if (s->dw_pcie) {
-        for (die = 0; die < kmh_bosc_die_count(s); die++) {
-            if (!kmh_bosc_die_selected(s, die)) {
-                continue;
+            object_property_set_link(OBJECT(traffic_dev), "iommu",
+                                     OBJECT(iommu), &error_fatal);
+            object_property_set_link(OBJECT(traffic_dev), "did-mapper",
+                                     OBJECT(mapper), &error_fatal);
+            sysbus_realize(SYS_BUS_DEVICE(traffic_dev), &error_fatal);
+
+            memory_region_init(window, OBJECT(s),
+                               "kmh-bosc.traffic-window",
+                               BOSC_AXI4_TRAFFIC_MMIO_SIZE);
+            memory_region_add_subregion(
+                window, 0,
+                sysbus_mmio_get_region(SYS_BUS_DEVICE(mapper_dev), 0));
+            memory_region_add_subregion(
+                window, BOSC_DID_MAPPER_MMIO_SIZE,
+                sysbus_mmio_get_region(SYS_BUS_DEVICE(traffic_dev), 0));
+            memory_region_add_subregion(get_system_memory(), traffic_base,
+                                        window);
+
+            if (!s->single_soc) {
+                MemoryRegion *alias = &s->traffic_local_alias[die][idx];
+
+                memory_region_init_alias(alias, OBJECT(s),
+                                         "kmh-bosc.traffic-local",
+                                         get_system_memory(), traffic_base,
+                                         BOSC_AXI4_TRAFFIC_MMIO_SIZE);
+                memory_region_add_subregion(&s->die_mem[die],
+                                            kmh_bosc_axi4_traffic_base[idx],
+                                            alias);
             }
 
-            for (port = 0; port < KMH_BOSC_PCIE_PER_DIE; port++) {
-                PCIBus *bus = PCI_HOST_BRIDGE(&s->pcie[die][port])->bus;
+            object_unref(OBJECT(traffic_dev));
+            object_unref(OBJECT(mapper_dev));
+            s->iommu[die][idx] = iommu;
+        }
+
+        if (s->dw_pcie) {
+            for (idx = 0; idx < KMH_BOSC_PCIE_PER_DIE; idx++) {
+                PCIBus *bus = PCI_HOST_BRIDGE(&s->pcie[die][idx])->bus;
 
                 if (!bus || bus->iommu_ops || bus->iommu_opaque) {
-                    error_report("cannot attach system IOMMU to PCIe "
-                                 "die %d port %d", die, port);
+                    error_report("cannot attach IOMMU to PCIe die %d port %d",
+                                 die, idx);
                     exit(1);
                 }
-                riscv_iommu_pci_setup_iommu(iommu, bus, &error_fatal);
+                riscv_iommu_pci_setup_iommu(s->iommu[die][idx], bus,
+                                           &error_fatal);
             }
         }
     }
