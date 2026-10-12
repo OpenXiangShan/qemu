@@ -1328,7 +1328,12 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     const int boot_hartid = kmh_bosc_first_selected_hartid(s);
     const int selected_dies = kmh_bosc_selected_die_count(s);
     const int imsic_targets = selected_dies * KMH_BOSC_APP_HARTS_PER_DIE;
-    const int aclint_targets = selected_dies * KMH_BOSC_APP_HARTS_PER_DIE;
+    /*
+     * The shared ACLINT register index is the physical hart ID. Unlike the
+     * separate IMSIC regsets, its parent list cannot compact disabled dies.
+     */
+    const int aclint_targets = kmh_bosc_die_count(s) *
+                              KMH_BOSC_APP_HARTS_PER_DIE;
     uint32_t boot_cpu_phandle = 0;
     int die, hart, idx;
     int reg_idx = 0;
@@ -1425,10 +1430,6 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
 
     idx = 0;
     for (die = 0; die < kmh_bosc_die_count(s); die++) {
-        if (!kmh_bosc_die_selected(s, die)) {
-            continue;
-        }
-
         for (hart = 0; hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
             int hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
             uint32_t intc_phandle = intc_phandles[hartid];
@@ -1440,6 +1441,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
             idx++;
         }
     }
+    g_assert(idx == aclint_targets);
 
     if (boot_cpu_phandle) {
         qemu_fdt_add_subnode(fdt, "/chosen/opensbi-config");
