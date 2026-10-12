@@ -44,10 +44,13 @@ struct RISCVIOMMUState {
 
     /*
      * Optional address-range DID/PID override (BOSC mapper). When set and the
-     * callback returns true, translation uses the overridden identity.
+     * callback returns true, translation uses the overridden identity. The
+     * optional address mask bounds a returned translation so a DMA crossing
+     * a mapper boundary re-evaluates its identity, including on a miss.
      */
     bool (*did_mapper_apply)(void *opaque, uint64_t iova, uint32_t *devid,
                              uint32_t *process_id, bool *process_id_valid);
+    uint64_t (*did_mapper_address_mask)(void *opaque, uint64_t iova);
     void *did_mapper_opaque;
 
     uint64_t cap;         /* IOMMU supported capabilities */

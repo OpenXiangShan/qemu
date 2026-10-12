@@ -37,5 +37,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(BoscDidMapperState, BOSC_DID_MAPPER)
 bool bosc_did_mapper_apply(void *opaque, uint64_t iova, uint32_t *devid,
                            uint32_t *process_id, bool *process_id_valid);
 uint32_t bosc_did_mapper_get_mux(BoscDidMapperState *s);
+/* Largest aligned translation mask that cannot cross an enabled slot edge. */
+uint64_t bosc_did_mapper_address_mask(void *opaque, uint64_t iova);
 
 #endif /* HW_MISC_BOSC_DID_MAPPER_H */

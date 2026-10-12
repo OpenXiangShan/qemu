@@ -2813,6 +2813,20 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
         iotlb.perm = IOMMU_NONE;
     }
 
+    if (iotlb.perm != IOMMU_NONE && as->iommu->did_mapper_address_mask) {
+        uint64_t mask = as->iommu->did_mapper_address_mask(
+            as->iommu->did_mapper_opaque, addr);
+
+        if (mask < iotlb.addr_mask) {
+            uint64_t translated = (iotlb.translated_addr & ~iotlb.addr_mask) |
+                                  (addr & iotlb.addr_mask);
+
+            iotlb.addr_mask = mask;
+            iotlb.iova = addr & ~mask;
+            iotlb.translated_addr = translated & ~mask;
+        }
+    }
+
     /* Trace all dma translations with original access flags. */
     trace_riscv_iommu_dma(as->iommu->parent_obj.id, PCI_BUS_NUM(devid),
                           PCI_SLOT(devid), PCI_FUNC(devid), iommu_idx,

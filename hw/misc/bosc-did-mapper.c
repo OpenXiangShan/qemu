@@ -71,6 +71,38 @@ bool bosc_did_mapper_apply(void *opaque, uint64_t iova, uint32_t *devid,
     return false;
 }
 
+uint64_t bosc_did_mapper_address_mask(void *opaque, uint64_t iova)
+{
+    BoscDidMapperState *s = opaque;
+    uint64_t first = 0, last = UINT64_MAX, mask = UINT64_MAX;
+
+    if (!s || !(s->mux & BOSC_DID_MAPPER_MUX_DID_PID_EN)) {
+        return mask;
+    }
+    for (unsigned i = 0; i < BOSC_DID_MAPPER_NR_SLOTS; i++) {
+        if (s->start[i] >= s->end[i]) {
+            continue;
+        }
+        uint64_t edges[] = { s->start[i], s->end[i] };
+
+        for (unsigned j = 0; j < ARRAY_SIZE(edges); j++) {
+            if (edges[j] <= iova) {
+                first = MAX(first, edges[j]);
+            } else {
+                last = MIN(last, edges[j] - 1);
+            }
+        }
+    }
+    /*
+     * Conservatively split at every valid slot edge, including masked slots.
+     * A page/superpage must not extend an override into a hit or miss range.
+     */
+    while ((iova & ~mask) < first || (iova | mask) > last) {
+        mask >>= 1;
+    }
+    return mask;
+}
+
 static uint64_t bosc_did_mapper_read(void *opaque, hwaddr addr, unsigned size)
 {
     BoscDidMapperState *s = opaque;

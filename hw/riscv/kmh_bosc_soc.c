@@ -2426,6 +2426,7 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
             sysbus_realize(SYS_BUS_DEVICE(mapper_dev), &error_fatal);
             mapper = BOSC_DID_MAPPER(mapper_dev);
             iommu->did_mapper_apply = bosc_did_mapper_apply;
+            iommu->did_mapper_address_mask = bosc_did_mapper_address_mask;
             iommu->did_mapper_opaque = mapper;
 
             object_property_set_link(OBJECT(traffic_dev), "iommu",
