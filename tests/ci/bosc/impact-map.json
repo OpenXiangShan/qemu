@@ -62,7 +62,11 @@
         "hw/misc/kmh_bosc*",
         "tests/qtest/kmh-bosc*",
         "tests/qtest/bosc-axi4*",
-        "hw/misc/bosc_axi4*"
+        "hw/misc/bosc-axi4*",
+        "include/hw/misc/bosc-axi4*",
+        "hw/misc/bosc-did-mapper*",
+        "include/hw/misc/bosc-did-mapper*",
+        "tests/qtest/bosc-did-mapper*"
       ],
       "owners": [
         "bosc"

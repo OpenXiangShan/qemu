@@ -80,7 +80,7 @@ def linux_assertions(text, token, case):
     online, kernel, mounts, rc = match.groups()
     if cpu_set(online) != set(range(case["cpus"])):
         raise AssertionError(f"online CPUs {online}, expected 0..{case['cpus'] - 1}")
-    asset = "iommu_kernel" if case.get("kind") == "iommu-linux" else "kernel"
+    asset = case.get("kernel_asset", "iommu_kernel" if case.get("kind") == "iommu-linux" else "kernel")
     if kernel != read_json(HERE / "images.lock.json")["assets"][asset]["kernel_release"]:
         raise AssertionError(f"unexpected kernel release: {kernel}")
     if not re.search(r"(?m)^overlay / overlay (\S+) ", mounts):
@@ -90,7 +90,7 @@ def linux_assertions(text, token, case):
     return {"online": online, "kernel": kernel, "root": "pmem0 + overlay"}
 
 
-IOMMU_FATAL = re.compile(r"iommu[^\n]*\bfault\b|nvme[^\n]*(?:timeout|timed out|failed|resetting)|"
+IOMMU_FATAL = re.compile(r"iommu[^\n]*\bfault\b|nvme(?:[ :]|\d)[^\n]*(?:timeout|timed out|failed|resetting)|"
                          r"I/O error|Buffer I/O|blk_update_request|DMA (?:transfer|mapping) error", re.I)
 
 
@@ -165,13 +165,13 @@ def iommu_assertions(text, token, case, qemu_log=""):
         result.append({"serial": serial, "controller": ctrl, "bdf": bdf,
                        "bus": bus, "segment": segment,
                        "iommu": iommu,
-                       "did": 0x100 if case["owner"] == "kmh" else (segment << 16) | 0x100,
+                       "did": 0x100,
                        "group": int(group),
                        "domain": domain, "sha256": source, "bytes": int(size),
                        "irq_before": int(before), "irq_after": int(after)})
     if seen != {f"BOSC-CI-{i}" for i in range(case["disks"])}:
         raise AssertionError("unexpected NVMe endpoints")
-    if len({r["iommu"] for r in result}) != (case["disks"] if case["owner"] == "kmh" else 1):
+    if len({r["iommu"] for r in result}) != case["disks"]:
         raise AssertionError("unexpected shared/independent endpoint IOMMUs")
     return result
 

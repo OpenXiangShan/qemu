@@ -4,7 +4,7 @@
 六个文件；release 三项复用现有正式文件，其他三项新上传。
 随后从空缓存下载全部六项，在独立 checkout 构建 QEMU 并通过第一阶段全量验证。
 CI 本身仍只有读取接口，不执行上传或固件构建。
-当前锁文件另含独立发布的 `iommu_kernel`，共七项运行输入，按选中用例取用。
+当前锁文件包含七项已发布输入及两项待发布 mapper 输入，按选中用例取用。
 
 JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 镜像锁的 `jf_path` 为实际远端位置，`path` 保留原离线布局：
@@ -129,3 +129,47 @@ make O="$out" ARCH=riscv CROSS_COMPILE="$cross" -j8 Image
 配置内建 RISC-V IOMMU、DWC、NVMe、virtio-blk、pmem 和 ext4。IOMMU 用例复用
 锁定 fw_jump/rootfs；libqemu compose Linux 用例也消费此 Image 的 RAM shell。
 测试盘由 runner 独立创建并清理。普通 CI 仅下载并校验，不编译 Linux。
+
+## DID mapper 专用内核与 NVMe 模块（2026-10-12 已发布）
+
+锁中新加 `did_mapper_kernel` 与 `did_mapper_modules`，共九项固定运行输入。
+源码为 Linux 干净归档提交 `1411c50e0909`，release
+`6.18.34-bosc-did-mapper`；GCC `riscv64-linux-gnu-gcc 13.3.0`。
+helper 在归档中，debugfs/IOMMU/DWC/pmem/ext4 内建，NVMe 为模块；这样可以
+在首次驱动 probe 前配置 mapper。两份资产记录同一 source commit/tree、
+release/config/initramfs hash，不使用 dirty Linux 工作树的 Image。
+
+在干净归档目录执行（保留归档内 initramfs，复制到独立 out）：
+
+```sh
+mkdir -p "$out"
+cp initramfs.cpio "$out/initramfs.cpio"
+export KBUILD_BUILD_TIMESTAMP='Mon Oct 12 15:00:00 CST 2026'
+export KBUILD_BUILD_USER=guoyaxing KBUILD_BUILD_HOST=bosc-ci KBUILD_BUILD_VERSION=1
+make O="$out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- defconfig xiangshan.config
+scripts/config --file "$out/.config" --enable DEBUG_FS --disable LOCALVERSION_AUTO \
+  --set-str LOCALVERSION -bosc-did-mapper --module BLK_DEV_NVME --module NVME_CORE
+make O="$out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- olddefconfig
+make O="$out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j8 Image modules
+```
+
+用 QEMU 的 `tests/ci/bosc/package_mapper_modules.py --build "$out" --output
+<mapper-modules.ext4>` 生成 16 MiB ext4 payload。脚本检查模块依赖和 vermagic，
+剥离 debug 信息后包装 nvme-core/nvme、顺序文件、各模块 hash。测试装入 pmem1
+并只读挂载，保留模块实际加载失败作为 FAIL。CI 不调用此包装脚本重建资产。
+
+已发布远端目录为
+`hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261012/1411c50e0909/`，
+两份锁中的 publication 为 `verified-20261012`。此次从相同提交与配置重建，
+配置/initramfs hash 与此前记录一致；Image 和 ext4 payload 的新 hash 已进入锁。
+同目录包含模块 manifest、源码/配置/构建日志、SHA256SUMS，以及
+`validation-summary.json` / `validation-evidence.tar.gz` / `acceptance-images.lock.json`。
+
+本地用 fresh QEMU 构建验收 mapper qtest 10/10、Linux NVMe 9/9、框架自测
+69/69；报告为 20 PASS / 34 NOT_SELECTED。上传后逐项检查 JF size/SHA256，
+再通过 `assets.py` 空缓存实际下载两份镜像并验证锁定值。证据保存在工作区
+`test-artifacts/did-mapper-jf-20261012/`。此次使用现有用户 JF 认证；GitLab
+只读 token 的读取权限及 pipeline 尚未单独验收。
+
+CI 按锁中的远端路径消费这两份资产。本地仍可用精确 hash 的 `--asset`
+覆盖；后续重建应发布新版本并校验真实远端对象，不能覆盖旧 IOMMU 资产。

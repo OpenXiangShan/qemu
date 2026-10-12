@@ -15,11 +15,108 @@ from unittest.mock import patch
 
 import assets
 import checks
+import did_mapper
 from common import HERE, catalog, run_logged, write_json
 from report import aggregate
 from selection import changed_paths, choose, parse_status, select
 from dependencies import prepare_dependencies, safe_members
 from live_log import CaseConsole, JobConsole, LINE_CHARS, TAIL_LINES
+
+
+class DidMapperTests(unittest.TestCase):
+    case = next(c for c in catalog() if c["id"] == "bosc-did-mapper-linux-single")
+
+    def test_exact_readback_and_echo_rejection(self):
+        good = "T:MAP=4f80201000|1|0|17592186044416|256|18446744073709551615|18446744073709551615|0\n"
+        good += "".join(f"T:MAP={a}|0|18446744073709551615|18446744073709551615|0|18446744073709551615|18446744073709551615|0\n" for a in ("4f80211000", "4f80221000"))
+        did_mapper.config_assertions(good, "T", self.case, "same-did")
+        for bad in (good.replace("T:MAP=", "echo T:MAP="), good + good,
+                    good.replace("|256|", "|512|"), good.replace("4f80221000", "104f80221000"),
+                    good.replace("|1|0|", "|0|0|"), good.splitlines()[0]):
+            with self.assertRaises(AssertionError):
+                did_mapper.config_assertions(bad, "T", self.case, "same-did")
+
+    def test_modes_and_sparse_addresses(self):
+        case = next(c for c in catalog() if c["id"] == "bosc-did-mapper-linux-all-roots")
+        self.assertEqual(len(did_mapper.addresses(case)), 12)
+        self.assertEqual(did_mapper.addresses(case)[-1], 0x404f80221000)
+        sparse = next(c for c in catalog() if c["id"] == "bosc-did-mapper-linux-sparse")
+        self.assertEqual(did_mapper.addresses(sparse), [0x104f80201000, 0x104f80211000, 0x104f80221000,
+                                                      0x304f80201000, 0x304f80211000, 0x304f80221000])
+        self.assertEqual(did_mapper.addresses(dict(self.case, mode="multi"))[0], 0x104f80201000)
+        for mode in ("multi", "default"):
+            self.assertEqual(did_mapper.addresses(dict(self.case, mode=mode)),
+                             [0x104f80201000, 0x104f80211000, 0x104f80221000])
+
+    def test_negative_window_is_narrow_and_preserves_observers(self):
+        self.assertIsNone(checks.IOMMU_FATAL.search("Kernel command line: iommu.passthrough=0 nvme.io_timeout=3 nvme.admin_timeout=3"))
+        text = "boot\nT:NEGATIVE_BEGIN\n"
+        text += "riscv,iommu 4f80200000.iommu: Fault 258 devid: 0x200\n"
+        text += "nvme nvme0: I/O 1 timeout\nOBS:DMA=real\nT:NEGATIVE_END\nrecovery\n"
+        positive, faults = did_mapper.negative_assertions(text, "T", self.case, "nvme0")
+        self.assertIn("OBS:DMA=real", positive)
+        self.assertEqual(len(faults), 1)
+        did_mapper.negative_assertions(text.replace("nvme nvme0: I/O 1 timeout", "nvme0n1: I/O Error (sct 0x3 / sc 0x71)"), "T", self.case, "nvme0")
+        for bad in (text.replace("258", "259"), text.replace("0x200", "0x100"),
+                    text.replace("4f80200000", "4f80210000"), text.replace("nvme nvme0:", "nvme nvme1:"),
+                    text.replace("OBS:DMA=real", "I/O error, dev nvme1n1"),
+                    text.replace("OBS:DMA=real", "Kernel panic"), text.replace("T:NEGATIVE_END", "")):
+            with self.assertRaises(AssertionError):
+                did_mapper.negative_assertions(bad, "T", self.case, "nvme0")
+        with self.assertRaises(AssertionError):
+            did_mapper.negative_assertions("T:NEGATIVE_BEGIN\nnvme nvme0: timeout\nT:NEGATIVE_END\n", "T", self.case, "nvme0")
+
+    def test_mapper_tiers_and_source_impact(self):
+        for path in ("hw/misc/bosc-did-mapper.c", "include/hw/misc/bosc-did-mapper.h",
+                     "hw/misc/bosc-axi4-traffic.c", "tests/qtest/bosc-did-mapper-test.c"):
+            result = choose([path])
+            self.assertIn("qtest-did-mapper", result["selected"])
+            self.assertIn(self.case["id"], result["selected"])
+            self.assertNotIn("bosc-did-mapper-linux-all-roots", result["selected"])
+            self.assertNotIn("kmh-iommu-linux", result["selected"])
+
+    def test_manifest_rejects_wrong_inputs_and_topology(self):
+        from lint_ci import validate_cases
+        from common import read_json
+        specs = read_json(HERE / "images.lock.json")["assets"]
+        for edits in ({"assets": ["fw_jump", "iommu_kernel", "rootfs"]}, {"kernel_asset": "iommu_kernel"},
+                      {"group": "iommu"}, {"mode": "multi"}, {"mapper_test": "unknown"}, {"nvme_buses": ["pcie-d0-p1"]}):
+            with self.assertRaises(ValueError):
+                validate_cases([dict(self.case, **edits)], specs)
+        broken = dict(specs, did_mapper_modules=dict(specs["did_mapper_modules"], kernel_release="wrong"))
+        with self.assertRaises(ValueError):
+            validate_cases([self.case], broken)
+
+    def test_report_missing_mapper_phase_is_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            selected = select(work, case_ids=[self.case["id"]])
+            write_json(work / "results" / self.case["id"] / "result.json",
+                       {"id": self.case["id"], "status": "PASS", "checks": [],
+                        "run_id": selected["run_id"], "selection_sha256": selected["config_sha256"],
+                        "evidence": {"first_bind": True, "iommu": [{"serial": "BOSC-CI-0"}]}})
+            self.assertEqual(aggregate(work, "did-mapper")["status"], "FAIL")
+
+    def test_fault_requires_log_capture_and_completed_failed_io(self):
+        from runner import bootargs
+        case = next(c for c in catalog() if c["id"] == "bosc-did-mapper-linux-fault-single")
+        self.assertNotIn("ignore_loglevel", bootargs(case).split())
+        self.assertIn("ignore_loglevel", bootargs(self.case).split())
+        baseline = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-single")
+        self.assertIn("ignore_loglevel", bootargs(baseline).split())
+        evidence = {"first_bind": True, "phases": {p: [{"serial": "BOSC-CI-0"}] for p in (*did_mapper.PHASES, "recovery")},
+                    "mapper": {}, "negative_io_rc": 1, "nvme_timeouts": {"io": 3, "admin": 3},
+                    "negative_kernel_log_sha256": "a" * 64,
+                    "expected_faults": ["riscv,iommu 4f80200000.iommu: Fault 258 devid: 0x200"], "observers": []}
+        for phase in (*did_mapper.PHASES, "fault", "final-disable"):
+            evidence["mapper"][phase] = {f"{a:x}": [en, list(s0), list(s7)] for a, (en, s0, s7) in
+                                          did_mapper.states(case, "disabled" if phase == "final-disable" else phase).items()}
+        did_mapper.evidence_assertions(case, evidence)
+        for edit in ({"negative_io_rc": 0}, {"negative_io_rc": None}, {"negative_kernel_log_sha256": ""},
+                     {"nvme_timeouts": {"io": 30, "admin": 60}}, {"expected_faults": []},
+                     {"expected_faults": ["riscv,iommu 4f80210000.iommu: Fault 258 devid: 0x200"]}):
+            with self.assertRaises(ValueError):
+                did_mapper.evidence_assertions(case, dict(evidence, **edit))
 
 
 def boot_text(token="TOKEN", cpus="0-15"):
@@ -278,7 +375,7 @@ class IommuTests(unittest.TestCase):
         rows = []
         for i, segment in enumerate(segments):
             bdf = f"{segment:04x}:01:00.0"
-            addr = f"{0x311f0000 + segment * 0x1000:x}" if kmh else "4f80200000"
+            addr = f"{0x311f0000 + segment * 0x1000:x}" if kmh else f"{((segment // 3 + 1) << 44) | (0x4f80200000 + (segment % 3) * 0x10000):x}" if len(segments) > 1 else "4f80200000"
             text += f"riscv,iommu {addr}.iommu: using MSIs\n"
             text += f"pci {bdf}: Adding to iommu group {i}\nnvme nvme{i}: pci function {bdf}\nnvme nvme{i}: 1/0/0 default/read/poll queues\n"
             rows += [f"TOKEN:DEVICE=BOSC-CI-{i}|nvme{i}|{bdf}|{i}|DMA-FQ|live|nvme|riscv-iommu@{addr}.iommu",
@@ -289,7 +386,7 @@ class IommuTests(unittest.TestCase):
         self.assertEqual(len(checks.iommu_assertions(self.valid_log(), "TOKEN", self.case)), 1)
         case = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-multi")
         result = checks.iommu_assertions(self.valid_log((0, 3, 6, 9)), "TOKEN", case)
-        self.assertEqual([r["did"] for r in result], [0x100, 0x30100, 0x60100, 0x90100])
+        self.assertEqual([r["did"] for r in result], [0x100] * 4)
 
     def test_kmh_fixed_domain_numbering_and_unrelated_dmac_probe(self):
         case = next(c for c in catalog() if c["id"] == "kmh-iommu-linux")
@@ -308,7 +405,7 @@ class IommuTests(unittest.TestCase):
             text = self.valid_log(segments, kmh)
             result = checks.iommu_assertions(text, "TOKEN", case)
             self.assertEqual([r["did"] for r in result],
-                             [0x100 if kmh else (s << 16) | 0x100 for s in segments])
+                             [0x100 for s in segments])
             self.assertEqual([r["bus"] for r in result], case["nvme_buses"])
             # Enumeration order is not controller/serial order (nvme10 sorts before nvme2).
             lines = text.splitlines()

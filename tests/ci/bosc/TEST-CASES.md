@@ -26,19 +26,20 @@
 
 ## 1. 覆盖范围与计数
 
-当前有 **34 个执行单元**：原有 14 个 Linux 启动配置、1 个 ITGen 裸机配置、3 个
-qtest 可执行文件，以及 16 个 libqemu 用例（含两种四核 Linux 和四种组装单核 Linux）。qtest 内部共
-**18 个子测试**：die/timebase/DDR 7 个、AXI traffic 4 个、PCIe 7 个。普通 MR 最多
-选择 31 个执行单元，另有 2 个 extended IOMMU 配置和 1 个 compose 双盘配置。
+当前有 **44 个执行单元**：23 个 Linux 配置、1 个 ITGen 配置、4 个 qtest
+可执行文件、16 个 libqemu 用例。qtest 内部共 **28 个子测试**：die/timebase/DDR
+7 个、AXI traffic 4 个、PCIe 7 个、DID mapper 10 个。普通 MR 最多选择
+33 个执行单元，另有 11 个 extended 配置。
 
 | GitLab job | `--group` | 执行单元数 | 主要覆盖 |
 | --- | --- | ---: | --- |
-| `bosc:qtest` | `qtest` | 3 | die 地址、13 MHz 时基、DDR 槽位、AXI/IOMMU、PCIe DMA/MSI |
+| `bosc:qtest` | `qtest` | 4 | die 地址、13 MHz 时基、DDR 槽位、AXI/IOMMU、PCIe DMA/MSI |
 | `bosc:kmh-linux` | `kmh-linux` | 2 | KMH 1/16 核 Linux、pmem 根和 shell |
 | `bosc:ddr` | `bosc-ddr` | 4 | BOSC single/multi、稀疏 die、省略 soc-mode 的 DDR 启动 |
 | `bosc:mcu` | `bosc-mcu` | 3 | MCU、QSPI/DMAC 搬运、应用核释放、Linux 启动 |
 | `bosc:itgen` | `itgen` | 1 | die0 到 die1/hart16 的 APLIC 优先级中断测试 |
 | `bosc:iommu` | `iommu` | 5 | 原生 system IOMMU、Linux NVMe probe、direct DMA 和中断 |
+| `bosc:did-mapper` | `did-mapper` | 9 | debugfs 首次绑定前配置、NVMe direct DMA、故障恢复与各实例隔离 |
 | `bosc:libqemu` | `libqemu` | 16 | ABI/生命周期、core/compose API、ROM/reset、并发、guest exit、库模式 Linux |
 
 libqemu 的逐项测试点、PASS、独立构建 job/profile、资产和运行命令见
@@ -108,7 +109,7 @@ DDR 容量边界和未映射区域由 `qtest-die` 检查。
 | `kmh-iommu-linux` | mr | KMH，`dw-pcie` | 1/1 | L + N；root0 的翻译、NVMe probe、direct DMA 和 MSI |
 | `kmh-iommu-linux-dual-root` | mr | KMH，`dw-pcie`、`dw-pcie1` | 2/1 | L + N；两个独立 IOMMU，均使用原始 RID，逐盘校验 |
 | `bosc-iommu-linux-single` | mr | BOSC single，`die-mask=0x1,core-mask=0x1`；`pcie-d0-p0` | 1/1 | L + D + N；single 本地地址路径 |
-| `bosc-iommu-linux-multi` | extended | BOSC multi，`die-mask=0xf,core-mask=0x1`；`pcie-d0-p0`、`pcie-d1-p0`、`pcie-d2-p0`、`pcie-d3-p0` | 4/4 | L + D + N；共享 IOMMU 的 segment 0/3/6/9 |
+| `bosc-iommu-linux-multi` | extended | BOSC multi，`die-mask=0xf,core-mask=0x1`；`pcie-d0-p0`、`pcie-d1-p0`、`pcie-d2-p0`、`pcie-d3-p0` | 4/4 | L + D + N；独立 IOMMU 的 segment 0/3/6/9 |
 | `bosc-iommu-linux-all-roots` | extended | BOSC multi，同上 CPU 配置；每个 die 的 p0/p1/p2 | 12/4 | L + D + N；segment 0..11 全部 probe、逐盘 direct I/O 和 IRQ 验证 |
 
 12 root 用例按 d0p0、d0p1、d0p2、d1p0……d3p2 顺序分配 `BOSC-CI-0..11`
@@ -163,7 +164,7 @@ Case ID：`qtest-pcie`；层级 mr；整个可执行文件限时 120 秒。
 | `/kmh-bosc/pcie/imsi-iommu` | 同四 root，IOMMU Off/Bare 与 iMSI receiver 顺序 | Off 阻止普通 DMA 而 iMSI 仍到达；Bare 放行数据；移动/关闭 receiver 后原地址恢复普通 DMA；MSI 地址读仍是 DMA |
 | `/kmh-bosc/pcie/generic-dwc` | KMH 的通用 DWC 行为 | 保持默认 32 个 iMSI vectors 属性；MSI 直接写 system memory，不被 BOSC receiver 行为接管；高地址 DMA 不别名到低 DDR |
 | `/kmh-bosc/pcie/kmh-iommu-root-contexts` | KMH 双独立 IOMMU 的 context/cache 隔离 | 两 root 使用相同 RID=`0x100`、PSCID、IOVA=`0x1000`，分别映射不同物理页；每次 DMA 只更新对应页面 |
-| `/kmh-bosc/pcie/iommu-root-contexts` | BOSC 共享 IOMMU 的跨 root context 隔离 | 四 p0 root 的 DID 为 `0x100/0x30100/0x60100/0x90100`；同 IOVA、独立页表/PSCID 映射不同物理页，DMA 不串 root |
+| `/kmh-bosc/pcie/iommu-root-contexts` | BOSC 四个独立 IOMMU 的跨 root context 隔离 | 四 p0 root 的 DID 均为 `0x100`；同 RID/PSCID/IOVA、独立页表映射不同物理页，DMA 不串 root |
 | `/kmh-bosc/pcie/iommu-msi-mode` | BOSC G-stage Bare/Sv39x4 与 MSIPTP Off/Flat | Bare+Flat 阻止 DMA、fault cause=259；其余组合放行，Off 保留非零 PPN |
 | `/kmh-bosc/pcie/kmh-iommu-msi-mode` | KMH 同上合法性矩阵 | 同上，不把 MSIPTP 非零 PPN 当作启用 MSI 翻译 |
 
@@ -236,8 +237,8 @@ runner 在成功输出后等待串口安静，再检查完整尾部并关闭 QEM
 
 1. DT 中所有 root 都有完整 `iommu-map`，从 RID 0 覆盖 `0x10000` 个 ID；
    `0xffff` 是错误长度。KMH 检查 2 个 root，BOSC single 检查 3 个，multi 检查 12 个。
-2. KMH 两个 root 的 map 指向两个独立 IOMMU，DID 保留 RID；BOSC 共享一个 IOMMU，
-   map 基址为 `segment << 16`，segment=`die * 3 + port`。Linux PCI domain 不属于 RID。
+2. KMH 两个 root 的 map 指向两个独立 IOMMU，DID 保留 RID；BOSC 每个
+   root 独立连接一个 IOMMU，map 基址均为 0，segment=`die * 3 + port`。Linux PCI domain 不属于 RID。
 3. Linux 输出 `iommu: Default domain type: Translated`；每个 endpoint 实际关联
    的 `riscv,iommu ...: using MSIs` 都存在。
 4. controller、DEVICE、DMA 结果数均等于 `disks`；serial 恰为 `BOSC-CI-0..N-1`，
@@ -294,6 +295,8 @@ qtest 子结果、MCU 计数断言、IOMMU endpoint serial 集合。构建来源
 | `fw_jump` | `st-release-v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin` | 274704 | 无内嵌 DTB 的 OpenSBI；DDR/IOMMU 启动及 MCU DT 导出 |
 | `kernel` | `st-release-v0.9.99/minimal/Image` | 8321912 | 普通 Linux；MCU QSPI 内嵌同一 Image |
 | `iommu_kernel` | `riscv-linux-devel-clean/d3e51a02cc62/Image` | 29611520 | 含原生 IOMMU MSI 修复、DWC/NVMe 和 compose RAM shell 的内核 |
+| `did_mapper_kernel` | `qemu-ci/linux/did-mapper/20261012/1411c50e0909/Image` | 29603328 | mapper helper/debugfs 内建、NVMe 模块化的专用内核 |
+| `did_mapper_modules` | `qemu-ci/linux/did-mapper/20261012/1411c50e0909/mapper-modules.ext4` | 16777216 | 与专用内核同构建的 NVMe 模块、加载顺序及 hash |
 | `rootfs` | `st-release-v0.9.99/openEuler-minimal-rootfs/openEuler-minimal-rootfs-24.03-SP3-RVA23.ext4` | 536870912 | pmem0 根文件系统输入 |
 | `mcu` | `qemu-ci/mcu/20260927/kmh-bosc-mcu.bin` | 1058 | MCU boot ROM 固定 BIN |
 | `qspi` | `qemu-ci/mcu/20260927/fw_payload.bin` | 12516216 | QSPI payload，含 fw_jump 和 minimal Image |
@@ -304,6 +307,8 @@ qtest 子结果、MCU 计数断言、IOMMU endpoint serial 集合。构建来源
 | `fw_jump` | `d8da253945e544c284b0757a9ddc9cb799c13912e34616a33279bc288dbf4bd2` |
 | `kernel` | `55afc258b442384edd1a0a789eda747b715cda4f9401a170b209ff334e4985e9` |
 | `iommu_kernel` | `1c75064fa376a4286bad372ce2f4a67154f23aec0c8f8010b20f8867d821798a` |
+| `did_mapper_kernel` | `c037c191a40d6b5def44c07e1e40b4516343481b039e0f276c44e44776ee3983` |
+| `did_mapper_modules` | `9e7bbb78194569e5f38097817a19d1a7beb3788be8b668928a2f13cdb9d5447c` |
 | `rootfs` | `4b0ddf5b06eb26369f5c2df1f87c63d94fb47d249e9c99d7d0291cf80a720ee5` |
 | `mcu` | `d50f8728880707d3f529bd0bcd032701113b5b560fb89237faf854b36068563c` |
 | `qspi` | `cee4dcbfbd773a4456ff01cf650181c72ae6d16654b9846ce4bb6fc2bef413b9` |
@@ -311,6 +316,9 @@ qtest 子结果、MCU 计数断言、IOMMU endpoint serial 集合。构建来源
 
 kernel release 分别为 `20260824_6.18_g3520522921abc-minimal` 和
 `6.18.34`（Linux 源码 `d3e51a02cc629221404c9a871da9aec8ec42767d`）。
+Mapper 专用 release 为 `6.18.34-bosc-did-mapper`（Linux 源码 `1411c50e0909`）；
+两个 mapper 资产已于 2026-10-12 发布并校验远端 size/SHA256 及实际下载，
+发布和本地验收证据见 [ASSETS.md](ASSETS.md)。
 QSPI 中 fw_jump 位于偏移 0，kernel 位于偏移 `0x400000`；启动时搬运到
 `0x80000000`、`0x80400000`。资产准备还校验 payload 内这两个组件的 hash。
 
@@ -727,3 +735,13 @@ die-routing 中运行指令序列的部分还启用 TCG。正式 runner 使用�
 
 本文覆盖清单与命令，不代表当前提交已经重新运行全量验收。实际结果以某次 run 的
 selection、构建来源、完整日志和最终报告共同确认；本地 PASS 不等于线上 GitLab PASS。
+
+## 9. DID mapper 的 10 个 qtest 子项与 9 个 Linux 配置
+
+完整专项清单及断言见 [DID-MAPPER.md](DID-MAPPER.md)。新增 MR case 是
+`qtest-did-mapper` 和 `bosc-did-mapper-linux-single`；其余八种 Linux 拓扑/负向
+配置为 extended。每种 Linux 正向配置都包含六轮逐盘 direct DMA/IRQ/hash 验证，
+negative case 额外要求明确 cause/DID/实例、未受影响盘持续 I/O 和目标恢复。
+专用内核首次加载 NVMe 模块前设置 mapper；不配置 mapper 的既有 IOMMU case
+继续验证原 RID。输入资产和发布状态见 ASSETS.md，日志新增 mapper-evidence.json
+及逐阶段 shell 脚本。

@@ -124,6 +124,12 @@ bosc:iommu:
   variables:
     BOSC_CI_GROUP: iommu
 
+bosc:did-mapper:
+  extends: .bosc:test
+  timeout: 90m
+  variables:
+    BOSC_CI_GROUP: did-mapper
+
 bosc:libqemu:
   extends: .bosc:test
   dependencies: ["bosc:check", "bosc:build-libqemu"]
@@ -134,7 +140,7 @@ bosc:report:
   stage: report
   timeout: 10m
   when: always
-  dependencies: ["bosc:check", "bosc:build", "bosc:build-libqemu", "bosc:qtest", "bosc:kmh-linux", "bosc:ddr", "bosc:mcu", "bosc:itgen", "bosc:iommu", "bosc:libqemu"]
+  dependencies: ["bosc:check", "bosc:build", "bosc:build-libqemu", "bosc:qtest", "bosc:kmh-linux", "bosc:ddr", "bosc:mcu", "bosc:itgen", "bosc:iommu", "bosc:did-mapper", "bosc:libqemu"]
   script:
     - python3 tests/ci/bosc/ci.py report --work-dir "$BOSC_CI_WORK"
   artifacts:

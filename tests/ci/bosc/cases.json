@@ -92,6 +92,270 @@
       "tier": "mr"
     },
     {
+      "id": "bosc-did-mapper-linux-single",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "single",
+      "die_mask": "0x1",
+      "core_mask": "0x1",
+      "cpus": 1,
+      "topology": "single",
+      "disks": 1,
+      "nvme_buses": [
+        "pcie-d0-p0"
+      ],
+      "timeout": 600,
+      "mapper_test": "positive",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "mr"
+    },
+    {
+      "id": "bosc-did-mapper-linux-single-all-ports",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "single",
+      "die_mask": "0x1",
+      "core_mask": "0x1",
+      "cpus": 1,
+      "topology": "single-all-ports",
+      "disks": 3,
+      "nvme_buses": [
+        "pcie-d0-p0",
+        "pcie-d0-p1",
+        "pcie-d0-p2"
+      ],
+      "timeout": 600,
+      "mapper_test": "positive",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
+      "id": "bosc-did-mapper-linux-multi",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "multi",
+      "die_mask": "0xf",
+      "core_mask": "0x1",
+      "cpus": 4,
+      "topology": "multi",
+      "disks": 4,
+      "nvme_buses": [
+        "pcie-d0-p0",
+        "pcie-d1-p0",
+        "pcie-d2-p0",
+        "pcie-d3-p0"
+      ],
+      "timeout": 600,
+      "mapper_test": "positive",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
+      "id": "bosc-did-mapper-linux-all-roots",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "multi",
+      "die_mask": "0xf",
+      "core_mask": "0x1",
+      "cpus": 4,
+      "topology": "all-roots",
+      "disks": 12,
+      "nvme_buses": [
+        "pcie-d0-p0",
+        "pcie-d0-p1",
+        "pcie-d0-p2",
+        "pcie-d1-p0",
+        "pcie-d1-p1",
+        "pcie-d1-p2",
+        "pcie-d2-p0",
+        "pcie-d2-p1",
+        "pcie-d2-p2",
+        "pcie-d3-p0",
+        "pcie-d3-p1",
+        "pcie-d3-p2"
+      ],
+      "timeout": 600,
+      "mapper_test": "positive",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
+      "id": "bosc-did-mapper-linux-sparse",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "multi",
+      "die_mask": "0x5",
+      "core_mask": "0x1",
+      "cpus": 2,
+      "topology": "sparse",
+      "disks": 2,
+      "nvme_buses": [
+        "pcie-d0-p2",
+        "pcie-d2-p2"
+      ],
+      "timeout": 600,
+      "mapper_test": "positive",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
+      "id": "bosc-did-mapper-linux-multi-die0",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "multi",
+      "die_mask": "0x1",
+      "core_mask": "0x1",
+      "cpus": 1,
+      "topology": "multi-die0",
+      "disks": 3,
+      "nvme_buses": [
+        "pcie-d0-p0",
+        "pcie-d0-p1",
+        "pcie-d0-p2"
+      ],
+      "timeout": 600,
+      "mapper_test": "positive",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
+      "id": "bosc-did-mapper-linux-default",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "default",
+      "die_mask": "0x1",
+      "core_mask": "0x1",
+      "cpus": 1,
+      "topology": "default",
+      "disks": 1,
+      "nvme_buses": [
+        "pcie-d0-p0"
+      ],
+      "timeout": 600,
+      "mapper_test": "positive",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
+      "id": "bosc-did-mapper-linux-fault-single",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "single",
+      "die_mask": "0x1",
+      "core_mask": "0x1",
+      "cpus": 1,
+      "topology": "fault-single",
+      "disks": 1,
+      "nvme_buses": [
+        "pcie-d0-p0"
+      ],
+      "timeout": 900,
+      "mapper_test": "fault",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
+      "id": "bosc-did-mapper-linux-fault-isolation",
+      "group": "did-mapper",
+      "owner": "bosc",
+      "kind": "iommu-linux",
+      "machine": "kmh-bosc-soc",
+      "mode": "multi",
+      "die_mask": "0xf",
+      "core_mask": "0x1",
+      "cpus": 4,
+      "topology": "fault-isolation",
+      "disks": 12,
+      "nvme_buses": [
+        "pcie-d0-p0",
+        "pcie-d0-p1",
+        "pcie-d0-p2",
+        "pcie-d1-p0",
+        "pcie-d1-p1",
+        "pcie-d1-p2",
+        "pcie-d2-p0",
+        "pcie-d2-p1",
+        "pcie-d2-p2",
+        "pcie-d3-p0",
+        "pcie-d3-p1",
+        "pcie-d3-p2"
+      ],
+      "timeout": 900,
+      "mapper_test": "fault",
+      "kernel_asset": "did_mapper_kernel",
+      "assets": [
+        "fw_jump",
+        "did_mapper_kernel",
+        "did_mapper_modules",
+        "rootfs"
+      ],
+      "tier": "extended"
+    },
+    {
       "id": "kmh-linux-1",
       "group": "kmh-linux",
       "owner": "kmh",

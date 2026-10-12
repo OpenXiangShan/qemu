@@ -66,6 +66,38 @@ def validate_cases(cases, assets):
         if case["kind"] == "iommu-linux":
             buses = case.get("nvme_buses", [])
             topology = case.get("topology")
+            if case.get("mapper_test"):
+                profiles = {
+                    "single": ("single", "0x1", [0], "positive", "mr"),
+                    "single-all-ports": ("single", "0x1", list(range(3)), "positive", "extended"),
+                    "multi": ("multi", "0xf", [0, 3, 6, 9], "positive", "extended"),
+                    "all-roots": ("multi", "0xf", list(range(12)), "positive", "extended"),
+                    "sparse": ("multi", "0x5", [2, 8], "positive", "extended"),
+                    "multi-die0": ("multi", "0x1", list(range(3)), "positive", "extended"),
+                    "default": ("default", "0x1", [0], "positive", "extended"),
+                    "fault-single": ("single", "0x1", [0], "fault", "extended"),
+                    "fault-isolation": ("multi", "0xf", list(range(12)), "fault", "extended"),
+                }
+                profile = profiles.get(topology)
+                if not profile:
+                    raise ValueError(f"unknown mapper topology: {case['id']}")
+                mode, mask, segments, test, tier = profile
+                kernel, modules = assets["did_mapper_kernel"], assets["did_mapper_modules"]
+                if any(kernel.get(f) != modules.get(f) or not kernel.get(f)
+                       for f in ("source_commit", "kernel_release", "config_sha256")):
+                    raise ValueError("mapper kernel/modules provenance mismatch")
+                if (case["owner"] != "bosc" or case["group"] != "did-mapper"
+                        or case.get("machine") != "kmh-bosc-soc"
+                        or case.get("mode") != mode or case.get("die_mask") != mask
+                        or case.get("core_mask") != "0x1"
+                        or case.get("cpus") != (1 if mode == "single" else int(mask, 16).bit_count())
+                        or case["tier"] != tier or case["mapper_test"] != test
+                        or case.get("kernel_asset") != "did_mapper_kernel"
+                        or set(case["assets"]) != {"fw_jump", "did_mapper_kernel", "did_mapper_modules", "rootfs"}
+                        or case.get("disks") != len(segments)
+                        or buses != [f"pcie-d{s // 3}-p{s % 3}" for s in segments]):
+                    raise ValueError(f"invalid DID mapper topology/assets: {case['id']}")
+                continue
             expected = {
                 ("kmh", "single-root"): ["dw-pcie"],
                 ("kmh", "dual-root"): ["dw-pcie", "dw-pcie1"],
@@ -108,6 +140,8 @@ def main():
     validate_cases(catalog(), assets)
     if "bosc:iommu" not in config["bosc:report"]["dependencies"]:
         raise ValueError("final report must consume IOMMU results")
+    if "bosc:did-mapper" not in config["bosc:report"]["dependencies"]:
+        raise ValueError("final report must consume DID mapper results")
     if not {"bosc:build-libqemu", "bosc:libqemu"}.issubset(config["bosc:report"]["dependencies"]):
         raise ValueError("final report must consume libqemu build and results")
     if config["bosc:libqemu"]["dependencies"] != ["bosc:check", "bosc:build-libqemu"]:

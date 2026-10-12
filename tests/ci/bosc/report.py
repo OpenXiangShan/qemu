@@ -34,6 +34,9 @@ def aggregate(work, group=None):
                 if case["kind"] == "mcu" and ids != ["MCU-DIE-NUM-RESET"]:
                     raise ValueError("MCU reset-count assertion missing")
                 if case["kind"] == "iommu-linux":
+                    if case.get("mapper_test"):
+                        from did_mapper import evidence_assertions
+                        evidence_assertions(case, result.get("evidence", {}))
                     endpoints = result.get("evidence", {}).get("iommu", [])
                     if (len(endpoints) != case["disks"] or
                             {e.get("serial") for e in endpoints} !=

@@ -134,6 +134,12 @@ def pcie_segment(bus):
     return int(match[1]) * 3 + int(match[2])
 
 
+def bosc_mapper_address(segment, mode):
+    die, port = divmod(segment, 3)
+    local = 0x4f80201000 + port * 0x10000
+    return local if mode == "single" else ((die + 1) << 44) | local
+
+
 def config_hash():
     digest = hashlib.sha256()
     for path in sorted([*HERE.glob("*.json"), *HERE.glob("*.py")]):

@@ -5,7 +5,7 @@ RISC-V 交叉编译器或 st-downloader。只有当前 QEMU/qtest 在本轮编�
 ITGen、OpenSBI、Linux 和 rootfs 都是 `images.lock.json` 锁定的输入。
 
 测试清单和执行器是本地与 GitLab 的同一份代码。当前范围不是两个 machine 的全部
-功能覆盖，详见 `cases.json` 的 deferred 字段。JF 制品已发布并完成真实下载验证；
+功能覆盖，详见 `cases.json` 的 deferred 字段。既有 JF 制品已发布并完成真实下载验证；新增 mapper 资产的发布状态见 ASSETS.md；
 本机用户模式 Runner 已注册；目标 GitLab CI Lint 和线上调度仍需部署验收。
 Docker 化留到后续单独评估。
 
@@ -42,6 +42,37 @@ QEMU configure 自己在本轮 build 目录创建 `pyvenv`，使用仓库提供�
 
 ## 一键本地全量
 
+也可以直接使用与 Linux 仓库 `run-local.sh` 类似的入口。它默认创建新的工作目录，
+执行当前 checkout 的完整 QEMU CI（包含 extended），不会删除旧结果：
+
+```sh
+tests/ci/bosc/run-local.sh
+```
+
+默认使用 `/nfs/home/guoyaxing/ci-bosc/cache/assets` 的 SHA256 缓存；缓存没有锁定制品时，
+需要预先导出只读 `BOSC_CI_JF_TOKEN`，脚本会使用内网 JF origin 下载并逐项校验。也可以
+显式提供离线目录和依赖目录：
+
+```sh
+tests/ci/bosc/run-local.sh \
+  --assets-dir /srv/bosc-ci/assets \
+  --dependencies-dir /srv/bosc-ci/dependencies \
+  --jobs 8
+```
+
+只跑指定用例时重复 `--case`，例如：
+
+```sh
+tests/ci/bosc/run-local.sh \
+  --case kmh-iommu-linux-dual-root \
+  --case bosc-iommu-linux-all-roots
+```
+
+`BOSC_CI_WORK`、`BOSC_CI_JOBS`、`BOSC_CI_CACHE_DIR`、`BOSC_CI_CASES` 等环境变量可替代
+对应选项。脚本不会写入 JF 凭据；每次运行使用新的 work directory，最终报告位于该目录
+的 `reports/all/summary.json`。需要按提交范围做本地影响选测时，设置 `BOSC_CI_FULL=0`
+并提供 `--base <ref> --head <ref>`。
+
 在 QEMU 仓库根目录执行，资产目录按锁文件的 `path` 布局：
 
 ```sh
@@ -53,7 +84,7 @@ python3 tests/ci/bosc/ci.py all --assets-dir /srv/bosc-ci/assets --jobs 8
 新构建、guest 执行和汇总。不会覆盖已有选测或用例日志；重跑请使用新目录。
 
 已有文件不必为了布局再复制一次，可用 `--asset NAME=PATH` 提供本地映射，仍严格
-匹配锁定 hash。ID 为 `fw_jump`、`kernel`、`iommu_kernel`、`rootfs`、`mcu`、`qspi`、`itgen`：
+匹配锁定 hash。ID 为 `fw_jump`、`kernel`、`iommu_kernel`、`did_mapper_kernel`、`did_mapper_modules`、`rootfs`、`mcu`、`qspi`、`itgen`：
 
 ```sh
 python3 tests/ci/bosc/ci.py all --work-dir build/ci/local-01 \
@@ -132,9 +163,10 @@ release 升级通过独立制品验证和锁文件 MR，普通 MR 不使用 late
 
 ## 首批覆盖和结果
 
-共 34 个执行单元（含 extended）：原有 9 个 Linux 配置、5 个原生 IOMMU Linux
-配置、1 个 ITGen、3 个 qtest 可执行文件，以及 16 个 libqemu 用例；qtest 共 18 个
-子测试。MR 最多选中 31 个执行单元；四 die 的两种 IOMMU Linux 和 compose 双盘配置属于 extended。
+共 44 个执行单元（含 extended）：原有 9 个 Linux 配置、5 个原生 IOMMU Linux
+配置、9 个 DID mapper Linux 配置、1 个 ITGen、4 个 qtest 可执行文件，以及
+16 个 libqemu 用例；qtest 共 28 个子测试。MR 最多选中 33 个执行单元，
+其余 11 个配置属于 extended；具体层级以 cases.json 为准。
 JSON/JUnit 另外保留 qtest 容器结果与 3 个 MCU 已知缺陷断言，不能将行数等同于用例数。
 
 Linux 检查实际在线 CPU 集合、固定 kernel release、机器 model、pmem0 挂载/overlay
@@ -200,8 +232,8 @@ I/O error、panic 都失败。四 die 不使用 XFAIL。
 
 KMH 两个 root 各连接一个 system IOMMU，DID 均为原始 RID（endpoint `01:00.0`
 为 `0x100`）；两个 DT `iommu-map` 均从 0 开始，但指向不同 phandle。
-BOSC 保持一个共享 system IOMMU，segment 为 `die * 3 + port`，
-DID 为 `(segment << 16) | RID`。12 root 用例覆盖 segment 0 至 11。
+BOSC 每个 die 的三个 root 各连接独立 system IOMMU 和 mapper；segment 为
+`die * 3 + port`，DID 保留 RID `0x100`。12 root 用例覆盖 segment 0 至 11。
 
 每次在 `work/scratch/<case>/` 创建私有 64 MiB sparse raw 盘，避免写 JF/rootfs
 源文件。worker finally 和父进程超时/取消清理会删除测试盘；scratch 不在 artifacts
@@ -297,3 +329,13 @@ python3 tests/ci/bosc/lint_ci.py
 自测包括选测、rename/delete、未知路径、缺失/损坏资产、假 PASS、缺核、panic、
 精确 XFAIL/XPASS、缺失/陈旧结果、timeout/cancel 清理和不影响其他进程；还覆盖
 实时可见性、多 UART、UTF-8/控制字符、长行、共享日志预算、失败尾部和折叠段闭合。
+
+## DID mapper 专项
+
+新增 `qtest-did-mapper`（10 子项）和 `bosc:did-mapper` Linux 组（9 个配置）。
+MR 跑 single 首次绑定前配置；extended 覆盖三端口、四 die、12 root、稀疏 die、
+multi 仅 die0、省略 mode，以及错误 DID/fault/observer/recovery。
+覆盖表、验收条件和运行命令见 [DID-MAPPER.md](DID-MAPPER.md)。
+新增 Image 和匹配 NVMe 模块 payload 已发布到锁定的 JF 版本目录，远端
+size/hash 与实际下载验证见 [ASSETS.md](ASSETS.md)。本地可用精确 hash 的
+`--asset` 覆盖。旧 mapper-disabled IOMMU case 保留。
