@@ -57,6 +57,13 @@ static const uint64_t traffic_bases[] = {
     0x0000104f80221000ULL,
 };
 
+/* One IOMMU per traffic window (die0 encoded addresses in multi mode). */
+static const uint64_t iommu_bases[] = {
+    0x0000104f80200000ULL,
+    0x0000104f80210000ULL,
+    0x0000104f80220000ULL,
+};
+
 static QTestState *bosc_axi4_traffic_start_qtest(void)
 {
     return qtest_init("-M kmh-bosc-soc,boot-source=ddr,die-mask=0x1,"
@@ -366,8 +373,10 @@ static void test_bare_traffic_windows(void)
     QTestState *qts = bosc_axi4_traffic_start_qtest();
     int i;
 
-    qtest_writeq(qts, KMH_BOSC_IOMMU_BASE + RISCV_IOMMU_REG_DDTP,
-                 RISCV_IOMMU_DDTP_MODE_BARE);
+    for (i = 0; i < G_N_ELEMENTS(iommu_bases); i++) {
+        qtest_writeq(qts, iommu_bases[i] + RISCV_IOMMU_REG_DDTP,
+                     RISCV_IOMMU_DDTP_MODE_BARE);
+    }
 
     for (i = 0; i < G_N_ELEMENTS(traffic_bases); i++) {
         uint64_t base = traffic_bases[i];
@@ -437,11 +446,10 @@ static void test_user_requester_selection(void)
     traffic_pattern_init(expected);
     traffic_prepare_iommu_tables(qts, iova, pid_iova);
 
+    /* Mapper disabled: AXI user DID wins. */
     traffic_init_target(qts, pa_mapper, sizeof(expected));
     traffic_init_target(qts, pa_user, sizeof(expected));
-
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_MUX,
-                 BOSC_AXI4_TRAFFIC_MUX_DID_PID_EN |
                  BOSC_AXI4_TRAFFIC_MUX_TRAFFIC);
     traffic_write64_regs(qts, base, BOSC_AXI4_TRAFFIC_START_BASE + 0 * 8,
                          iova);
@@ -449,7 +457,6 @@ static void test_user_requester_selection(void)
                          iova + BOSC_AXI4_TRAFFIC_BEAT_BYTES);
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_DID_BASE + 0 * 4, 4);
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_PID_BASE + 0 * 4, 0);
-
     traffic_program_channel(qts, base, BOSC_AXI4_TRAFFIC_AW_CFG_BASE,
                             iova, 1, 1, 5, 0, false);
     qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_START,
@@ -462,9 +469,28 @@ static void test_user_requester_selection(void)
     g_assert_true(traffic_target_matches(qts, pa_user, expected,
                                          sizeof(expected)));
 
+    /* Mapper enabled with conflicting slot: mapper DID wins. */
+    traffic_init_target(qts, pa_mapper, sizeof(expected));
+    traffic_init_target(qts, pa_user, sizeof(expected));
+    qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_MUX,
+                 BOSC_AXI4_TRAFFIC_MUX_DID_PID_EN |
+                 BOSC_AXI4_TRAFFIC_MUX_TRAFFIC);
+    traffic_program_channel(qts, base, BOSC_AXI4_TRAFFIC_AW_CFG_BASE,
+                            iova, 1, 1, 5, 0, false);
+    qtest_writel(qts, base + BOSC_AXI4_TRAFFIC_START,
+                 BOSC_AXI4_TRAFFIC_START_AW);
+    status = qtest_readl(qts, base + BOSC_AXI4_TRAFFIC_STATUS);
+    g_assert_cmphex(status & BOSC_AXI4_TRAFFIC_STATUS_AW_DONE,
+                    ==, BOSC_AXI4_TRAFFIC_STATUS_AW_DONE);
+    g_assert_true(traffic_target_matches(qts, pa_mapper, expected,
+                                         sizeof(expected)));
+    g_assert_false(traffic_target_matches(qts, pa_user, expected,
+                                          sizeof(expected)));
+
+    /* Mapper PID override on read path. */
     traffic_init_target(qts, pa_pid_a, sizeof(expected));
     traffic_init_target(qts, pa_pid_b, sizeof(expected));
-    qtest_memwrite(qts, pa_pid_b, expected, sizeof(expected));
+    qtest_memwrite(qts, pa_pid_a, expected, sizeof(expected));
 
     traffic_write64_regs(qts, base, BOSC_AXI4_TRAFFIC_START_BASE + 0 * 8,
                          pid_iova);
@@ -483,8 +509,6 @@ static void test_user_requester_selection(void)
                     ==, BOSC_AXI4_TRAFFIC_STATUS_AR_DONE);
     g_assert_cmpuint((status >> 8) & 0xfffff, ==, 1);
     g_assert_cmpuint(status & 0xff, ==, 0);
-    g_assert_false(traffic_target_matches(qts, pa_pid_a, expected,
-                                          sizeof(expected)));
 
     qtest_quit(qts);
 }

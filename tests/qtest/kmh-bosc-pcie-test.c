@@ -156,7 +156,7 @@ static void test_pcie(const void *opaque)
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
         reg64(q, dbi + 0x820, DOORBELL);
 
-        if (iommu && die == 0) {
+        if (iommu) {
             /* Off blocks DMA while iMSI-RX still works upstream. */
             qtest_writel(q, DOORBELL + 0x200, 0x87654321);
             edu_dma(q, die, 0x40000, DOORBELL + 0x200, 4, true);
@@ -166,7 +166,7 @@ static void test_pcie(const void *opaque)
                             1U << 31);
             qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
             /* No valid context was cached in Off; enable Bare for DMA. */
-            qtest_writeq(q, ga(0, 0x4f80200010ULL), 1);
+            qtest_writeq(q, ga(die, 0x4f80200010ULL), 1);
         }
 
         /* Reads of the MSI address remain DMA, even while enabled. */
@@ -328,32 +328,30 @@ static void test_iommu_root_contexts(void)
         "-device edu,bus=pcie-d1-p0,dma_mask=0xffffffffffffffff "
         "-device edu,bus=pcie-d2-p0,dma_mask=0xffffffffffffffff "
         "-device edu,bus=pcie-d3-p0,dma_mask=0xffffffffffffffff");
-    const uint64_t ddt = 0x82000000;
     const uint64_t iova = 0x1000;
+    const uint32_t did = 0x100; /* per-die IOMMU uses plain RID */
 
-    /* Fresh zeroed RAM, extended (64-byte) device contexts, three-level DDT. */
     for (unsigned die = 0; die < 4; die++) {
-        uint32_t did = ((die * 3) << 16) | 0x100;
-        uint64_t dir = ddt + 0x1000 + die * 0x10000;
+        uint64_t ddt = 0x82000000 + die * 0x10000;
+        uint64_t dir = ddt + 0x1000;
         uint64_t leaf = dir + 0x1000;
         uint64_t pt = dir + 0x2000;
         uint64_t pa = 0x83000000 + die * 0x1000;
+        uint64_t iommu = ga(die, 0x4f80200000ULL);
 
         setup_edu(q, die);
         qtest_writeq(q, ddt + (did >> 15) * 8, (dir >> 2) | 1);
-        qtest_writeq(q, dir + ((did >> 6) & 0x1ff) * 8,
-                     (leaf >> 2) | 1);
+        qtest_writeq(q, dir + ((did >> 6) & 0x1ff) * 8, (leaf >> 2) | 1);
         qtest_writeq(q, leaf, RISCV_IOMMU_DC_TC_V);
-        /* A different PSCID also separates the final translation cache. */
-        qtest_writeq(q, leaf + 16, (uint64_t)(die + 1) << 12);
+        qtest_writeq(q, leaf + 16, 1ULL << 12);
         qtest_writeq(q, leaf + 24, (8ULL << 60) | (pt >> 12));
         qtest_writeq(q, pt, ((pt + 0x1000) >> 2) | 1);
         qtest_writeq(q, pt + 0x1000, ((pt + 0x2000) >> 2) | 1);
         qtest_writeq(q, pt + 0x2000 + 8, (pa >> 2) | 0xc7);
         qtest_writel(q, pa, 0xcafe0000 + die);
+        qtest_writeq(q, iommu + RISCV_IOMMU_REG_DDTP,
+                     (ddt >> 2) | RISCV_IOMMU_DDTP_MODE_3LVL);
     }
-    qtest_writeq(q, ga(0, 0x4f80200000ULL) + RISCV_IOMMU_REG_DDTP,
-                 (ddt >> 2) | RISCV_IOMMU_DDTP_MODE_3LVL);
     for (unsigned die = 0; die < 4; die++) {
         copy_dma(q, die, iova, iova + 4);
         for (unsigned d = 0; d < 4; d++) {

@@ -285,7 +285,8 @@ qtests_riscv64 = ['riscv-csr-test'] + \
   (config_all_devices.has_key('CONFIG_KMH_BOSC_SOC') ? \
    ['kmh-bosc-die-test'] : []) + \
   (config_all_devices.has_key('CONFIG_KMH_BOSC_SOC') and \
-   config_all_devices.has_key('CONFIG_EDU') ? ['kmh-bosc-pcie-test'] : []) + \
+   config_all_devices.has_key('CONFIG_EDU') ? \
+   ['kmh-bosc-pcie-test', 'bosc-did-mapper-test'] : []) + \
   (config_all_devices.has_key('CONFIG_QEMU_TO_IOSYSTEM') ? \
    ['qemu-to-iosystem-test'] : []) + \
   (config_all_devices.has_key('CONFIG_BOSC_AXI4_TRAFFIC') ? \

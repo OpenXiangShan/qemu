@@ -70,6 +70,28 @@
       ]
     },
     {
+      "id": "qtest-did-mapper",
+      "group": "qtest",
+      "owner": "bosc",
+      "kind": "qtest",
+      "binary": "bosc-did-mapper-test",
+      "timeout": 180,
+      "assets": [],
+      "tests": [
+        "/bosc-did-mapper/reset-single",
+        "/bosc-did-mapper/reset-multi",
+        "/bosc-did-mapper/ranges",
+        "/bosc-did-mapper/cache-update",
+        "/bosc-did-mapper/fault-recovery",
+        "/bosc-did-mapper/all-roots",
+        "/bosc-did-mapper/boundary",
+        "/bosc-did-mapper/pid-pv",
+        "/bosc-did-mapper/imsi",
+        "/bosc-did-mapper/cpu-local"
+      ],
+      "tier": "mr"
+    },
+    {
       "id": "kmh-linux-1",
       "group": "kmh-linux",
       "owner": "kmh",

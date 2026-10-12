@@ -242,6 +242,31 @@ static void test_ddr_layout(const void *opaque)
         "-M kmh-bosc-soc,die-mask=0x%x,core-mask=0x1,generated-dtb=on "
         "-smp 64,maxcpus=68 -m %uG", layout->die_mask, layout->ram_gib);
 
+    struct fdt_header header;
+    uint64_t dtb_addr = base + size - 2 * MiB;
+    qtest_memread(qts, dtb_addr, &header, sizeof(header));
+    g_assert_cmpint(fdt_check_header(&header), ==, 0);
+    g_autofree uint8_t *dtb = g_malloc(fdt_totalsize(&header));
+    qtest_memread(qts, dtb_addr, dtb, fdt_totalsize(&header));
+    const char *nodes[] = { "/soc/mswi@19000000", "/soc/mtimer@19004000" };
+    for (unsigned n = 0; n < ARRAY_SIZE(nodes); n++) {
+        int node = fdt_path_offset(dtb, nodes[n]);
+        int len;
+        const fdt32_t *parents = fdt_getprop(dtb, node,
+                                           "interrupts-extended", &len);
+        g_assert_nonnull(parents);
+        g_assert_cmpint(len, ==, 64 * 2 * sizeof(fdt32_t));
+        for (unsigned hart = 0; hart < 64; hart++) {
+            g_autofree char *path = g_strdup_printf(
+                "/cpus/cpu@%u/interrupt-controller", hart);
+            int intc = fdt_path_offset(dtb, path);
+            g_assert_cmphex(fdt32_to_cpu(parents[hart * 2]), ==,
+                            fdt_get_phandle(dtb, intc));
+            g_assert_cmpuint(fdt32_to_cpu(parents[hart * 2 + 1]), ==,
+                             n ? 7 : 3);
+        }
+    }
+
     /* Keep distinct sentinels in all slots to catch accidental RAM aliases. */
     for (unsigned die = 0; die < 4; die++) {
         uint64_t start = base + die * stride;
