@@ -250,6 +250,7 @@ typedef struct KmhBoscPcieRequester {
 
 struct KmhBoscPcieDma {
     DesignwarePCIEHost *host;
+    BoscDidMapperState *mapper;
     AddressSpace *die_as;
     AddressSpace msi_as;
     const PCIIOMMUOps *downstream_ops;
@@ -328,6 +329,7 @@ struct KmhBoscState {
     bool dw_pcie;
     bool generated_acpi;
     OnOffAuto iommu_sys;
+    bool iommu_bypass;
     OnOffAuto generated_dtb;
     bool autotest_dtb;
     uint64_t acpi_handoff_addr;
@@ -2220,6 +2222,12 @@ static IOMMUTLBEntry kmh_bosc_pcie_dma_translate(IOMMUMemoryRegion *mr,
     AddressSpace *target = r->downstream;
     hwaddr translated = addr & MAKE_64BIT_MASK(0, 44);
 
+    /* The wrapper bypasses both identity overrides and IOMMU translation. */
+    if (bosc_did_mapper_get_mux(r->port->mapper) &
+        BOSC_DID_MAPPER_MUX_BYPASS) {
+        target = r->port->die_as;
+    }
+
     if ((flag & IOMMU_WO) && msi->enabled &&
         (addr & ~mask) == (msi->base & ~mask)) {
         /* Do not map DMA across the four-byte receiver in the same page. */
@@ -2425,8 +2433,10 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
 
             object_property_set_link(OBJECT(mapper_dev), "iommu", OBJECT(iommu),
                                      &error_fatal);
+            qdev_prop_set_bit(mapper_dev, "bypass-on-reset", s->iommu_bypass);
             sysbus_realize(SYS_BUS_DEVICE(mapper_dev), &error_fatal);
             mapper = BOSC_DID_MAPPER(mapper_dev);
+            s->pcie_dma[die][idx].mapper = mapper;
             iommu->did_mapper_apply = bosc_did_mapper_apply;
             iommu->did_mapper_address_mask = bosc_did_mapper_address_mask;
             iommu->did_mapper_opaque = mapper;
@@ -2995,6 +3005,16 @@ static void kmh_bosc_set_iommu_sys(Object *obj, Visitor *v,
     visit_type_OnOffAuto(v, name, &s->iommu_sys, errp);
 }
 
+static bool kmh_bosc_get_iommu_bypass(Object *obj, Error **errp)
+{
+    return KMH_BOSC_MACHINE(obj)->iommu_bypass;
+}
+
+static void kmh_bosc_set_iommu_bypass(Object *obj, bool value, Error **errp)
+{
+    KMH_BOSC_MACHINE(obj)->iommu_bypass = value;
+}
+
 static bool kmh_bosc_get_generated_acpi(Object *obj, Error **errp)
 {
     KmhBoscState *s = KMH_BOSC_MACHINE(obj);
@@ -3098,6 +3118,7 @@ static void kmh_bosc_machine_instance_init(Object *obj)
     s->dw_pcie = false;
     s->generated_acpi = false;
     s->iommu_sys = ON_OFF_AUTO_AUTO;
+    s->iommu_bypass = true;
     s->generated_dtb = ON_OFF_AUTO_AUTO;
     s->autotest_dtb = false;
     s->acpi_handoff_addr = KMH_BOSC_ACPI_HANDOFF_ADDR_DEFAULT;
@@ -3147,6 +3168,12 @@ static void kmh_bosc_machine_instance_init(Object *obj)
                         kmh_bosc_set_iommu_sys, NULL, NULL);
     object_property_set_description(obj, "iommu-sys",
                                     "Enable IOMMU platform device");
+
+    object_property_add_bool(obj, "iommu-bypass",
+                             kmh_bosc_get_iommu_bypass,
+                             kmh_bosc_set_iommu_bypass);
+    object_property_set_description(obj, "iommu-bypass",
+                                    "Reset each IOMMU wrapper in bypass mode (default on)");
 
     object_property_add_bool(obj, "generated-acpi",
                              kmh_bosc_get_generated_acpi,

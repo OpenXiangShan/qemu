@@ -23,6 +23,7 @@ struct BoscDidMapperState {
 
     MemoryRegion iomem;
     RISCVIOMMUState *iommu;
+    bool bypass_on_reset;
 
     uint32_t mux;
     uint32_t did[BOSC_DID_MAPPER_NR_SLOTS];
@@ -213,7 +214,7 @@ static void bosc_did_mapper_reset_state(BoscDidMapperState *s)
 {
     int i;
 
-    s->mux = 0;
+    s->mux = s->bypass_on_reset ? BOSC_DID_MAPPER_MUX_BYPASS : 0;
     memset(s->did, 0, sizeof(s->did));
     memset(s->pid, 0, sizeof(s->pid));
     for (i = 0; i < BOSC_DID_MAPPER_NR_SLOTS; i++) {
@@ -238,6 +239,8 @@ static void bosc_did_mapper_realize(DeviceState *dev, Error **errp)
 }
 
 static const Property bosc_did_mapper_properties[] = {
+    DEFINE_PROP_BOOL("bypass-on-reset", BoscDidMapperState,
+                     bypass_on_reset, true),
     DEFINE_PROP_LINK("iommu", BoscDidMapperState, iommu,
                      TYPE_RISCV_IOMMU, RISCVIOMMUState *),
 };

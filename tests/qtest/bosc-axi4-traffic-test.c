@@ -29,6 +29,7 @@
 #define BOSC_AXI4_TRAFFIC_START          0x240
 #define BOSC_AXI4_TRAFFIC_STATUS         0x244
 
+#define BOSC_AXI4_TRAFFIC_MUX_BYPASS     BIT(0)
 #define BOSC_AXI4_TRAFFIC_MUX_DID_PID_EN BIT(1)
 #define BOSC_AXI4_TRAFFIC_MUX_TRAFFIC    BIT(2)
 
@@ -314,7 +315,8 @@ static void test_reset_and_readback(void)
     uint64_t base = traffic_bases[0];
     int i;
 
-    g_assert_cmphex(qtest_readl(qts, base + BOSC_AXI4_TRAFFIC_MUX), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, base + BOSC_AXI4_TRAFFIC_MUX), ==,
+                    BOSC_AXI4_TRAFFIC_MUX_BYPASS);
     g_assert_cmphex(qtest_readl(qts, base + BOSC_AXI4_TRAFFIC_STATUS), ==, 0);
 
     for (i = 0; i < BOSC_AXI4_TRAFFIC_NR_SLOTS; i++) {

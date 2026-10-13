@@ -86,7 +86,8 @@ static void test_pcie(const void *opaque)
     bool iommu = (uintptr_t)opaque;
     QTestState *q = qtest_initf(
         "-M kmh-bosc-soc,die-mask=0xf,core-mask=0x1,dw-pcie=on,"
-        "generated-dtb=on,iommu-sys=%s -smp 64,maxcpus=68 -m 256M "
+        "generated-dtb=on,iommu-sys=%s,iommu-bypass=off "
+        "-smp 64,maxcpus=68 -m 256M "
         "-device edu,bus=pcie-d0-p0,dma_mask=0xffffffffffffffff "
         "-device edu,bus=pcie-d1-p0,dma_mask=0xffffffffffffffff "
         "-device edu,bus=pcie-d2-p0,dma_mask=0xffffffffffffffff "
@@ -323,7 +324,8 @@ static void test_iommu_root_contexts(void)
 {
     QTestState *q = qtest_init(
         "-M kmh-bosc-soc,die-mask=0xf,core-mask=0x1,dw-pcie=on,"
-        "generated-dtb=on,iommu-sys=on -smp 64,maxcpus=68 -m 256M "
+        "generated-dtb=on,iommu-sys=on,iommu-bypass=off "
+        "-smp 64,maxcpus=68 -m 256M "
         "-device edu,bus=pcie-d0-p0,dma_mask=0xffffffffffffffff "
         "-device edu,bus=pcie-d1-p0,dma_mask=0xffffffffffffffff "
         "-device edu,bus=pcie-d2-p0,dma_mask=0xffffffffffffffff "
@@ -433,7 +435,8 @@ static void test_iommu_msi_mode(const void *opaque)
                 "-M %s,dw-pcie=on,generated-dtb=on,iommu-sys=on "
                 "-smp %s -m 256M -device edu,bus=%s,"
                 "dma_mask=0xffffffffffffffff",
-                bosc ? "kmh-bosc-soc,die-mask=0xf,core-mask=0x1" :
+                bosc ? "kmh-bosc-soc,die-mask=0xf,core-mask=0x1,"
+                       "iommu-bypass=off" :
                        "xiangshan-kunminghu",
                 bosc ? "64,maxcpus=68" : "1",
                 bosc ? "pcie-d0-p0" : "dw-pcie");

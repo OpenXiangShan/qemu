@@ -87,6 +87,7 @@ static void setup(QTestState *q, unsigned root)
     qtest_writel(q, ep + 0x10, 0x50000000);
     qtest_writew(q, ep + 4, 6);
     g_assert_cmphex(qtest_readl(q, bar), ==, 0x010000ed);
+    qtest_writel(q, mapper(root), 0);
 
     qtest_writeq(q, ddt, (dir >> 2) | 1);
     for (unsigned context = 0; context < 2; context++) {
@@ -241,6 +242,107 @@ static void test_all_roots(void)
     qtest_quit(q);
 }
 
+/* Same IOVA has three distinguishable destinations: direct, RID and mapper. */
+static void expect_bypass(QTestState *q, unsigned root, bool bypass)
+{
+    const uint64_t direct = 0x81000000;
+    const uint32_t value = 0xcafe0000 + root;
+
+    qtest_writel(q, direct, value);
+    qtest_writel(q, pa(root, false), value + 0x100);
+    qtest_writel(q, pa(root, true), value + 0x200);
+    qtest_writel(q, direct + 0x1000, 0);
+    qtest_writel(q, pa(root, false) + 0x1000, 0);
+    qtest_writel(q, pa(root, true) + 0x1000, 0);
+    /* High die-ID bits are truncated in both bypass and translated modes. */
+    dma(q, root, direct | (4ULL << 44), 4, false);
+    dma(q, root, (direct + 0x1000) | (2ULL << 44), 4, true);
+    g_assert_cmphex(qtest_readl(q, direct + 0x1000), ==,
+                    bypass ? value : 0);
+    g_assert_cmphex(qtest_readl(q, pa(root, true) + 0x1000), ==,
+                    bypass ? 0 : value + 0x200);
+    g_assert_cmphex(qtest_readl(q, pa(root, false) + 0x1000), ==, 0);
+    g_assert_cmpuint(qtest_readl(q, iommu(root) + RISCV_IOMMU_REG_FQT), ==, 0);
+}
+
+static void test_bypass(void)
+{
+    QTestState *q = start(true);
+    const uint64_t iova = 0x81000000;
+
+    for (unsigned root = 0; root < 12; root++) {
+        g_assert_cmphex(qtest_readl(q, mapper(root)), ==,
+                        BOSC_DID_MAPPER_MUX_BYPASS);
+        setup(q, root);
+        for (unsigned context = 0; context < 2; context++) {
+            uint64_t pt = 0x82003000 + root * 0x10000 + context * 0x3000;
+
+            qtest_writeq(q, pt + ((iova >> 30) & 0x1ff) * 8,
+                         ((pt + 0x1000) >> 2) | 1);
+            qtest_writeq(q, pt + 0x1000 + ((iova >> 21) & 0x1ff) * 8,
+                         ((pt + 0x2000) >> 2) | 1);
+            qtest_writeq(q, pt + 0x2000,
+                         (pa(root, context) >> 2) | 0xc7);
+            qtest_writeq(q, pt + 0x2000 + 8,
+                         ((pa(root, context) + 0x1000) >> 2) | 0xc7);
+        }
+        slot(q, root, 0, 0, 1ULL << 44, 0x101);
+        qtest_writel(q, mapper(root), BOSC_DID_MAPPER_MUX_DID_PID_EN);
+        expect_bypass(q, root, false);
+    }
+    for (unsigned changed = 0; changed < 12; changed++) {
+        const uint32_t enabled = BOSC_DID_MAPPER_MUX_DID_PID_EN;
+        const uint32_t bypass = enabled | BOSC_DID_MAPPER_MUX_BYPASS;
+        const uint64_t ddt = 0x82000000 + changed * 0x10000;
+
+        qtest_writel(q, mapper(changed), bypass);
+        for (unsigned root = 0; root < 12; root++) {
+            expect_bypass(q, root, root == changed);
+        }
+        /* Even a matching invalid DID cannot fault while bypass is set. */
+        slot(q, changed, 0, 0, 1ULL << 44, 0x200);
+        expect_bypass(q, changed, true);
+        qtest_writel(q, mapper(changed), enabled);
+        qtest_writel(q, iova + 0x1000, 0x12345678);
+        qtest_writel(q, pa(changed, true) + 0x1000, 0x87654321);
+        dma(q, changed, iova + 0x1000, 4, true);
+        uint64_t fault = qtest_readq(q, ddt + 0x9000);
+        g_assert_cmpuint(qtest_readl(q, iommu(changed) + RISCV_IOMMU_REG_FQT),
+                         ==, 1);
+        g_assert_cmpuint(fault & RISCV_IOMMU_FQ_HDR_CAUSE, ==,
+                         RISCV_IOMMU_FQ_CAUSE_DDT_INVALID);
+        g_assert_cmphex(fault >> 40, ==, 0x200);
+        g_assert_cmphex(qtest_readl(q, iova + 0x1000), ==, 0x12345678);
+        g_assert_cmphex(qtest_readl(q, pa(changed, true) + 0x1000), ==,
+                        0x87654321);
+        qtest_writel(q, iommu(changed) + RISCV_IOMMU_REG_FQCSR, 0);
+        qtest_writel(q, iommu(changed) + RISCV_IOMMU_REG_FQCSR,
+                     RISCV_IOMMU_FQCSR_FQEN);
+        slot(q, changed, 0, 0, 1ULL << 44, 0x101);
+        qtest_writel(q, mapper(changed), bypass);
+        /* DDTP Off blocks translation, but not the wrapper's direct path. */
+        qtest_writeq(q, iommu(changed) + RISCV_IOMMU_REG_DDTP, 0);
+        expect_bypass(q, changed, true);
+        qtest_writeq(q, iommu(changed) + RISCV_IOMMU_REG_DDTP,
+                     (ddt >> 2) | RISCV_IOMMU_DDTP_MODE_3LVL);
+        qtest_writel(q, mapper(changed), enabled);
+        expect_bypass(q, changed, false);
+    }
+    /* Bypass uses the requester die's local peripheral aliases. */
+    for (unsigned root = 0; root < 12; root++) {
+        const uint64_t local = 0x1101000;
+
+        qtest_writel(q, mapper(root), BOSC_DID_MAPPER_MUX_BYPASS);
+        qtest_writel(q, global(root, local), 0xfeed0000 + root);
+        qtest_writel(q, global(root, local + 4), 0);
+        dma(q, root, local, 4, false);
+        dma(q, root, local + 4, 4, true);
+        g_assert_cmphex(qtest_readl(q, global(root, local + 4)), ==,
+                        0xfeed0000 + root);
+    }
+    qtest_quit(q);
+}
+
 static void test_boundary(void)
 {
     QTestState *q = start(false);
@@ -330,6 +432,13 @@ static void test_imsi(void)
     g_assert_cmphex(qtest_readl(q, dbi + 0x830), ==, BIT(7));
     g_assert_cmphex(qtest_readl(q, 0x81000000), ==, 0x12345678);
     g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 0);
+    qtest_writel(q, mapper(0), BOSC_DID_MAPPER_MUX_DID_PID_EN |
+                              BOSC_DID_MAPPER_MUX_BYPASS);
+    qtest_writel(q, bar + 0x60, 1);
+    g_assert_cmphex(qtest_readl(q, dbi + 0x830), ==, BIT(7));
+    g_assert_cmphex(qtest_readl(q, 0x81000000), ==, 0x12345678);
+    g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 0);
+    qtest_writel(q, mapper(0), BOSC_DID_MAPPER_MUX_DID_PID_EN);
     /* Move the receiver: this same MSI becomes ordinary 44-bit DMA. */
     reg64(q, dbi + 0x820, 0x81000020);
     qtest_writel(q, bar + 0x60, 1);
@@ -344,17 +453,20 @@ static void test_imsi(void)
 
 static void test_reset(const void *opaque)
 {
-    bool single = GPOINTER_TO_INT(opaque);
+    bool single = GPOINTER_TO_INT(opaque) != 0;
+    bool bypass = GPOINTER_TO_INT(opaque) != 2;
     QTestState *q = qtest_initf(
         "-M kmh-bosc-soc,soc-mode=%s,core-mask=0x1,"
-        "iommu-sys=on,generated-dtb=on "
+        "iommu-sys=on,generated-dtb=on%s "
         "-smp %s -m 256M", single ? "single" : "multi",
+        bypass ? "" : ",iommu-bypass=off",
         single ? "16,maxcpus=17" : "64,maxcpus=68");
     for (unsigned pass = 0; pass < 2; pass++) {
         for (unsigned root = 0; root < (single ? 3 : 12); root++) {
             uint64_t m = single ? (mapper(root) & ((1ULL << 44) - 1)) :
                                  mapper(root);
-            g_assert_cmphex(qtest_readl(q, m), ==, 0);
+            g_assert_cmphex(qtest_readl(q, m), ==,
+                            bypass ? BOSC_DID_MAPPER_MUX_BYPASS : 0);
             for (unsigned n = 0; n < 8; n++) {
                 g_assert_cmphex(qtest_readq(q, m + 0xc0 + n * 8), ==,
                                 UINT64_MAX);
@@ -431,10 +543,13 @@ int main(int argc, char **argv)
                         test_reset);
     qtest_add_data_func("/bosc-did-mapper/reset-multi", GINT_TO_POINTER(0),
                         test_reset);
+    qtest_add_data_func("/bosc-did-mapper/reset-no-bypass", GINT_TO_POINTER(2),
+                        test_reset);
     qtest_add_func("/bosc-did-mapper/ranges", test_ranges);
     qtest_add_func("/bosc-did-mapper/cache-update", test_cache_update);
     qtest_add_func("/bosc-did-mapper/fault-recovery", test_fault_recovery);
     qtest_add_func("/bosc-did-mapper/all-roots", test_all_roots);
+    qtest_add_func("/bosc-did-mapper/bypass", test_bypass);
     qtest_add_func("/bosc-did-mapper/boundary", test_boundary);
     qtest_add_func("/bosc-did-mapper/pid-pv", test_pid_pv);
     qtest_add_func("/bosc-did-mapper/imsi", test_imsi);

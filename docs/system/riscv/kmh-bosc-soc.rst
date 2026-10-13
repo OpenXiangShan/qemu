@@ -91,8 +91,9 @@ accesses have no die requester and should use global peripheral addresses.
 DDR retains its existing global address map; the local alias rule is for
 the modeled peripheral/SRAM/ROM windows, not the whole low address space.
 ACLINT remains a shared 64-hart block, accessible at ``0x19000000`` and
-through each nonzero die ID. The optional system IOMMU and AXI4 traffic
-generators remain die0 devices; IOMMU output addresses are global.
+through each nonzero die ID. Each selected die has three independent
+system IOMMUs, each paired with a DID mapper and AXI4 traffic generator;
+IOMMU output addresses are global.
 
 Generated DT and ACPI use global peripheral addresses so software may
 migrate between dies. In particular, the OS UART is ``0x100004000000``;
@@ -301,17 +302,30 @@ Machine options
    是否启用 RISC-V IOMMU platform device。默认 ``auto``，当前等同于
    ``off``。需要建模 IOMMU MMIO 设备并在生成的设备树中加入
    ``riscv,iommu`` 节点时，显式设置 ``iommu-sys=on``。如果同时启用
-   ``dw-pcie=on``，每个 PCIe root bus 的 DMA 会接入该 IOMMU，生成的
+   ``dw-pcie=on``，每个 PCIe root bus 的 DMA 会接入同 die/port 的独立 IOMMU，生成的
    PCIe 节点也会加入覆盖完整 requester-ID 空间的 ``iommu-map``。该选项
    不改变 DesignWare AXI DMAC 的 DMA 路径。使用外部 ``-dtb`` 时需要由
    外部设备树提供相同的 IOMMU 描述；当前 QEMU 生成的 ACPI 尚不包含 RIMT。
 
-   PCIe device_id 为 ``(segment << 16) | RID``，其中
-   ``segment = die_index * 3 + port``，RID 是当前 bridge bus number 和
-   devfn。DT ``iommu-map`` 使用 ``<0 iommu-phandle (segment << 16) 0x10000>``。
-   因此四个 die 的 p0 endpoint（均为 ``01:00.0``）分别使用
-   ``0x100``、``0x30100``、``0x60100``、``0x90100``，避免不同 root 的
-   翻译上下文相互覆盖。此映射只用于 PCIe，AXI traffic 的显式 DID/PID 不变。
+   PCIe device_id 为原 requester ID ``(bus << 8) | devfn``。每个 root 有独立
+   IOMMU，DT ``iommu-map`` 使用 ``<0 iommu-phandle 0 0x10000>``；各 root 的
+   ``01:00.0`` endpoint 均使用 DID ``0x100``。Mapper 默认关闭；开启且请求
+   IOVA 命中有效项时，使用配置的 DID/PID/PV，否则保留原 requester 身份。
+   AXI traffic 的原身份来自其 user/cfg 字段，也可由对应 mapper 覆盖。
+
+``iommu-bypass=on|off``
+   设置各 IOMMU wrapper 的复位 bypass 值，默认 ``on``，与硬件 bit0 的默认值
+   一致。仅在 ``iommu-sys=on`` 创建 wrapper 后生效；该选项不删除 IOMMU 或
+   设备树的 ``iommu-map``。运行时由每个 die/port 的 mapper mux bit0 独立控制：
+   bit0 为 1 时，PCIe DMA 保留低 44 位地址，直接访问请求者所属 die 的
+   AddressSpace，跳过 DID/PID mapper 和 IOMMU 翻译；bit0 为 0 时恢复 mapper
+   和 IOMMU 路径。AXI traffic 同样使用该 bypass 位。匹配 iMSI-RX 的 MSI 写仍
+   优先由接收器消费。
+
+   wrapper mux 本地地址为 ``0x4f80201000 + port * 0x10000``；multi 模式还需
+   加上 ``(die + 1) << 44``。Guest 在加载 NVMe 前应读改写清 bit0，保留 mapper
+   enable 等其他位。若 NVMe 驱动内建，可使用 ``iommu-bypass=off`` 在首次 probe
+   前关闭 bypass；该参数也决定后续 machine reset 的 wrapper 默认值。
 
 ``autotest-dtb=on|off``
    是否在 QEMU 生成的设备树中加入 automated-test 节点。默认 ``off``。
