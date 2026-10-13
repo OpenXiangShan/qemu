@@ -370,6 +370,17 @@ class CheckTests(unittest.TestCase):
 class IommuTests(unittest.TestCase):
     case = next(c for c in catalog() if c["id"] == "bosc-iommu-linux-single")
 
+    def test_bosc_translation_enabled_before_builtin_nvme_probe(self):
+        from runner import machine
+        for case in catalog():
+            if case["kind"] != "iommu-linux":
+                continue
+            with self.subTest(case=case["id"]):
+                options = machine(case)[1].split(",")
+                self.assertIn("iommu-sys=on", options)
+                self.assertEqual("iommu-bypass=off" in options,
+                                 case["owner"] == "bosc")
+
     def valid_log(self, segments=(0,), kmh=False):
         text = "iommu: Default domain type: Translated\n"
         rows = []

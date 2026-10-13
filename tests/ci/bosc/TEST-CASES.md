@@ -27,8 +27,8 @@
 ## 1. 覆盖范围与计数
 
 当前有 **44 个执行单元**：23 个 Linux 配置、1 个 ITGen 配置、4 个 qtest
-可执行文件、16 个 libqemu 用例。qtest 内部共 **28 个子测试**：die/timebase/DDR
-7 个、AXI traffic 4 个、PCIe 7 个、DID mapper 10 个。普通 MR 最多选择
+可执行文件、16 个 libqemu 用例。qtest 内部共 **30 个子测试**：die/timebase/DDR
+7 个、AXI traffic 4 个、PCIe 7 个、DID mapper 12 个。普通 MR 最多选择
 33 个执行单元，另有 11 个 extended 配置。
 
 | GitLab job | `--group` | 执行单元数 | 主要覆盖 |
@@ -103,6 +103,8 @@ DDR 容量边界和未映射区域由 `qtest-die` 检查。
 全部为 `kind=iommu-linux`，启用 `dw-pcie=on,iommu-sys=on,generated-dtb=on`，
 `-m 16G -accel tcg`，每项限时 600 秒。依赖 `fw_jump + iommu_kernel + rootfs`；
 **不能用 minimal `kernel` 替代 `iommu_kernel`**。
+BOSC 各项另外设置 `iommu-bypass=off`，在内建 NVMe 首次 probe 前清 wrapper
+的复位 bypass；KMH 不使用该选项。运行时 bit0 仍可按 die/port 独立切换。
 
 | Case ID | 层级 | 配置与 endpoint bus | 盘数/在线 CPU | 测试点与 PASS |
 | --- | --- | --- | --- | --- |
@@ -550,9 +552,9 @@ python3 tests/ci/bosc/ci.py run \
 | `bosc-mcu-multi-die0` | `kmh-bosc-soc,soc-mode=multi,die-mask=0x1,core-mask=0xffff,boot-source=mcu` | `64,maxcpus=68` |
 | `kmh-iommu-linux` | `xiangshan-kunminghu,dw-pcie=on,iommu-sys=on` | `1` |
 | `kmh-iommu-linux-dual-root` | `xiangshan-kunminghu,dw-pcie=on,iommu-sys=on` | `1` |
-| `bosc-iommu-linux-single` | `kmh-bosc-soc,soc-mode=single,die-mask=0x1,core-mask=0x1,boot-source=ddr,dw-pcie=on,iommu-sys=on` | `16,maxcpus=17` |
-| `bosc-iommu-linux-multi` | `kmh-bosc-soc,soc-mode=multi,die-mask=0xf,core-mask=0x1,boot-source=ddr,dw-pcie=on,iommu-sys=on` | `64,maxcpus=68` |
-| `bosc-iommu-linux-all-roots` | `kmh-bosc-soc,soc-mode=multi,die-mask=0xf,core-mask=0x1,boot-source=ddr,dw-pcie=on,iommu-sys=on` | `64,maxcpus=68` |
+| `bosc-iommu-linux-single` | `kmh-bosc-soc,soc-mode=single,die-mask=0x1,core-mask=0x1,boot-source=ddr,dw-pcie=on,iommu-sys=on,iommu-bypass=off` | `16,maxcpus=17` |
+| `bosc-iommu-linux-multi` | `kmh-bosc-soc,soc-mode=multi,die-mask=0xf,core-mask=0x1,boot-source=ddr,dw-pcie=on,iommu-sys=on,iommu-bypass=off` | `64,maxcpus=68` |
+| `bosc-iommu-linux-all-roots` | `kmh-bosc-soc,soc-mode=multi,die-mask=0xf,core-mask=0x1,boot-source=ddr,dw-pcie=on,iommu-sys=on,iommu-bypass=off` | `64,maxcpus=68` |
 
 ### 7.3 DDR Linux 公共命令
 
@@ -736,7 +738,7 @@ die-routing 中运行指令序列的部分还启用 TCG。正式 runner 使用�
 本文覆盖清单与命令，不代表当前提交已经重新运行全量验收。实际结果以某次 run 的
 selection、构建来源、完整日志和最终报告共同确认；本地 PASS 不等于线上 GitLab PASS。
 
-## 9. DID mapper 的 10 个 qtest 子项与 9 个 Linux 配置
+## 9. DID mapper 的 12 个 qtest 子项与 9 个 Linux 配置
 
 完整专项清单及断言见 [DID-MAPPER.md](DID-MAPPER.md)。新增 MR case 是
 `qtest-did-mapper` 和 `bosc-did-mapper-linux-single`；其余八种 Linux 拓扑/负向

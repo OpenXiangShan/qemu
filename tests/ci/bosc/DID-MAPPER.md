@@ -5,22 +5,27 @@ QEMU 源码和所有构建/验证均使用 `qemu-bosc-soc`。本页说明覆盖�
 
 ## qtest
 
-`qtest-did-mapper`（MR，180s）使用真实 EDU PCI DMA，含 10 个子项：
+`qtest-did-mapper`（MR，180s）使用真实 EDU PCI DMA，含 12 个子项：
 
 | 子项 | 覆盖 |
 | --- | --- |
 | reset-single / reset-multi | 3 / 12 实例，全部 8 slot 的 reset、64 位 split-MMIO、字段掩码 |
+| reset-no-bypass | single 三实例使用 iommu-bypass=off，首次启动及 machine reset 均清 bit0 |
 | ranges | 不同有效 DID 到不同物理页；关闭、空项、非空未命中、start/end、反向区间、8 slot、重叠优先级 |
 | cache-update | 建立 ctx/IOT cache 后修改 DC/PT；mapper 写入必须刷新两类内部 cache |
 | fault-recovery | 错误 DID 的 FQ cause 258、DID 0x200、目标内存保护、恢复有效 DID |
 | all-roots | 相同 RID/PSCID/IOVA，12 套不同物理页；逐一切换 mapper，其余 11 套保持独立 |
+| bypass | 12 root 逐一切换 bit0；direct/RID/mapper 三种目标可区分，错误 DID 和 DDTP Off 下 bypass 不 fault，清 bit0 恢复翻译，44-bit 截断及本 die SRAM 别名 |
 | boundary | 一次 DMA 同页/跨页、1 GiB 超页及非对齐 slot 边界；读写、命中到未命中及未命中到命中 |
 | pid-pv | PV=0 使用 DC；PV=1 与 PDTV=0 冲突必须 fault，FQ 核对 PID/PV/DID |
-| imsi | mapper 错误 DID 下 iMSI 前置消费仍成功；移开 receiver 后普通 DMA 上报 mapper DID |
+| imsi | mapper 错误 DID 下 bypass 开/关均由 iMSI 前置消费；移开 receiver 后普通 DMA 上报 mapper DID |
 | cpu-local | 四 die CPU 以不带 die ID 地址访问本地三套 mapper，再核对带硬件 die ID 1..4 的别名 |
 
 原 PCIe、AXI traffic 和 die qtest 继续运行。PCIe ordinary DMA 初始化每个 die
 自己的 IOMMU；独立实例不加 PCI segment 到 DID。
+Wrapper bit0 默认置位；旧翻译测试显式清 bit0。Linux IOMMU/mapper CI 使用
+`iommu-bypass=off`，使内建 NVMe 首次 probe 即可翻译；mapper 各阶段写 mux
+时仍保持 bit0=0。不配置 mapper 的原生 IOMMU case 继续使用原 RID。
 
 ## Linux NVMe
 

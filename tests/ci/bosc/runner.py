@@ -30,6 +30,9 @@ def machine(case, boot="ddr", extra=None):
         smp = "16,maxcpus=17" if case["mode"] == "single" else "64,maxcpus=68"
     if case["kind"] == "iommu-linux":
         options += ["dw-pcie=on", "iommu-sys=on"]
+        if case["owner"] == "bosc":
+            # Native NVMe may be built in; translate before its first probe.
+            options.append("iommu-bypass=off")
     return ["-M", ",".join(options + (extra or [])), "-smp", smp, "-m", "16G", "-accel", "tcg"]
 
 

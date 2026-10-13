@@ -80,10 +80,12 @@
       "tests": [
         "/bosc-did-mapper/reset-single",
         "/bosc-did-mapper/reset-multi",
+        "/bosc-did-mapper/reset-no-bypass",
         "/bosc-did-mapper/ranges",
         "/bosc-did-mapper/cache-update",
         "/bosc-did-mapper/fault-recovery",
         "/bosc-did-mapper/all-roots",
+        "/bosc-did-mapper/bypass",
         "/bosc-did-mapper/boundary",
         "/bosc-did-mapper/pid-pv",
         "/bosc-did-mapper/imsi",
