@@ -431,23 +431,51 @@ static void test_imsi(void)
     qtest_writel(q, bar + 0x60, 1);
     g_assert_cmphex(qtest_readl(q, dbi + 0x830), ==, BIT(7));
     g_assert_cmphex(qtest_readl(q, 0x81000000), ==, 0x12345678);
-    g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 0);
-    qtest_writel(q, mapper(0), BOSC_DID_MAPPER_MUX_DID_PID_EN |
-                              BOSC_DID_MAPPER_MUX_BYPASS);
-    qtest_writel(q, bar + 0x60, 1);
-    g_assert_cmphex(qtest_readl(q, dbi + 0x830), ==, BIT(7));
-    g_assert_cmphex(qtest_readl(q, 0x81000000), ==, 0x12345678);
-    g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 0);
-    qtest_writel(q, mapper(0), BOSC_DID_MAPPER_MUX_DID_PID_EN);
-    /* Move the receiver: this same MSI becomes ordinary 44-bit DMA. */
-    reg64(q, dbi + 0x820, 0x81000020);
-    qtest_writel(q, bar + 0x60, 1);
     g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 1);
     uint64_t fault = qtest_readq(q, 0x82009000);
     g_assert_cmphex(fault >> 40, ==, 0x200);
     g_assert_cmpuint(fault & RISCV_IOMMU_FQ_HDR_CAUSE, ==,
                      RISCV_IOMMU_FQ_CAUSE_DDT_INVALID);
+    qtest_writel(q, mapper(0), BOSC_DID_MAPPER_MUX_DID_PID_EN |
+                              BOSC_DID_MAPPER_MUX_BYPASS);
+    qtest_writel(q, bar + 0x60, 1);
+    g_assert_cmphex(qtest_readl(q, dbi + 0x830), ==, BIT(7));
+    g_assert_cmphex(qtest_readl(q, 0x81000000), ==, 7);
+    g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 1);
+    qtest_writel(q, mapper(0), BOSC_DID_MAPPER_MUX_DID_PID_EN);
+    qtest_writel(q, 0x81000000, 0x12345678);
+    /* Move the receiver: this same MSI becomes ordinary 44-bit DMA. */
+    reg64(q, dbi + 0x820, 0x81000020);
+    qtest_writel(q, bar + 0x60, 1);
+    g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 2);
+    fault = qtest_readq(q, 0x82009020);
+    g_assert_cmphex(fault >> 40, ==, 0x200);
+    g_assert_cmpuint(fault & RISCV_IOMMU_FQ_HDR_CAUSE, ==,
+                     RISCV_IOMMU_FQ_CAUSE_DDT_INVALID);
     g_assert_cmphex(qtest_readl(q, 0x81000000), ==, 0x12345678);
+
+    /* A matched MSI also uses the mapper-selected paged context. */
+    uint64_t addr = 0x1000 | (2ULL << 44);
+    reg64(q, dbi + 0x820, addr);
+    reg64(q, ep + cap + 4, addr);
+    slot(q, 0, 0, 0, 1ULL << 44, 0x101);
+    qtest_writel(q, pa(0, false), 0x12345678);
+    qtest_writel(q, pa(0, true), 0x87654321);
+    qtest_writel(q, dbi + 0x830, UINT32_MAX);
+    qtest_writel(q, bar + 0x60, 1);
+    g_assert_cmphex(qtest_readl(q, dbi + 0x830), ==, BIT(7));
+    g_assert_cmphex(qtest_readl(q, pa(0, true)), ==, 7);
+    g_assert_cmphex(qtest_readl(q, pa(0, false)), ==, 0x12345678);
+    g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 2);
+
+    /* Disabling the mapper forwards using the endpoint's original RID. */
+    qtest_writel(q, mapper(0), 0);
+    qtest_writew(q, ep + cap + 12, 9);
+    qtest_writel(q, bar + 0x60, 1);
+    g_assert_cmphex(qtest_readl(q, dbi + 0x830), ==, BIT(7) | BIT(9));
+    g_assert_cmphex(qtest_readl(q, pa(0, false)), ==, 9);
+    g_assert_cmphex(qtest_readl(q, pa(0, true)), ==, 7);
+    g_assert_cmpuint(qtest_readl(q, iommu(0) + RISCV_IOMMU_REG_FQT), ==, 2);
     qtest_quit(q);
 }
 

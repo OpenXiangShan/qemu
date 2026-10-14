@@ -241,6 +241,8 @@ typedef struct KmhBoscPcieDma KmhBoscPcieDma;
 typedef struct KmhBoscPcieRequester {
     IOMMUMemoryRegion mr;
     AddressSpace as;
+    MemoryRegion msi_monitor;
+    AddressSpace msi_as;
     KmhBoscPcieDma *port;
     AddressSpace *downstream;
     PCIBus *bus;
@@ -1804,6 +1806,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 qemu_fdt_setprop_cell(fdt, pcie_name, "interrupt-parent",
                                       aplic_s_phandles[die]);
                 /* Omit msi-parent to select the DWC integrated receiver. */
+                qemu_fdt_setprop(fdt, pcie_name, "snps,imsi-rx-forward",
+                                  NULL, 0);
                 qemu_fdt_setprop_cells(fdt, pcie_name, "interrupts",
                                        kmh_bosc_pcie_msi_irq(port),
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH,
@@ -2210,7 +2214,42 @@ static void kmh_bosc_init_uart(KmhBoscState *s)
     }
 }
 
-/* iMSI-RX precedes the 44-bit AXI master and optional system IOMMU. */
+static AddressSpace *kmh_bosc_pcie_dma_target(KmhBoscPcieRequester *r)
+{
+    /* Bypass skips both identity overrides and IOMMU translation. */
+    if (bosc_did_mapper_get_mux(r->port->mapper) &
+        BOSC_DID_MAPPER_MUX_BYPASS) {
+        return r->port->die_as;
+    }
+    return r->downstream;
+}
+
+static MemTxResult kmh_bosc_pcie_msi_write(void *opaque, hwaddr addr,
+                                         uint64_t data, unsigned size,
+                                         MemTxAttrs attrs)
+{
+    KmhBoscPcieRequester *r = opaque;
+    MemTxResult receiver, downstream;
+
+    /* Observe the full PCI address before the 44-bit AXI master. */
+    address_space_stl_le(&r->port->msi_as, addr, data, attrs, &receiver);
+    /* Keep this endpoint's requester identity for the forwarded write. */
+    address_space_stl_le(kmh_bosc_pcie_dma_target(r),
+                         addr & MAKE_64BIT_MASK(0, 44), data, attrs,
+                         &downstream);
+    return receiver | downstream;
+}
+
+static const MemoryRegionOps kmh_bosc_pcie_msi_ops = {
+    .write_with_attrs = kmh_bosc_pcie_msi_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid.min_access_size = 4,
+    .valid.max_access_size = 4,
+    .impl.min_access_size = 4,
+    .impl.max_access_size = 4,
+};
+
+/* iMSI-RX monitors writes before AXI truncation and forwards them to DMA. */
 static IOMMUTLBEntry kmh_bosc_pcie_dma_translate(IOMMUMemoryRegion *mr,
                                                hwaddr addr,
                                                IOMMUAccessFlags flag,
@@ -2219,21 +2258,15 @@ static IOMMUTLBEntry kmh_bosc_pcie_dma_translate(IOMMUMemoryRegion *mr,
     KmhBoscPcieRequester *r = container_of(mr, KmhBoscPcieRequester, mr);
     DesignwarePCIEMSI *msi = &r->port->host->root.msi;
     hwaddr mask = 0xfff;
-    AddressSpace *target = r->downstream;
+    AddressSpace *target = kmh_bosc_pcie_dma_target(r);
     hwaddr translated = addr & MAKE_64BIT_MASK(0, 44);
-
-    /* The wrapper bypasses both identity overrides and IOMMU translation. */
-    if (bosc_did_mapper_get_mux(r->port->mapper) &
-        BOSC_DID_MAPPER_MUX_BYPASS) {
-        target = r->port->die_as;
-    }
 
     if ((flag & IOMMU_WO) && msi->enabled &&
         (addr & ~mask) == (msi->base & ~mask)) {
         /* Do not map DMA across the four-byte receiver in the same page. */
         mask = 3;
         if ((addr & ~mask) == msi->base) {
-            target = &r->port->msi_as;
+            target = &r->msi_as;
             translated = addr;
         }
     }
@@ -2286,6 +2319,10 @@ static AddressSpace *kmh_bosc_pcie_dma_as(PCIBus *bus, void *opaque, int devfn)
         port->downstream_ops->get_address_space(bus, port->downstream_opaque,
                                                 devfn) : port->die_as;
     address_space_init(&requester->as, MEMORY_REGION(&requester->mr), name);
+    memory_region_init_io(&requester->msi_monitor, OBJECT(port->host),
+                           &kmh_bosc_pcie_msi_ops, requester,
+                           "kmh-bosc-pcie-msi-monitor", UINT64_MAX);
+    address_space_init(&requester->msi_as, &requester->msi_monitor, name);
     requester->next = port->requesters;
     port->requesters = requester;
     return &requester->as;

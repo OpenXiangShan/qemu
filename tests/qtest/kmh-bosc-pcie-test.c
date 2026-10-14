@@ -122,7 +122,8 @@ static void test_pcie(const void *opaque)
             g_assert_false(die == 0 && qtest_get_irq(q, 4));
             qtest_writel(q, status, bit); /* W1C is idempotent. */
             g_assert_cmphex(qtest_readl(q, status), ==, 0);
-            g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 0x12345678);
+            g_assert_cmphex(qtest_readl(q, DOORBELL), ==,
+                            iommu ? 0x12345678 : v);
         }
         /* Pending in one bank must survive clearing a different bank. */
         send_msi(q, die, DOORBELL, 31);
@@ -149,28 +150,37 @@ static void test_pcie(const void *opaque)
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
 
-        /* 64-bit receiver match precedes truncation; DDR is not written. */
+        /* Full-width receiver match precedes truncation and forwarding. */
         reg64(q, dbi + 0x820, DOORBELL | (2ULL << 44));
         send_msi(q, die, DOORBELL | (2ULL << 44), 255);
         g_assert_true(die != 0 || qtest_get_irq(q, 4));
-        g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 0x12345678);
+        g_assert_cmphex(qtest_readl(q, DOORBELL), ==,
+                        iommu ? 0x12345678 : 255);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
         reg64(q, dbi + 0x820, DOORBELL);
 
         if (iommu) {
-            /* Off blocks DMA while iMSI-RX still works upstream. */
+            /* Off blocks forwarding; the upstream monitor still fires. */
             qtest_writel(q, DOORBELL + 0x200, 0x87654321);
             edu_dma(q, die, 0x40000, DOORBELL + 0x200, 4, true);
             g_assert_cmphex(qtest_readl(q, DOORBELL + 0x200), ==, 0x87654321);
             send_msi(q, die, DOORBELL, 255);
             g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==,
                             1U << 31);
+            g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 0x12345678);
             qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
             /* No valid context was cached in Off; enable Bare for DMA. */
             qtest_writeq(q, ga(die, 0x4f80200010ULL), 1);
         }
 
+        /* Bare/no-IOMMU forwards matched MSI writes to RAM as well. */
+        send_msi(q, die, DOORBELL, 255);
+        g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 255);
+        g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
+        qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+
         /* Reads of the MSI address remain DMA, even while enabled. */
+        qtest_writel(q, DOORBELL, 0x12345678);
         copy_dma(q, die, DOORBELL, DOORBELL + 0x100);
         g_assert_cmphex(qtest_readl(q, DOORBELL + 0x100), ==, 0x12345678);
 
@@ -181,7 +191,7 @@ static void test_pcie(const void *opaque)
         g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 255);
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 0);
         send_msi(q, die, DOORBELL + 0x20, 255);
-        g_assert_cmphex(qtest_readl(q, DOORBELL + 0x20), ==, 0x87654321);
+        g_assert_cmphex(qtest_readl(q, DOORBELL + 0x20), ==, 255);
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
 
@@ -195,8 +205,9 @@ static void test_pcie(const void *opaque)
         qtest_writel(q, dbi + ENABLE + 7 * 12, UINT32_MAX);
         send_msi(q, die, DOORBELL, 255);
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
-        g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 0x12345678);
+        g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 255);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+        qtest_writel(q, DOORBELL, 0x12345678);
 
         /* Nonmatching high address drops bits [63:44] on reads and writes. */
         copy_dma(q, die, DOORBELL | (0xfffffULL << 44),
