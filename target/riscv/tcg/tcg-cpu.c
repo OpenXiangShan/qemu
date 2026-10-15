@@ -416,6 +416,18 @@ void riscv_cpu_validate_set_extensions(RISCVCPU *cpu, Error **errp)
     CPURISCVState *env = &cpu->env;
     Error *local_err = NULL;
 
+    if (cpu->cfg.ext_bitmte &&
+        (!cpu->cfg.ext_matrix || riscv_cpu_mxl(env) != MXL_RV64)) {
+        error_setg(errp, "x-bitmte requires RV64 and x-matrix");
+        return;
+    }
+    if (cpu->cfg.ext_bitmte &&
+        (cpu->cfg.mrowlen != 512 || cpu->cfg.mreglen != 65536 ||
+         cpu->cfg.melen != 32)) {
+        error_setg(errp, "x-bitmte requires rlen=512, mlen=65536, melen=32");
+        return;
+    }
+
     if (riscv_has_ext(env, RVG)) {
         riscv_cpu_validate_g(cpu);
     }

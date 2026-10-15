@@ -122,6 +122,7 @@ const RISCVIsaExtData isa_edata_arr[] = {
     ISA_EXT_DATA_ENTRY(zama16b, PRIV_VERSION_1_13_0, ext_zama16b),
     ISA_EXT_DATA_ENTRY(zalrsc, PRIV_VERSION_1_12_0, ext_zalrsc),
     ISA_EXT_DATA_ENTRY(zawrs, PRIV_VERSION_1_12_0, ext_zawrs),
+    ISA_EXT_DATA_ENTRY(zames, PRIV_VERSION_1_10_0, ext_matrix),
     ISA_EXT_DATA_ENTRY(zfa, PRIV_VERSION_1_12_0, ext_zfa),
     ISA_EXT_DATA_ENTRY(zfbfmin, PRIV_VERSION_1_12_0, ext_zfbfmin),
     ISA_EXT_DATA_ENTRY(zfh, PRIV_VERSION_1_11_0, ext_zfh),
@@ -197,6 +198,7 @@ const RISCVIsaExtData isa_edata_arr[] = {
     ISA_EXT_DATA_ENTRY(svinval, PRIV_VERSION_1_12_0, ext_svinval),
     ISA_EXT_DATA_ENTRY(svnapot, PRIV_VERSION_1_12_0, ext_svnapot),
     ISA_EXT_DATA_ENTRY(svpbmt, PRIV_VERSION_1_12_0, ext_svpbmt),
+    ISA_EXT_DATA_ENTRY(xbitmte, PRIV_VERSION_1_10_0, ext_bitmte),
     ISA_EXT_DATA_ENTRY(xtheadba, PRIV_VERSION_1_11_0, ext_xtheadba),
     ISA_EXT_DATA_ENTRY(xtheadbb, PRIV_VERSION_1_11_0, ext_xtheadbb),
     ISA_EXT_DATA_ENTRY(xtheadbs, PRIV_VERSION_1_11_0, ext_xtheadbs),
@@ -2708,6 +2710,7 @@ static Property riscv_cpu_properties[] = {
     DEFINE_PROP_BOOL("x-misa-w", RISCVCPU, cfg.misa_w, false),
     /* matrix extension as experimental */
     DEFINE_PROP_BOOL("x-matrix", RISCVCPU, cfg.ext_matrix, false),
+    DEFINE_PROP_BOOL("x-bitmte", RISCVCPU, cfg.ext_bitmte, false),
     DEFINE_PROP_UINT32("rlen", RISCVCPU, cfg.mrowlen, 512),
     DEFINE_PROP_UINT32("mlen", RISCVCPU, cfg.mreglen, 65536),
     DEFINE_PROP_UINT16("melen", RISCVCPU, cfg.melen, 32),
@@ -2883,6 +2886,23 @@ void riscv_isa_write_fdt(RISCVCPU *cpu, void *fdt, char *nodename)
 
     snprintf(isa_base, maxlen, "rv%di", xlen);
     qemu_fdt_setprop_string(fdt, nodename, "riscv,isa-base", isa_base);
+
+    if (cpu->cfg.ext_bitmte) {
+        static const char *const caps[] = {
+            "i8fp2pack4i32", "i4fp2pack4i32",
+            "i8i1pack8i32", "i4i1pack8i32",
+        };
+        char *names[ARRAY_SIZE(caps)];
+
+        for (size_t i = 0; i < ARRAY_SIZE(caps); i++) {
+            names[i] = g_strdup(caps[i]);
+        }
+        qemu_fdt_setprop_string_array(fdt, nodename, "riscv,matrix-isa-caps",
+                                     names, ARRAY_SIZE(names));
+        for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
+            g_free(names[i]);
+        }
+    }
 
     isa_extensions = riscv_isa_extensions_list(cpu, &count);
     qemu_fdt_setprop_string_array(fdt, nodename, "riscv,isa-extensions",

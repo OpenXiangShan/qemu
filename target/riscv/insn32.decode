@@ -73,7 +73,7 @@
 &mm_async     rs2       rs1
 &mm_ld        rs2       rs1      md
 &mm_st        rs2       rs1      ms3
-&mm_rmm       ms2       ms1      md
+&mm_rmm       ms2       ms1      md kslice
 &mm_zero      md
 # &mm_x_m       ms2       rs1      rd
 # &mm_m_x       rs2       rs1      md
@@ -129,7 +129,7 @@
 @mm_async     .... .. . ..... ..... ... ..... .......   &mm_async     %rs2       %rs1
 @mm_ld        .... ... ..... ..... ... .. ... .......   &mm_ld        %rs2       %rs1      md=%md
 @mm_st        .... ... ..... ..... ... .. ... .......   &mm_st        %rs2       %rs1      ms3=%md
-@mm_rmm       .... .. ... ... .. ... ... .. ... ....... &mm_rmm       %ms2       %ms1      %md
+@mm_rmm       .... .. ... ... .. ... ... .. ... ....... &mm_rmm       %ms2       %ms1      %md kslice=%uimm3
 @mm_zero      .... ... ..... ..... ... .. ... .......   &mm_zero      md=%md
 # @mm_x_m       .... .. ... ... ..... ... ..... .......   &mm_x_m       %ms2       %rs1      %rd
 # @mm_m_x       .... .. . ..... ..... ... .. ... .......  &mm_m_x       %rs2       %rs1      %md
@@ -1109,7 +1109,7 @@ msa_whole         1000 00 1 ..... ..... 001 00 ... 0101011 @mm_st
 msb_whole         1001 00 1 ..... ..... 001 00 ... 0101011 @mm_st
 msc_whole         1010 00 1 ..... ..... 001 00 ... 0101011 @mm_st
 
-mmacc             0000 00 000 ... 00 ... 010 00 ... 0101011 @mm_rmm
+mmacc             0000 00 ... ... 00 ... 010 00 ... 0101011 @mm_rmm
 mzero             0000 00 000 000 00 000 011 00 ... 0101011 @mm_zero
 
 

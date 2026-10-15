@@ -392,8 +392,47 @@ typedef enum McfgTypeCode {
     MCFG_TC_FP32      = 0xc,
     MCFG_TC_FP2PACK4  = 0xd,
     MCFG_TC_FP2PACK5  = 0xe,
-    MCFG_TC_RESERVED  = 0xf,
+    MCFG_TC_I1PACK8   = 0xf,
 } McfgTypeCode;
+
+static bool mmext_bitmte_type(target_ulong cfg)
+{
+    uint32_t type = cfg & 0xf;
+    return type == MCFG_TC_FP2PACK4 || type == MCFG_TC_I1PACK8;
+}
+
+/* Use the existing page probes, virtual accessors and row-order updates.
+ * Native B and full signed-i4 A each occupy 128 raw 64-byte rows. */
+static bool mmext_bitmte_load(void *md, target_ulong base, target_ulong stride,
+                             target_ulong idx, CPURISCVState *env,
+                             mmext_mat_kind kind, bool transposed, bool store,
+                             uintptr_t ra)
+{
+    target_ulong cfg = env->mcfg[idx];
+    uint32_t type = cfg & 0xf;
+    bool packed = mmext_bitmte_type(cfg);
+    bool int4_a = riscv_cpu_cfg(env)->ext_bitmte && type == MCFG_TC_INT4 &&
+                  kind == MAT_A && !transposed && !store &&
+                  env->mtilem == 128 && env->mtilek == 128;
+
+    if (!packed && !int4_a) {
+        return false;
+    }
+    if (!riscv_cpu_cfg(env)->ext_bitmte || (cfg & 0xf0) || idx >= 4 ||
+        (packed && (kind != MAT_B || transposed || store || env->mtilen != 128))) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, ra);
+    }
+    for (uint32_t i = 0; i < 128; i++) {
+        probe_pages(env, base + (target_ulong)i * stride, 64, ra, MMU_DATA_LOAD);
+    }
+    for (uint32_t i = 0; i < 128; i++) {
+        for (uint32_t j = 0; j < 64; j++) {
+            set_elem_b(md, i, j, env,
+                       ld_b(env, base + (target_ulong)i * stride + j, ra));
+        }
+    }
+    return true;
+}
 
 static bool mmext_decode_mcfg(CPURISCVState *env, uint32_t mreg_idx, uint32_t *type_code)
 {
@@ -404,7 +443,7 @@ static bool mmext_decode_mcfg(CPURISCVState *env, uint32_t mreg_idx, uint32_t *t
         return false;
     }
     *type_code = cfg & 0xf;
-    return *type_code != MCFG_TC_RESERVED;
+    return *type_code != MCFG_TC_I1PACK8;
 }
 
 static bool mmext_type_to_esz(uint32_t type_code, uint32_t *esz)
@@ -435,11 +474,22 @@ static bool mmext_mreg_get_esz(CPURISCVState *env, uint32_t mreg_idx, uint32_t *
     return mmext_type_to_esz(type_code, esz);
 }
 
-#define GEN_UNIFIED_LDST_HELPER(NAME, H8, H16, H32, H64)                        \
+#define GEN_UNIFIED_LDST_HELPER(NAME, H8, H16, H32, H64, KIND, T, STORE)         \
 void helper_##NAME(void *mreg_ptr, target_ulong rs1, target_ulong rs2,          \
-                   target_ulong mreg_idx, CPURISCVState *env)                   \
+                   target_ulong mreg_idx, uint32_t control,                    \
+                   CPURISCVState *env)                                         \
 {                                                                               \
     uint32_t esz;                                                               \
+    if (mmext_bitmte_load(mreg_ptr, rs1, rs2, mreg_idx, env, KIND, T, STORE,     \
+                          GETPC())) {                                           \
+        return;                                                                \
+    }                                                                          \
+    if (!(control & BITMTE_ORDINARY_VALID)) {                                    \
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());            \
+    }                                                                          \
+    if (control & BITMTE_SKIP) {                                                \
+        return;                                                                \
+    }                                                                          \
     if (!mmext_mreg_get_esz(env, (uint32_t)mreg_idx, &esz)) {                   \
         return;                                                                 \
     }                                                                           \
@@ -459,19 +509,19 @@ void helper_##NAME(void *mreg_ptr, target_ulong rs1, target_ulong rs2,          
     }                                                                           \
 }
 
-GEN_UNIFIED_LDST_HELPER(mla,  mlae8,  mlae16,  mlae32, mlae64)
-GEN_UNIFIED_LDST_HELPER(mlb,  mlbe8,  mlbe16,  mlbe32, mlbe64)
-GEN_UNIFIED_LDST_HELPER(mlc,  mlce8,  mlce16,  mlce32, mlce64)
-GEN_UNIFIED_LDST_HELPER(msa,  msae8,  msae16,  msae32, msae64)
-GEN_UNIFIED_LDST_HELPER(msb,  msbe8,  msbe16,  msbe32, msbe64)
-GEN_UNIFIED_LDST_HELPER(msc,  msce8,  msce16,  msce32, msce64)
+GEN_UNIFIED_LDST_HELPER(mla,  mlae8,  mlae16,  mlae32, mlae64, MAT_A, false, false)
+GEN_UNIFIED_LDST_HELPER(mlb,  mlbe8,  mlbe16,  mlbe32, mlbe64, MAT_B, false, false)
+GEN_UNIFIED_LDST_HELPER(mlc,  mlce8,  mlce16,  mlce32, mlce64, MAT_C, false, false)
+GEN_UNIFIED_LDST_HELPER(msa,  msae8,  msae16,  msae32, msae64, MAT_A, false, true)
+GEN_UNIFIED_LDST_HELPER(msb,  msbe8,  msbe16,  msbe32, msbe64, MAT_B, false, true)
+GEN_UNIFIED_LDST_HELPER(msc,  msce8,  msce16,  msce32, msce64, MAT_C, false, true)
 
-GEN_UNIFIED_LDST_HELPER(mlat, mlate8, mlate16, mlate32, mlate64)
-GEN_UNIFIED_LDST_HELPER(mlbt, mlbte8, mlbte16, mlbte32, mlbte64)
-GEN_UNIFIED_LDST_HELPER(mlct, mlcte8, mlcte16, mlcte32, mlcte64)
-GEN_UNIFIED_LDST_HELPER(msat, msate8, msate16, msate32, msate64)
-GEN_UNIFIED_LDST_HELPER(msbt, msbte8, msbte16, msbte32, msbte64)
-GEN_UNIFIED_LDST_HELPER(msct, mscte8, mscte16, mscte32, mscte64)
+GEN_UNIFIED_LDST_HELPER(mlat, mlate8, mlate16, mlate32, mlate64, MAT_A, true, false)
+GEN_UNIFIED_LDST_HELPER(mlbt, mlbte8, mlbte16, mlbte32, mlbte64, MAT_B, true, false)
+GEN_UNIFIED_LDST_HELPER(mlct, mlcte8, mlcte16, mlcte32, mlcte64, MAT_C, true, false)
+GEN_UNIFIED_LDST_HELPER(msat, msate8, msate16, msate32, msate64, MAT_A, true, true)
+GEN_UNIFIED_LDST_HELPER(msbt, msbte8, msbte16, msbte32, msbte64, MAT_B, true, true)
+GEN_UNIFIED_LDST_HELPER(msct, mscte8, mscte16, mscte32, mscte64, MAT_C, true, true)
 
 /* Whole Matrix load/store */
 static void mmext_mload_whole(void *md, target_ulong rs1,
@@ -1120,6 +1170,90 @@ void helper_mmacc(void *md, void *ms1, void *ms2,
     /* Add more type macc here ... */
     printf("Unsupported mmacc type combination: A=%u, B=%u, C=%u\n", type_a, type_b, type_c);
     return;
+}
+
+static uint32_t mmext_bitmte_dot(const uint8_t *a, const uint8_t *b,
+                               uint32_t acc, bool int4, bool binary,
+                               unsigned slice, bool saturate)
+{
+    unsigned klen = int4 ? 128 : 64;
+
+    for (unsigned k = 0; k < klen; k++) {
+        unsigned slot = slice * klen + k;
+        int32_t av, bv;
+
+        if (int4) {
+            unsigned nibble = (a[k / 2] >> ((k & 1) * 4)) & 15;
+            av = (int32_t)(nibble ^ 8) - 8;
+        } else {
+            av = (int32_t)(a[k] ^ 128) - 128;
+        }
+        if (binary) {
+            bv = (b[slot / 8] >> (slot & 7)) & 1;
+        } else {
+            unsigned code = (b[slot / 4] >> ((slot & 3) * 2)) & 3;
+            /* Ternary code 10 is data UB; no detection or exception. */
+            bv = code == 3 ? -1 : code == 1 ? 1 : 0;
+        }
+        if (saturate) {
+            int64_t old = acc <= INT32_MAX ? (int64_t)acc :
+                          (int64_t)acc - INT64_C(4294967296);
+            int64_t sum = old + av * bv;
+
+            acc = sum > INT32_MAX ? INT32_MAX :
+                  sum < INT32_MIN ? (uint32_t)INT32_MIN : (uint32_t)sum;
+        } else {
+            acc += (uint32_t)(av * bv);
+        }
+    }
+    return acc;
+}
+
+void HELPER(bitmte_mmacc)(CPURISCVState *env, uint32_t md_idx,
+                          uint32_t ms1_idx, uint32_t ms2_idx, uint32_t control)
+{
+    if (md_idx < 4 || md_idx >= 8 || ms1_idx >= 4 || ms2_idx >= 4) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+    }
+    target_ulong acfg = env->mcfg[ms1_idx], bcfg = env->mcfg[ms2_idx];
+    target_ulong ccfg = env->mcfg[md_idx];
+    uint32_t a = acfg & 15, b = bcfg & 15, c = ccfg & 15;
+    unsigned slice = control & BITMTE_SLICE_MASK;
+    uint8_t *regs = (uint8_t *)env->mreg;
+    size_t acc_bytes = get_mrows(env) * get_mrows(env) * 4;
+    void *md = regs + 4 * env->xtlenb + (md_idx - 4) * acc_bytes;
+    uint8_t *ms1 = regs + ms1_idx * env->xtlenb;
+    uint8_t *ms2 = regs + ms2_idx * env->xtlenb;
+
+    if (!mmext_bitmte_type(acfg) && !mmext_bitmte_type(bcfg) &&
+        !mmext_bitmte_type(ccfg)) {
+        if (slice || !(control & BITMTE_ORDINARY_VALID)) {
+            riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+        }
+        if (!(control & BITMTE_SKIP)) {
+            helper_mmacc(md, ms1, ms2, md_idx, ms1_idx, ms2_idx, env);
+        }
+        return;
+    }
+    unsigned klen = a == MCFG_TC_INT4 ? 128 : 64;
+    unsigned slices = (b == MCFG_TC_I1PACK8 ? 512 : 256) / klen;
+
+    if (!riscv_cpu_cfg(env)->ext_bitmte || ((acfg | bcfg | ccfg) & 0xf0) ||
+        (a != MCFG_TC_INT4 && a != MCFG_TC_INT8) ||
+        !mmext_bitmte_type(bcfg) || c != MCFG_TC_INT32 ||
+        ms1_idx == ms2_idx || env->mtilem != 128 || env->mtilen != 128 ||
+        env->mtilek != klen || slice >= slices) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+    }
+    for (uint32_t i = 0; i < 128; i++) {
+        for (uint32_t j = 0; j < 128; j++) {
+            uint32_t acc = get_elem_s(md, i, j, env);
+            acc = mmext_bitmte_dot(ms1 + i * 64, ms2 + j * 64, acc,
+                                  a == MCFG_TC_INT4, b == MCFG_TC_I1PACK8,
+                                  slice, env->xmsaten & 1);
+            set_elem_s(md, i, j, env, acc);
+        }
+    }
 }
 
 void HELPER(sync_skip)(CPURISCVState *env) {

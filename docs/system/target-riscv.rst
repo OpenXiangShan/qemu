@@ -92,3 +92,40 @@ the images they need.
 * ``-bios <file>``
 
 Tells QEMU to load the specified file as the firmware.
+
+Experimental BitMTE extension
+----------------------------
+
+On the Matrix proposal-12 branch, ``-cpu rv64,x-matrix=on,x-bitmte=on``
+enables native ``i8/i4 * fp2pack4/i1pack8 -> i32`` operations in RV64
+system and Linux-user emulation. ``x-bitmte`` defaults to off and requires
+``rlen=512,mlen=65536,melen=32``. Device-tree capabilities identify all four
+native combinations and the ``xbitmte`` extension.
+
+Table 0 uses type 13 for ``fp2pack4`` and type 15 for ``i1pack8``.
+Ternary codes 00, 01 and 11 represent 0, +1 and -1; consuming code 10
+has undefined results. Binary bits represent 0 or +1. Elements occupy
+increasing bit positions, with the earlier signed-i4 A element in the low
+nibble. Native loads preserve these representations.
+
+Normal ``mlb`` loads 128 raw 64-byte B rows, independently of ``mtilek``.
+Signed-i4 ``mla`` with M=128 and K=128 also loads 128 raw 64-byte rows,
+independently of N. Base addresses and byte strides use the existing
+Matrix memory-access path. Other packed typed loads, stores and transposed
+loads raise an illegal-instruction exception.
+
+``mmacc`` bits [25:23] select the resident B K window. For M=N=128,
+i8 uses K=64 with four ternary or eight binary slices; i4 uses K=128 with
+two ternary or four binary slices. The A and B registers must differ.
+Unsupported native combinations, table selections, shapes and selectors
+raise an illegal-instruction exception before computation. Configuration
+writes continue to store raw XLEN values; native consumers ignore bits
+above bit 7. Ordinary ``mmacc`` requires selector zero. Native arithmetic
+wraps modulo 2^32, or saturates after each K element when ``msaten=1``;
+it does not update the sticky saturation flag.
+
+This is a synchronous functional model. Existing proposal-12 limitations
+remain visible: synchronization instructions have no token implementation,
+whole transfers use the base helper's extent, and ordinary floating-point
+operations retain the base K interpretation. These limitations prevent
+claiming the complete software-validation gate has passed.

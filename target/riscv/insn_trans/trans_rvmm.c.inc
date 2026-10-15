@@ -204,32 +204,29 @@ static bool mmext_check_mldstc(DisasContext *s, uint32_t mreg)
     return require_matrix(s) && mmext_check_mn(s) && mmext_check_acc_reg(mreg);
 }
 
-typedef void gen_helper_ldst(TCGv_ptr, TCGv, TCGv, TCGv, TCGv_env);
+typedef void gen_helper_ldst(TCGv_ptr, TCGv, TCGv, TCGv, TCGv_i32, TCGv_env);
 
 static bool mm_ldst_op(uint32_t md, TCGv rs1, TCGv rs2,
-                              gen_helper_ldst *fn, DisasContext *s)
+                      gen_helper_ldst *fn, bool ordinary_valid, DisasContext *s)
 {
     CPUState *cpu = s->cs;
     CPURISCVState *env = cpu_env(cpu);
-    if (env->sync_skip_mode) {
-        /* 将指令翻译成sync_skip，跳过执行 */
-        gen_helper_sync_skip(tcg_env);
-        return true;
-    } else {
+    uint32_t control = (ordinary_valid ? BITMTE_ORDINARY_VALID : 0) |
+                       (env->sync_skip_mode ? BITMTE_SKIP : 0);
     TCGv_ptr dest = tcg_temp_new_ptr();
     tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
-    fn(dest, rs1, rs2, tcg_constant_tl(md), tcg_env);
+    fn(dest, rs1, rs2, tcg_constant_tl(md), tcg_constant_i32(control), tcg_env);
     return true;
-    }
 }
 #define GEN_MMEXT_LD_TRANS(NAME, CHECK)                               \
 static bool trans_##NAME(DisasContext *s, arg_mm_ld *a)              \
 {                                                                    \
-    if (CHECK(s, a->md)) {                                           \
+    bool valid = CHECK(s, a->md);                                    \
+    if (valid || (s->cfg_ptr->ext_bitmte && a->md < 8)) {              \
         return mm_ldst_op(a->md,                                     \
                           get_gpr(s, a->rs1, EXT_ZERO),              \
                           get_gpr(s, a->rs2, EXT_ZERO),              \
-                          gen_helper_##NAME, s);                     \
+                          gen_helper_##NAME, valid, s);              \
     }                                                                \
     return false;                                                    \
 }
@@ -237,11 +234,12 @@ static bool trans_##NAME(DisasContext *s, arg_mm_ld *a)              \
 #define GEN_MMEXT_ST_TRANS(NAME, CHECK)                               \
 static bool trans_##NAME(DisasContext *s, arg_mm_st *a)              \
 {                                                                    \
-    if (CHECK(s, a->ms3)) {                                          \
+    bool valid = CHECK(s, a->ms3);                                   \
+    if (valid || (s->cfg_ptr->ext_bitmte && a->ms3 < 8)) {             \
         return mm_ldst_op(a->ms3,                                    \
                           get_gpr(s, a->rs1, EXT_ZERO),              \
                           get_gpr(s, a->rs2, EXT_ZERO),              \
-                          gen_helper_##NAME, s);                     \
+                          gen_helper_##NAME, valid, s);              \
     }                                                                \
     return false;                                                    \
 }
@@ -332,45 +330,25 @@ static inline bool mmext_check_macc_common(DisasContext *s, arg_mm_rmm *a)
 }
 /* TODO: check for misa, matrix multiplication support type - mmf8f32, ..., mmi8i32 */
 
-typedef void gen_helper_opimmrmm(TCGv_ptr, TCGv_ptr, TCGv_ptr,
-                                 TCGv, TCGv, TCGv, TCGv_env);
-
-static bool mm_oprmm_trans(uint32_t md, uint32_t ms1, uint32_t ms2,
-                           gen_helper_opimmrmm *fn, DisasContext *s)
-{
-    TCGv_ptr dest, src1, src2;
-
-    dest = tcg_temp_new_ptr();
-    src1 = tcg_temp_new_ptr();
-    src2 = tcg_temp_new_ptr();
-
-    tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
-    tcg_gen_addi_ptr(src1, tcg_env, mregs_ofs(s, ms1));
-    tcg_gen_addi_ptr(src2, tcg_env, mregs_ofs(s, ms2));
-
-    CPUState *cpu = s->cs;
-    CPURISCVState *env = cpu_env(cpu);
-    if (env->sync_skip_mode) {
-        gen_helper_sync_skip(tcg_env);
-    } else {
-        fn(dest, src1, src2,
-            tcg_constant_tl(md), tcg_constant_tl(ms1), tcg_constant_tl(ms2),
-            tcg_env);
-    }
-
-    /*tcg_temp_free_ptr(dest);
-    tcg_temp_free_ptr(src1);
-    tcg_temp_free_ptr(src2);*/
-
-    return true;
-}
-
 static bool trans_mmacc(DisasContext *s, arg_mm_rmm *a)
 {
-    if (!mmext_check_macc_common(s, a)) {
+    if (!require_matrix(s) || !mmext_check_acc_reg(a->md) ||
+        !mmext_check_tile_reg(a->ms1) || !mmext_check_tile_reg(a->ms2)) {
         return false;
     }
-    return mm_oprmm_trans(a->md, a->ms1, a->ms2, gen_helper_mmacc, s);
+    if (!s->cfg_ptr->ext_bitmte && (a->kslice || !mmext_check_mnk(s))) {
+        return false;
+    }
+    CPURISCVState *env = cpu_env(s->cs);
+    uint32_t control = a->kslice |
+        (mmext_check_mnk(s) ? BITMTE_ORDINARY_VALID : 0) |
+        (env->sync_skip_mode ? BITMTE_SKIP : 0);
+
+    gen_helper_bitmte_mmacc(tcg_env, tcg_constant_i32(a->md),
+                           tcg_constant_i32(a->ms1),
+                           tcg_constant_i32(a->ms2),
+                           tcg_constant_i32(control));
+    return true;
 }
 
 /* Matrix MISC translation */

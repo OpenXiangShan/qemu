@@ -163,6 +163,13 @@ extern RISCVCPUImpliedExtsRule *riscv_multi_ext_implied_rules[];
 #define RV_TRLEN_MAX   4096
 #define RV_TROWNUM_MAX 128
 
+/* Internal controls shared by the Matrix translator and BitMTE helpers. */
+enum {
+    BITMTE_SLICE_MASK = 7,
+    BITMTE_ORDINARY_VALID = 1 << 4,
+    BITMTE_SKIP = 1 << 5,
+};
+
 FIELD(VTYPE, VLMUL, 0, 3)
 FIELD(VTYPE, VSEW, 3, 3)
 FIELD(VTYPE, VTA, 6, 1)
