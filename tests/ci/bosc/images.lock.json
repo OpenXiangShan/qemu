@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "baseline": "st-v0.9.99-mcu-20260927-itgen-dieid2-20260924",
-  "publication_note": "2026-10-07: initial six files plus iommu_kernel verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen and the Linux IOMMU image were published in independent paths without overwriting existing content. path is offline layout; jf_path is repository-relative remote location. 2026-10-12: clean DID mapper kernel/NVMe modules from 1411c50e0909 published under linux/did-mapper/20261012/1411c50e0909 with source and validation evidence; metadata and fresh CI-reader downloads verified using existing user JF authentication. GitLab read-only token and pipeline not separately verified.",
+  "publication_note": "2026-10-07: initial six files plus iommu_kernel verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen and the Linux IOMMU image were published in independent paths without overwriting existing content. path is offline layout; jf_path is repository-relative remote location. 2026-10-12: clean DID mapper kernel/NVMe modules from 1411c50e0909 published under linux/did-mapper/20261012/1411c50e0909 with source and validation evidence; metadata and fresh CI-reader downloads verified using existing user JF authentication. GitLab read-only token and pipeline not separately verified. 2026-10-15: refresh native-IOMMU Image and the paired DID-mapper Image/NVMe modules to committed Linux 360ac10968fa for forwarded iMSI-RX MSI mapping (CONFIG_IRQ_MSI_IOMMU=y); existing release/firmware/rootfs inputs remain fixed. See ASSETS.md for validation/publication evidence.",
   "assets": {
     "fw_jump": {
       "path": "st-release-v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin",
@@ -62,47 +62,49 @@
       "publication": "verified-20260927"
     },
     "iommu_kernel": {
-      "path": "riscv-linux-devel-clean/d3e51a02cc62/Image",
-      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261007/d3e51a02cc62/Image",
-      "size": 29611520,
-      "sha256": "1c75064fa376a4286bad372ce2f4a67154f23aec0c8f8010b20f8867d821798a",
+      "path": "qemu-ci/linux/iommu/20261015/360ac10968fa/Image",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261015/360ac10968fa/Image",
+      "size": 29616128,
+      "sha256": "6160fbaadf170cf3d363c65a8e576d12441175dd7e894ecfe652d5edffce638f",
       "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config",
-      "source_commit": "d3e51a02cc629221404c9a871da9aec8ec42767d",
-      "kernel_release": "6.18.34",
-      "config_sha256": "8621012714b457f9b099fb8cd68104c717096cd0aadfa1ee756c0da69b81c04a",
+      "source_commit": "360ac10968fa950ac07e63c211ca3ec045c62548",
+      "kernel_release": "6.18.34-bosc-imsi-rx",
+      "config_sha256": "b56720886dbbd5098b68e5a1a2364c75d437da4939df00066534ce59d6d7e445",
       "initramfs_sha256": "718411d17729997a2258f6b1646b564da8be25673bdf59035017f140f1bec547",
-      "compiler": "riscv64-unknown-linux-gnu-gcc (ge97179bacd0) 15.0.0 20241107 (experimental)",
-      "license": "GPL-2.0-only WITH Linux-syscall-note"
+      "compiler": "riscv64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+      "license": "GPL-2.0-only WITH Linux-syscall-note",
+      "source_tree": "2fb8cace829ea57fb92351825649c34452f91d8f",
+      "publication": "versioned-20261015"
     },
     "did_mapper_kernel": {
       "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config; DEBUG_FS=y; NVMe=m",
-      "source_commit": "1411c50e0909d4e32dbe594eccf4c592b43d5c9d",
-      "source_tree": "601e314ab65d22fe0d9a6b62fe98fdd6dfc4a87b",
+      "source_commit": "360ac10968fa950ac07e63c211ca3ec045c62548",
+      "source_tree": "2fb8cace829ea57fb92351825649c34452f91d8f",
       "kernel_release": "6.18.34-bosc-did-mapper",
-      "config_sha256": "2df5d84b00c624ddd3f6a26cc2c0f37633febe2a9fbfedfbc8f7a939cff73c63",
+      "config_sha256": "0896bddcc29e748c94a4d64a13b15bfa1d89899d8e582479f14c7034d5cc8943",
       "initramfs_sha256": "718411d17729997a2258f6b1646b564da8be25673bdf59035017f140f1bec547",
       "compiler": "riscv64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
       "license": "GPL-2.0-only WITH Linux-syscall-note",
-      "publication": "verified-20261012",
-      "path": "qemu-ci/linux/did-mapper/20261012/1411c50e0909/Image",
-      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261012/1411c50e0909/Image",
+      "publication": "versioned-20261015",
+      "path": "qemu-ci/linux/did-mapper/20261015/360ac10968fa/Image",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261015/360ac10968fa/Image",
       "size": 29603328,
-      "sha256": "c037c191a40d6b5def44c07e1e40b4516343481b039e0f276c44e44776ee3983"
+      "sha256": "d98fedc84721b1012fea057349fa15394b99925883fcc1e707a18815e30669a3"
     },
     "did_mapper_modules": {
       "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config; DEBUG_FS=y; NVMe=m",
-      "source_commit": "1411c50e0909d4e32dbe594eccf4c592b43d5c9d",
-      "source_tree": "601e314ab65d22fe0d9a6b62fe98fdd6dfc4a87b",
+      "source_commit": "360ac10968fa950ac07e63c211ca3ec045c62548",
+      "source_tree": "2fb8cace829ea57fb92351825649c34452f91d8f",
       "kernel_release": "6.18.34-bosc-did-mapper",
-      "config_sha256": "2df5d84b00c624ddd3f6a26cc2c0f37633febe2a9fbfedfbc8f7a939cff73c63",
+      "config_sha256": "0896bddcc29e748c94a4d64a13b15bfa1d89899d8e582479f14c7034d5cc8943",
       "initramfs_sha256": "718411d17729997a2258f6b1646b564da8be25673bdf59035017f140f1bec547",
       "compiler": "riscv64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
       "license": "GPL-2.0-only WITH Linux-syscall-note",
-      "publication": "verified-20261012",
-      "path": "qemu-ci/linux/did-mapper/20261012/1411c50e0909/mapper-modules.ext4",
-      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261012/1411c50e0909/mapper-modules.ext4",
+      "publication": "versioned-20261015",
+      "path": "qemu-ci/linux/did-mapper/20261015/360ac10968fa/mapper-modules.ext4",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261015/360ac10968fa/mapper-modules.ext4",
       "size": 16777216,
-      "sha256": "9e7bbb78194569e5f38097817a19d1a7beb3788be8b668928a2f13cdb9d5447c"
+      "sha256": "a5587183dcdcd0d4bdd8cc7ee1003ec3952643d560a3c662fa8da9eae4dfb323"
     }
   }
 }

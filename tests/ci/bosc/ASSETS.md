@@ -4,7 +4,19 @@
 六个文件；release 三项复用现有正式文件，其他三项新上传。
 随后从空缓存下载全部六项，在独立 checkout 构建 QEMU 并通过第一阶段全量验证。
 CI 本身仍只有读取接口，不执行上传或固件构建。
-当前锁文件包含七项已发布输入及两项待发布 mapper 输入，按选中用例取用。
+当前锁文件包含九项输入，按选中用例取用。
+
+2026-10-15 的 iMSI-RX 配套基线使用干净 Linux 提交 `360ac10968fa`：
+`iommu_kernel` 位于 `linux/iommu/20261015/360ac10968fa/`，
+`did_mapper_kernel` 和 `did_mapper_modules` 位于
+`linux/did-mapper/20261015/360ac10968fa/`（均在上述 qemu-ci 发布前缀下）。
+新内核启用 `CONFIG_IRQ_MSI_IOMMU=y`，通过 endpoint MSI domain 映射转发写。
+mapper Image 和 NVMe 模块必须成对更新，因为该配置改变 `msi_desc` 布局。
+generated DT 由当前 QEMU 提供 `snps,imsi-rx-forward`；无 DT 的 fw_jump、
+rootfs、MCU/QSPI 及普通 minimal Image 继续使用原锁定资产。
+准确大小、SHA256、config 和源码来源以 `images.lock.json` 为准。
+构建、发布和本地回归证据位于 workspace 的
+`test-artifacts/imsi-rx-ci-20261015/`；本地回归不表示 GitLab pipeline 已通过。
 
 JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 镜像锁的 `jf_path` 为实际远端位置，`path` 保留原离线布局：
@@ -14,7 +26,8 @@ JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 | OpenSBI、Image、rootfs | `xs-sw/st-release/v0.9.99/` 下各原发布目录 |
 | MCU BIN、QSPI payload、源码/构建证据 | `hejian-workspace/guoyaxing/qemu-ci/mcu/20260927/` |
 | ITGen BIN、源码/ELF/原始 log | `hejian-workspace/guoyaxing/qemu-ci/itgen/aplic-cross-die/dieid2-20260924/` |
-| IOMMU/compose Linux Image、配置和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261007/d3e51a02cc62/` |
+| IOMMU/compose Linux Image、配置和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261015/360ac10968fa/` |
+| DID mapper Image、配套 NVMe 模块和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261015/360ac10968fa/` |
 | 固定构建依赖源码 tar | `hejian-workspace/guoyaxing/qemu-ci/native-deps/` |
 
 发布索引目录为 `hejian-workspace/guoyaxing/qemu-ci/baselines/` 下的
