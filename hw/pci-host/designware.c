@@ -542,7 +542,7 @@ static void designware_pcie_root_realize(PCIDevice *dev, Error **errp)
 
         destination = &host->pci.memory;
         direction   = "Outbound";
-        source      = host_mem;
+        source      = host->outbound_mem ? host->outbound_mem : host_mem;
 
         /*
          * Configure MemoryRegion implementing CPU -> PCI memory
@@ -837,6 +837,8 @@ static const VMStateDescription vmstate_designware_pcie_host G_GNUC_UNUSED = {
 };
 
 static const Property designware_pcie_host_properties[] = {
+    DEFINE_PROP_LINK("outbound-memory", DesignwarePCIEHost, outbound_mem,
+                     TYPE_MEMORY_REGION, MemoryRegion *),
     DEFINE_PROP_BOOL("dma-to-system-memory", DesignwarePCIEHost,
                      dma_to_system_memory, false),
     DEFINE_PROP_STRING("root-bus-name", DesignwarePCIEHost, root_bus_name),

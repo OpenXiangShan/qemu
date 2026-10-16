@@ -28,24 +28,95 @@ static void reg64(QTestState *q, uint64_t reg, uint64_t val)
     qtest_writel(q, reg + 4, val >> 32);
 }
 
-static void setup_edu(QTestState *q, unsigned die)
+static void program_outbound(QTestState *q, uint64_t dbi, unsigned index,
+                              uint32_t type, uint64_t base, uint64_t target)
 {
-    uint64_t dbi = ga(die, DBI);
-    uint64_t ep = ga(die, ECAM) + 0x100000;
+    qtest_writel(q, dbi + 0x900, index);
+    qtest_writel(q, dbi + 0x904, type);
+    reg64(q, dbi + 0x90c, base);
+    qtest_writel(q, dbi + 0x914, base + MiB - 1);
+    reg64(q, dbi + 0x918, target);
+    qtest_writel(q, dbi + 0x908, 0x80000000);
+}
 
+static void setup_bosc_edu(QTestState *q, uint64_t dbi, uint64_t ep,
+                            uint64_t bar, uint64_t local_ecam,
+                            uint64_t local_bar)
+{
     qtest_writew(q, dbi + 4, 6);
     qtest_writel(q, dbi + 0x18, 0x00010100);
     qtest_writel(q, dbi + 0x20, 0x50005000);
-    qtest_writel(q, dbi + 0x900, 0);
-    qtest_writel(q, dbi + 0x904, 0);
-    reg64(q, dbi + 0x90c, ga(die, WINDOW));
-    qtest_writel(q, dbi + 0x914, (ga(die, WINDOW) + MiB - 1));
-    reg64(q, dbi + 0x918, 0x50000000);
-    qtest_writel(q, dbi + 0x908, 0x80000000);
+    program_outbound(q, dbi, 0, 0, local_bar, 0x50000000);
+    program_outbound(q, dbi, 1, 4, local_ecam + MiB, 1U << 24);
     g_assert_cmphex(qtest_readl(q, ep), ==, 0x11e81234);
     qtest_writel(q, ep + 0x10, 0x50000000);
     qtest_writew(q, ep + 4, 6);
-    g_assert_cmphex(qtest_readl(q, ga(die, WINDOW)), ==, 0x010000ed);
+    g_assert_cmphex(qtest_readl(q, bar), ==, 0x010000ed);
+}
+
+static void setup_edu(QTestState *q, unsigned die)
+{
+    setup_bosc_edu(q, ga(die, DBI), ga(die, ECAM) + MiB,
+                   ga(die, WINDOW), ECAM, WINDOW);
+}
+
+/* The fabric routes first; each RC compares only the local CFG/MEM address. */
+static void test_outbound_routing(const void *opaque)
+{
+    bool single = (uintptr_t)opaque;
+    const uint64_t dbis[] = { DBI, 0x4f00800000, 0x4f01000000 };
+    const uint64_t ecams[] = { ECAM, 0x4900000000, 0x4a00000000 };
+    const uint64_t bars[] = { WINDOW, 0x4e000000000, 0x4f000000000 };
+    unsigned roots = single ? 3 : 12;
+    GString *args = g_string_new(single ?
+        "-M kmh-bosc-soc,soc-mode=single,core-mask=0x1,dw-pcie=on,"
+        "generated-dtb=on -smp 16,maxcpus=17 -m 256M" :
+        "-M kmh-bosc-soc,soc-mode=multi,die-mask=0xf,core-mask=0x1,"
+        "dw-pcie=on,generated-dtb=on -smp 64,maxcpus=68 -m 256M");
+    QTestState *q;
+
+    for (unsigned root = 0; root < roots; root++) {
+        g_string_append_printf(args, " -device edu,bus=pcie-d%u-p%u",
+                               root / 3, root % 3);
+    }
+    q = qtest_init(args->str);
+    g_string_free(args, true);
+
+    for (unsigned root = 0; root < roots; root++) {
+        unsigned port = root % 3;
+        uint64_t id = single ? 0 : (uint64_t)(root / 3 + 1) << 44;
+        uint64_t dbi = id | dbis[port];
+        uint64_t ep = (id | ecams[port]) + MiB;
+        uint64_t bar = id | bars[port];
+
+        setup_bosc_edu(q, dbi, ep, bar, ecams[port], bars[port]);
+        qtest_writel(q, bar + 4, 0x12340000 + root);
+
+        /* Disable/move CFG: no direct ECAM path may bypass the comparator. */
+        qtest_writel(q, dbi + 0x900, 1);
+        qtest_writel(q, dbi + 0x908, 0);
+        g_assert_cmphex(qtest_readl(q, ep), !=, 0x11e81234);
+        program_outbound(q, dbi, 1, 4, ecams[port] + 2 * MiB, 1U << 24);
+        g_assert_cmphex(qtest_readl(q, ep), !=, 0x11e81234);
+        g_assert_cmphex(qtest_readl(q, ep + MiB), ==, 0x11e81234);
+        program_outbound(q, dbi, 1, 4, ecams[port] + MiB, 1U << 24);
+
+        /* BASE still carrying a die ID must not match the RC-local input. */
+        program_outbound(q, dbi, 0, 0, ga(0, bars[port]), 0x50000000);
+        g_assert_cmphex(qtest_readl(q, bar), !=, 0x010000ed);
+        program_outbound(q, dbi, 0, 0, bars[port], 0x50000000);
+        qtest_writel(q, dbi + 0x908, 0);
+        g_assert_cmphex(qtest_readl(q, bar), !=, 0x010000ed);
+        qtest_writel(q, dbi + 0x908, 0x80000000);
+    }
+    for (unsigned root = 0; root < roots; root++) {
+        uint64_t id = single ? 0 : (uint64_t)(root / 3 + 1) << 44;
+
+        /* Identical per-port local windows retain distinct endpoint state. */
+        g_assert_cmphex(qtest_readl(q, (id | bars[root % 3]) + 4), ==,
+                        (uint32_t)~(0x12340000 + root));
+    }
+    qtest_quit(q);
 }
 
 static void send_msi(QTestState *q, unsigned die, uint64_t addr,
@@ -505,6 +576,10 @@ static void test_iommu_msi_mode(const void *opaque)
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    qtest_add_data_func("/kmh-bosc/pcie/outbound-multi", (void *)0,
+                        test_outbound_routing);
+    qtest_add_data_func("/kmh-bosc/pcie/outbound-single", (void *)1,
+                        test_outbound_routing);
     qtest_add_data_func("/kmh-bosc/pcie/imsi-axi44", (void *)0, test_pcie);
     qtest_add_data_func("/kmh-bosc/pcie/imsi-iommu", (void *)1, test_pcie);
     qtest_add_func("/kmh-bosc/pcie/iommu-root-contexts",

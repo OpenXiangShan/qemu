@@ -79,9 +79,15 @@ static void setup(QTestState *q, unsigned root)
     qtest_writew(q, dbi + 4, 6);
     qtest_writel(q, dbi + 0x18, 0x00010100);
     qtest_writel(q, dbi + 0x20, 0x50005000);
-    reg64(q, dbi + 0x90c, bar);
-    qtest_writel(q, dbi + 0x914, bar + MiB - 1);
+    reg64(q, dbi + 0x90c, bars[port]);
+    qtest_writel(q, dbi + 0x914, bars[port] + MiB - 1);
     reg64(q, dbi + 0x918, 0x50000000);
+    qtest_writel(q, dbi + 0x908, 0x80000000);
+    qtest_writel(q, dbi + 0x900, 1);
+    qtest_writel(q, dbi + 0x904, 4);
+    reg64(q, dbi + 0x90c, ecams[port] + MiB);
+    qtest_writel(q, dbi + 0x914, ecams[port] + 2 * MiB - 1);
+    reg64(q, dbi + 0x918, 1U << 24);
     qtest_writel(q, dbi + 0x908, 0x80000000);
     g_assert_cmphex(qtest_readl(q, ep), ==, 0x11e81234);
     qtest_writel(q, ep + 0x10, 0x50000000);

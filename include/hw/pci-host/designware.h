@@ -86,6 +86,8 @@ struct DesignwarePCIEHost {
     PCIExpressHost parent_obj;
 
     DesignwarePCIERoot root;
+    /* Optional RC-local address space for CPU-to-PCI outbound viewports. */
+    MemoryRegion *outbound_mem;
     bool dma_to_system_memory;
     char *root_bus_name;
     char *sec_bus_name;

@@ -273,6 +273,20 @@ Machine options
       -drive file=./kmh-nvme.raw,format=raw,if=none,id=nvme0 \
       -device nvme,drive=nvme0,serial=kmh-nvme0,bus=pcie-d0-p0
 
+   CPU-to-PCI accesses first select a die and port using the global ECAM or
+   memory aperture. The fabric removes the die ID in bits [46:44] before
+   the selected RC compares the address against outbound iATU BASE/LIMIT.
+   Each RC has an independent local address space, so identical local iATU
+   windows on different dies remain isolated. Downstream configuration
+   accesses also require an enabled, matching CFG viewport; only root-bus
+   configuration is accessible without one.
+
+   Generated DT nodes use ``bosc,kmh-bosc-soc-pcie``. Linux must enable
+   ``CONFIG_PCIE_KMH_BOSC_SOC`` and program local outbound iATU addresses,
+   while retaining die IDs in CPU-visible ``reg`` and ``ranges`` addresses.
+   This outbound path is independent of endpoint DMA, IOMMU translation,
+   and MSI routing.
+
    This machine models a 44-bit PCIe AXI master: memory requests leaving an
    RC are truncated to bits [43:0]. Local MMIO then resolves through the
    requester's existing die address space. DDR keeps its global fixed-slot
@@ -280,20 +294,24 @@ Machine options
    other machines using DesignWare PCIe are not truncated.
 
    Each RC enables 256 integrated MSI receiver (iMSI-RX) vectors, in eight
-   banks of 32. A matching PCIe memory write is consumed before AXI address
-   truncation or system IOMMU translation. It sets the corresponding status
-   bit and asserts the RC's summary interrupt into its local APLIC. Reads of
-   the receiver address remain ordinary DMA. Receiver addresses and pending
-   bits belong to individual RCs, including when they use the same address.
+   banks of 32. A matching PCIe memory write sets the corresponding status
+   bit and asserts the RC's summary interrupt into its local APLIC, then
+   continues through the original endpoint's DMA requester path. With
+   IOMMU bypass disabled, the forwarded write requires a valid IOMMU
+   mapping, including for the MSI landing page. Reads of the receiver
+   address remain ordinary DMA. Receiver addresses and pending bits belong
+   to individual RCs, including when they use the same address.
 
    Generated DT PCIe nodes omit ``msi-parent`` and ``msi-map`` so the Linux
-   ``snps,dw-pcie`` driver selects iMSI-RX. They retain ``msi`` and ``hp``
+   ``kmh-bosc-soc-pcie`` driver selects iMSI-RX. They retain ``msi`` and ``hp``
    interrupt resources; the APLIC nodes still reference IMSIC as their MSI
    parent. External DTs must describe this same wiring to use iMSI-RX.
    ACPI does not describe this DWC-specific receiver path.
 
    ``kmh-bosc-pcie-test`` exercises all 256 vectors, interrupt masking/W1C,
-   RC isolation, full-address MSI matching, AXI truncation, global DDR DMA,
+   RC isolation, local CFG/MEM iATU routing across all twelve multi-die RCs
+   and all three single-die RCs, full-address MSI matching, AXI truncation,
+   global DDR DMA,
    IOMMU Off/Bare behavior, and an existing other-machine DMA/MSI path.
    The shared DWC model defaults to 32 vectors; this board explicitly sets
    its ``num-msi-vectors`` property to 256.
@@ -319,8 +337,8 @@ Machine options
    设备树的 ``iommu-map``。运行时由每个 die/port 的 mapper mux bit0 独立控制：
    bit0 为 1 时，PCIe DMA 保留低 44 位地址，直接访问请求者所属 die 的
    AddressSpace，跳过 DID/PID mapper 和 IOMMU 翻译；bit0 为 0 时恢复 mapper
-   和 IOMMU 路径。AXI traffic 同样使用该 bypass 位。匹配 iMSI-RX 的 MSI 写仍
-   优先由接收器消费。
+   和 IOMMU 路径。AXI traffic 同样使用该 bypass 位。匹配 iMSI-RX 的 MSI 写会
+   先更新接收器状态，再经原 requester 的 DMA 路径转发。
 
    wrapper mux 本地地址为 ``0x4f80201000 + port * 0x10000``；multi 模式还需
    加上 ``(die + 1) << 44``。Guest 在加载 NVMe 前应读改写清 bit0，保留 mapper

@@ -294,6 +294,9 @@ struct KmhBoscState {
 
     DesignwarePCIEHost pcie[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
     KmhBoscPcieDma pcie_dma[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
+    MemoryRegion pcie_outbound[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
+    MemoryRegion pcie_ecam_alias[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
+    MemoryRegion pcie_mem_alias[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
 
     MemoryRegion ddr_alias[KMH_BOSC_DIES];
     MemoryRegion mcu_bootrom[KMH_BOSC_DIES];
@@ -1775,7 +1778,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
 
                 qemu_fdt_add_subnode(fdt, pcie_name);
                 qemu_fdt_setprop_string(fdt, pcie_name, "compatible",
-                                        "snps,dw-pcie");
+                                        "bosc,kmh-bosc-soc-pcie");
                 qemu_fdt_setprop_cell(fdt, pcie_name, "#address-cells", 3);
                 qemu_fdt_setprop_cell(fdt, pcie_name, "#size-cells", 2);
                 qemu_fdt_setprop_cell(fdt, pcie_name, "#interrupt-cells", 1);
@@ -2350,6 +2353,9 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             const hwaddr mctp_base = kmh_bosc_die_addr(s, die, pcie_map->mctp.base);
             const hwaddr iopmp_base = kmh_bosc_die_addr(s, die, pcie_map->iopmp.base);
             DesignwarePCIEHost *host = &s->pcie[die][port];
+            MemoryRegion *outbound = &s->pcie_outbound[die][port];
+            MemoryRegion *ecam_alias = &s->pcie_ecam_alias[die][port];
+            MemoryRegion *mem_alias = &s->pcie_mem_alias[die][port];
             g_autofree char *child_name = g_strdup_printf("pcie-d%d-p%d", die, port);
             g_autofree char *root_bus_name =
                 g_strdup_printf("pcie-d%d-p%d-root", die, port);
@@ -2367,8 +2373,18 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
                 g_strdup_printf("kmh-bosc-pcie-d%d-p%d-iopmp", die, port);
             SysBusDevice *pcie;
 
+            /*
+             * The fabric selects the RC using the global die ID, then
+             * removes that ID before the RC's outbound iATU comparison.
+             * Keep each RC's local viewports in a separate container so
+             * identical BASE/LIMIT values on different dies cannot alias.
+             */
+            memory_region_init(outbound, OBJECT(s), child_name,
+                               1ULL << KMH_BOSC_DIE_SHIFT);
             object_initialize_child(OBJECT(MACHINE(s)), child_name, host,
                                     TYPE_DESIGNWARE_PCIE_HOST);
+            object_property_set_link(OBJECT(host), "outbound-memory",
+                                     OBJECT(outbound), &error_fatal);
             qdev_prop_set_string(DEVICE(host), "root-bus-name", root_bus_name);
             qdev_prop_set_string(DEVICE(host), "sec-bus-name", sec_bus_name);
             qdev_prop_set_string(DEVICE(host), "root-bus-path", root_bus_path);
@@ -2399,8 +2415,23 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
              */
             PCI_HOST_BRIDGE(host)->bus->iommu_ops = NULL;
             PCI_HOST_BRIDGE(host)->bus->iommu_opaque = NULL;
-            pcie_host_mmcfg_map(PCIE_HOST_BRIDGE(host), ecam_base,
-                                pcie_map->ecam.size);
+            /* Root configuration is local; downstream CFG needs an iATU. */
+            pcie_host_mmcfg_init(PCIE_HOST_BRIDGE(host),
+                                 PCIE_MMCFG_SIZE_MIN);
+            memory_region_add_subregion(outbound, pcie_map->ecam.base,
+                                         &PCIE_HOST_BRIDGE(host)->mmio);
+            memory_region_init_alias(ecam_alias, OBJECT(s), child_name,
+                                     outbound, pcie_map->ecam.base,
+                                     pcie_map->ecam.size);
+            memory_region_add_subregion(get_system_memory(), ecam_base,
+                                         ecam_alias);
+            memory_region_init_alias(mem_alias, OBJECT(s), child_name,
+                                     outbound, pcie_map->mem.base,
+                                     pcie_map->mem.size);
+            memory_region_add_subregion(get_system_memory(),
+                                         kmh_bosc_die_addr(s, die,
+                                                            pcie_map->mem.base),
+                                         mem_alias);
 
             create_unimplemented_device(dbi_rest_name, dbi_base + 0x1000,
                                         pcie_map->dbi.size - 0x1000);
