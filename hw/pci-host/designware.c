@@ -62,6 +62,9 @@
 #define DESIGNWARE_PCIE_ATU_DEVFN(x)               (((x) >> 16) & 0xff)
 #define DESIGNWARE_PCIE_ATU_UPPER_TARGET           0x91C
 
+/* First free extended capability slot on the DesignWare Root Port. */
+#define DESIGNWARE_PCIE_ACS_OFFSET                  0x100
+
 static void designware_pcie_root_bus_class_init(ObjectClass *klass,
                                                 const void *data)
 {
@@ -500,6 +503,12 @@ static void designware_pcie_root_realize(PCIDevice *dev, Error **errp)
 
     pcie_cap_init(dev, 0x70, PCI_EXP_TYPE_ROOT_PORT,
                   0, &error_fatal);
+
+    /*
+     * Advertise ACS on the Root Port so Linux can isolate downstream PCIe
+     * functions into separate IOMMU groups for VFIO.
+     */
+    pcie_acs_init(dev, DESIGNWARE_PCIE_ACS_OFFSET);
 
     msi_nonbroken = true;
     msi_init(dev, 0x50, 32, true, true, &error_fatal);
