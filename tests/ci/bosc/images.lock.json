@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "baseline": "st-v0.9.99-mcu-20260927-itgen-dieid2-20260924",
-  "publication_note": "2026-10-07: initial six files plus iommu_kernel verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen and the Linux IOMMU image were published in independent paths without overwriting existing content. path is offline layout; jf_path is repository-relative remote location. 2026-10-12: clean DID mapper kernel/NVMe modules from 1411c50e0909 published under linux/did-mapper/20261012/1411c50e0909 with source and validation evidence; metadata and fresh CI-reader downloads verified using existing user JF authentication. GitLab read-only token and pipeline not separately verified. 2026-10-15: refresh native-IOMMU Image and the paired DID-mapper Image/NVMe modules to committed Linux 360ac10968fa for forwarded iMSI-RX MSI mapping (CONFIG_IRQ_MSI_IOMMU=y); existing release/firmware/rootfs inputs remain fixed. See ASSETS.md for validation/publication evidence. 2026-10-21: Images built on 2026-10-19 from clean Linux 142f576d83ed published under linux/{iommu,did-mapper}/20261019/142f576d83ed; all three remote sizes/SHA256 verified. CONFIG_PCIE_KMH_BOSC_SOC supports the new QEMU compatible and strips die-id bits [46:44] in outbound iATU. Fresh CI-download/regression evidence is indexed in ASSETS.md; GitLab pipeline and its read-only token are not separately verified.",
+  "publication_note": "2026-10-07: initial six files plus iommu_kernel verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen and the Linux IOMMU image were published in independent paths without overwriting existing content. path is offline layout; jf_path is repository-relative remote location. 2026-10-12: clean DID mapper kernel/NVMe modules from 1411c50e0909 published under linux/did-mapper/20261012/1411c50e0909 with source and validation evidence; metadata and fresh CI-reader downloads verified using existing user JF authentication. GitLab read-only token and pipeline not separately verified. 2026-10-15: refresh native-IOMMU Image and the paired DID-mapper Image/NVMe modules to committed Linux 360ac10968fa for forwarded iMSI-RX MSI mapping (CONFIG_IRQ_MSI_IOMMU=y); existing release/firmware/rootfs inputs remain fixed. See ASSETS.md for validation/publication evidence. 2026-10-21: Images built on 2026-10-19 from clean Linux 142f576d83ed published under linux/{iommu,did-mapper}/20261019/142f576d83ed; all three remote sizes/SHA256 verified. CONFIG_PCIE_KMH_BOSC_SOC supports the new QEMU compatible and strips die-id bits [46:44] in outbound iATU. Fresh CI-download/regression evidence is indexed in ASSETS.md; GitLab pipeline and its read-only token are not separately verified. 2026-10-21: Five checkpoint inputs from the original 20261015 2die32c litmus bundle and the derived 20261019 no-map OpenSBI/DTB were published under hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019; remote sizes/SHA256 verified without changing the locked bytes. Source/build provenance and historical validation are in source-evidence.tar.gz. See ASSETS.md for fresh CI-downloader acceptance; GitLab read-only token and pipeline are not separately verified.",
   "assets": {
     "fw_jump": {
       "path": "st-release-v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin",
@@ -108,38 +108,43 @@
     },
     "checkpoint_fw_jump": {
       "path": "qemu-ci/checkpoint/2die32c-20261019/fw_jump.bin",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019/fw_jump.bin",
       "size": 536848,
       "sha256": "31ef886b30f8278f260ba2187a14ce864e1cab678dababb460919db11d5a0555",
       "source": "20261015 five-image baseline; derived no-map DT/fw_jump from 20261019 native v3 validation",
-      "publication": "local-only-not-published"
+      "publication": "metadata-verified-20261021"
     },
     "checkpoint_dtb": {
       "path": "qemu-ci/checkpoint/2die32c-20261019/native-checkpoint.dtb",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019/native-checkpoint.dtb",
       "size": 98451,
       "sha256": "ea2740fd9d8bf2f1b3754182a38d4362a7b199c9e03ee018997dd087a4f413eb",
       "source": "20261015 five-image baseline; derived no-map DT/fw_jump from 20261019 native v3 validation",
-      "publication": "local-only-not-published"
+      "publication": "metadata-verified-20261021"
     },
     "checkpoint_kernel": {
       "path": "qemu-ci/checkpoint/2die32c-20261019/Image",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019/Image",
       "size": 29615616,
       "sha256": "d69e23d2cda197e04e727bcf22c09ac2a51bdb502bb50d372d17453e324d98f8",
       "source": "kmh-bosc-soc-2die32c-litmus-isolcpus16-31-20261015",
-      "publication": "local-only-not-published"
+      "publication": "metadata-verified-20261021"
     },
     "checkpoint_workload": {
       "path": "qemu-ci/checkpoint/2die32c-20261019/testdata-misc.ext4",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019/testdata-misc.ext4",
       "size": 890499072,
       "sha256": "8e4b3d5b2a7f0badf00075d5d82efc0af2f49084c15cd789131ba4b543ea96aa",
       "source": "kmh-bosc-soc-2die32c-litmus-isolcpus16-31-20261015",
-      "publication": "local-only-not-published"
+      "publication": "metadata-verified-20261021"
     },
     "checkpoint_trigger": {
       "path": "qemu-ci/checkpoint/2die32c-20261019/trigger.info.linux_litmus_32core",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019/trigger.info.linux_litmus_32core",
       "size": 443,
       "sha256": "608dcfdbdb4257738a9671df81db141b0db6e4da556d0389ef6b3acb75e0aee9",
       "source": "kmh-bosc-soc-2die32c-litmus-isolcpus16-31-20261015",
-      "publication": "local-only-not-published"
+      "publication": "metadata-verified-20261021"
     }
   }
 }

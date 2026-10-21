@@ -42,6 +42,7 @@ JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 | ITGen BIN、源码/ELF/原始 log | `hejian-workspace/guoyaxing/qemu-ci/itgen/aplic-cross-die/dieid2-20260924/` |
 | IOMMU/compose Linux Image、配置和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261019/142f576d83ed/` |
 | DID mapper Image、配套 NVMe 模块和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261019/142f576d83ed/` |
+| Checkpoint 五项输入、源码和验证记录 | `hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019/` |
 | 固定构建依赖源码 tar | `hejian-workspace/guoyaxing/qemu-ci/native-deps/` |
 
 发布索引目录为 `hejian-workspace/guoyaxing/qemu-ci/baselines/` 下的
@@ -161,15 +162,26 @@ release 为 `6.18.34-bosc-did-mapper`，使测试能在首次 NVMe probe 前配�
 CI 下载/执行分开记录。使用已有用户 JF 认证不证明 GitLab 专用 token 的权限。
 若部署设置 `BOSC_CI_JF_PATHS`，须同步更新三项路径；CI 本身只读不发布。
 
-## Checkpoint 五段镜像（离线锁定，尚未发布）
+## Checkpoint 五段镜像（2026-10-21 已发布）
 
 `checkpoint_fw_jump`、`checkpoint_dtb`、`checkpoint_kernel`、
-`checkpoint_workload`、`checkpoint_trigger` 的 size/SHA256 已锁定，来源为
-20261015 2die32c isolcpus 五段包与 20261019 实测的派生 no-map 固件/DT。
-`rootfs` 复用原有锁项。当前 publication 为 `local-only-not-published`，
-没有填入未经验证的 JF 路径；通过 `--asset`、`--assets-dir` 或已校验缓存
-运行。手动运行 checkpoint job 需要这些输入，缺失会失败；不参与自动选测。
+`checkpoint_workload`、`checkpoint_trigger` 已发布到上表 checkpoint 目录，
+逐项核验了 JF metadata 的 size/SHA256。原有锁定字节与离线 `path` 保持不变，
+新增 `jf_path` 并移除未发布标记；`rootfs` 继续复用现有 release 输入。
+手动运行 `bosc:checkpoint` 可按锁文件下载全部输入，不参与自动选测。
+
+同目录 `source-evidence.tar.gz` 保留 OpenSBI `c620d76df37e` 源码归档和许可证、
+派生 DTB/DTS、固件 ELF/配置/构建命令与日志、内嵌 DTB 校验、原始五段包说明，
+以及历史 QEMU 源码快照和验证记录。历史 CI 报告按原状态保留，不作为新流水线
+通过证明。原始 Image 内嵌版本为 `6.18.34-00133-g28347680f615-dirty`，
+未保留其完整 dirty Linux 源码和首次构建日志，不能声称来自干净源码重编。
+
+本次发布及空缓存下载证据位于 workspace
+`test-artifacts/checkpoint-jf-publish-20261021-y5mkxqm4/`。
+`publish-inputs.published.json` 记录远端 metadata；
+`cold-download/asset-evidence/checkpoint.json` 记录全部八项输入的真实下载来源。
+下载使用现有用户 JF 认证，不代表 GitLab 专用只读 token 或线上流水线已验收。
+旧 pipeline 重试仍使用旧锁文件，须在包含本次锁文件更新的新提交上运行。
 
 固件制品准备脚本为 `checkpoint/prepare-firmware.py`，要求显式传入
 `--opensbi`。普通 CI 不调用它、不重编 OpenSBI，也不会自动发布制品。
-制品发布应附源码版本、构建日志、内嵌 DTB 校验及本轮回归证据。

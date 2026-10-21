@@ -346,5 +346,6 @@ size/hash 与实际下载验证见 [ASSETS.md](ASSETS.md)。本地可用精确 h
 稀疏拓扑、raw 解压/恢复及 Linux 五段式场景。全部为手动 case，不参与 MR、
 schedule、默认分支或 `--full` 自动选测。GitLab 点击 `bosc:checkpoint` 后独立
 构建和执行；本地运行 `python3 tests/ci/bosc/ci.py all --group checkpoint`。
-详见 [CHECKPOINT.md](CHECKPOINT.md)。新 Linux checkpoint 镜像尚未发布 JF，
-必须提供锁定 hash 的离线输入或在独立发布流程完成后更新路径；缺失时失败。
+详见 [CHECKPOINT.md](CHECKPOINT.md)。Linux checkpoint 镜像已发布到锁文件
+指定的 JF 版本目录，使用现有 JF 下载配置；也可提供锁定 hash 的离线输入。
+发布及下载证据见 [ASSETS.md](ASSETS.md)。

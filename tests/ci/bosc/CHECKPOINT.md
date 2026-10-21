@@ -42,9 +42,10 @@ null guest exit。Forbidden/Required witness 不符合预期时失败。
 - Linux 普通输入沿用 `images.lock.json` 的 fw_jump/kernel/rootfs。
   2die32c 固定输入来自 20261015 五段包与 20261019 验证过的 no-map DT/fw_jump，
   使用新 asset ID `checkpoint_fw_jump/dtb/kernel/workload/trigger`。
-- 新的五项 checkpoint asset 当前标记 `local-only-not-published`，没有伪造
-  JF 地址。可通过同 hash 的离线输入/缓存执行；缺失时明确失败，不能静默
-  skip 或尝试不确定的远端文件。远端发布不是普通 CI 的副作用。
+- 五项 checkpoint asset 已于 2026-10-21 发布到 JF，`images.lock.json`
+  锁定其下载路径、大小和 SHA256。手动 job 使用现有 JF 下载配置即可取用；
+  也可提供同 hash 的离线输入/缓存。发布与下载证据见 `ASSETS.md`。
+  远端发布不是普通 CI 的副作用。
 - `checkpoint/prepare-firmware.py` 是独立制品准备工具，必须显式提供
   `--opensbi` 源码路径。它不由 CI worker 调用；固件更新后需重新锁定输入。
   仓库不再依赖开发机的相邻目录和日期命名 `test-artifacts`。
@@ -85,8 +86,9 @@ python3 tests/ci/bosc/ci.py all --group checkpoint \
 手动结果。未点击时不会下载 checkpoint 镜像、编译 guest 或运行 QEMU；
 `--full` 和定时任务也不会自动包含这些 case。
 
-完整矩阵需要事先提供离线 checkpoint 镜像，或在独立发布任务完成远端发布后
-更新锁文件；本地 PASS 不等于资产已发布或线上 job 已通过。
+完整矩阵可直接消费锁文件中的 JF 输入，或使用同 hash 的离线镜像。
+旧 pipeline 重试使用原提交的锁文件，需在包含本次发布路径更新的新提交上运行。
+本地下载成功不代表 GitLab 专用只读 token 或线上 job 已通过。
 
 ## 结果与大文件
 
