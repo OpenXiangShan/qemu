@@ -67,6 +67,7 @@ undocumented; you can get a complete list by running
    :maxdepth: 1
 
    riscv/kmh-bosc-soc
+   riscv/kmh-bosc-soc-checkpoint
    riscv/microblaze-v-generic
    riscv/microchip-icicle-kit
    riscv/qemu-to-iosystem

@@ -548,3 +548,9 @@ Limitations
 * ``generated-dtb=on`` 和 ``autotest-dtb=on`` 不能与外部 ``-dtb`` 组合。
 * ``generated-acpi=on`` 当前覆盖最小系统启动，不包含 PCIe ACPI 描述。
 * ``kmh-bosc-soc`` 当前没有 RISC-V trace encoder 支持。
+
+Portable checkpoints
+--------------------
+
+For DDR checkpoints and five-image Linux restore tests, see
+:doc:`kmh-bosc-soc-checkpoint`.
