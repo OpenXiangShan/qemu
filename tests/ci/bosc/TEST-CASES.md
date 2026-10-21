@@ -749,3 +749,6 @@ negative case 额外要求明确 cause/DID/实例、未受影响盘持续 I/O �
 专用内核首次加载 NVMe 模块前设置 mapper；不配置 mapper 的既有 IOMMU case
 继续验证原 RID。输入资产和发布状态见 ASSETS.md，日志新增 mapper-evidence.json
 及逐阶段 shell 脚本。
+
+Checkpoint 用例与逐项断言见 [CHECKPOINT.md](CHECKPOINT.md)。新增 case 在
+`cases.json` 登记，并由 `bosc:checkpoint` 和统一 JUnit 报告收集。

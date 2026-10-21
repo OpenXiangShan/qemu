@@ -4,7 +4,7 @@
 六个文件；release 三项复用现有正式文件，其他三项新上传。
 随后从空缓存下载全部六项，在独立 checkout 构建 QEMU 并通过第一阶段全量验证。
 CI 本身仍只有读取接口，不执行上传或固件构建。
-当前锁文件包含九项输入，按选中用例取用。
+当前锁文件包含十四项输入，按选中用例取用；其中五项 checkpoint 输入仅在手动运行时使用。
 
 本轮 PCIe outbound 配套镜像由干净 Linux 提交
 `142f576d83ed424471143d9ec9cbc452a198297b` 构建（2026-10-19），
@@ -160,3 +160,16 @@ release 为 `6.18.34-bosc-did-mapper`，使测试能在首次 NVMe probe 前配�
 新版本附带来源、许可证、SHA256SUMS 和验收索引；远端 metadata 核验与实际
 CI 下载/执行分开记录。使用已有用户 JF 认证不证明 GitLab 专用 token 的权限。
 若部署设置 `BOSC_CI_JF_PATHS`，须同步更新三项路径；CI 本身只读不发布。
+
+## Checkpoint 五段镜像（离线锁定，尚未发布）
+
+`checkpoint_fw_jump`、`checkpoint_dtb`、`checkpoint_kernel`、
+`checkpoint_workload`、`checkpoint_trigger` 的 size/SHA256 已锁定，来源为
+20261015 2die32c isolcpus 五段包与 20261019 实测的派生 no-map 固件/DT。
+`rootfs` 复用原有锁项。当前 publication 为 `local-only-not-published`，
+没有填入未经验证的 JF 路径；通过 `--asset`、`--assets-dir` 或已校验缓存
+运行。手动运行 checkpoint job 需要这些输入，缺失会失败；不参与自动选测。
+
+固件制品准备脚本为 `checkpoint/prepare-firmware.py`，要求显式传入
+`--opensbi`。普通 CI 不调用它、不重编 OpenSBI，也不会自动发布制品。
+制品发布应附源码版本、构建日志、内嵌 DTB 校验及本轮回归证据。

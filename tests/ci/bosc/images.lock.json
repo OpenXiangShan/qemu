@@ -105,6 +105,41 @@
       "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261019/142f576d83ed/mapper-modules.ext4",
       "size": 16777216,
       "sha256": "4e10f62d21f7f48047ebc0d050ec3728c97c77df616fcb9d6f2c06070914ef2d"
+    },
+    "checkpoint_fw_jump": {
+      "path": "qemu-ci/checkpoint/2die32c-20261019/fw_jump.bin",
+      "size": 536848,
+      "sha256": "31ef886b30f8278f260ba2187a14ce864e1cab678dababb460919db11d5a0555",
+      "source": "20261015 five-image baseline; derived no-map DT/fw_jump from 20261019 native v3 validation",
+      "publication": "local-only-not-published"
+    },
+    "checkpoint_dtb": {
+      "path": "qemu-ci/checkpoint/2die32c-20261019/native-checkpoint.dtb",
+      "size": 98451,
+      "sha256": "ea2740fd9d8bf2f1b3754182a38d4362a7b199c9e03ee018997dd087a4f413eb",
+      "source": "20261015 five-image baseline; derived no-map DT/fw_jump from 20261019 native v3 validation",
+      "publication": "local-only-not-published"
+    },
+    "checkpoint_kernel": {
+      "path": "qemu-ci/checkpoint/2die32c-20261019/Image",
+      "size": 29615616,
+      "sha256": "d69e23d2cda197e04e727bcf22c09ac2a51bdb502bb50d372d17453e324d98f8",
+      "source": "kmh-bosc-soc-2die32c-litmus-isolcpus16-31-20261015",
+      "publication": "local-only-not-published"
+    },
+    "checkpoint_workload": {
+      "path": "qemu-ci/checkpoint/2die32c-20261019/testdata-misc.ext4",
+      "size": 890499072,
+      "sha256": "8e4b3d5b2a7f0badf00075d5d82efc0af2f49084c15cd789131ba4b543ea96aa",
+      "source": "kmh-bosc-soc-2die32c-litmus-isolcpus16-31-20261015",
+      "publication": "local-only-not-published"
+    },
+    "checkpoint_trigger": {
+      "path": "qemu-ci/checkpoint/2die32c-20261019/trigger.info.linux_litmus_32core",
+      "size": 443,
+      "sha256": "608dcfdbdb4257738a9671df81db141b0db6e4da556d0389ef6b3acb75e0aee9",
+      "source": "kmh-bosc-soc-2die32c-litmus-isolcpus16-31-20261015",
+      "publication": "local-only-not-published"
     }
   }
 }

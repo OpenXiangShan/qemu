@@ -138,7 +138,11 @@ def main():
     if not 1 <= args.jobs <= 64:
         raise ValueError("--jobs must be between 1 and 64")
     if args.group and args.command in ("all", "select"):
-        raise ValueError("use --case to narrow a new selection; --group is for staged execution")
+        group_cases = [c for c in catalog() if c["group"] == args.group]
+        if args.case or not group_cases or any(c["tier"] != "manual" for c in group_cases):
+            raise ValueError("new --group selection is only supported for a manual-only group; otherwise use --case")
+        # Explicit manual invocation selects the whole group, never automatic impact.
+        args.case = [c["id"] for c in group_cases]
     if args.work_dir is None:
         if args.command != "all":
             raise ValueError("--work-dir is required for staged commands")

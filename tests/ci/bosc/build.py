@@ -43,6 +43,11 @@ def doctor(work, cases):
         required += ["dtc", "fdtget", "fdtput"]
     if any(c["kind"] == "libqemu-compose-linux" and c["devices"] for c in cases):
         required += ["e2fsck", "cp"]
+    checkpoint = any(c["kind"] == "checkpoint" for c in cases)
+    if checkpoint:
+        required += ["riscv64-linux-gnu-gcc", "riscv64-linux-gnu-objcopy", "zstd"]
+    if any(c.get("scenario") in ("linux-v2", "linux-litmus") for c in cases):
+        required += ["debugfs", "mke2fs", "cp"]
     tools = {tool: shutil.which(tool) for tool in required}
     errors = [f"missing tool: {key}" for key, value in tools.items() if not value]
     if sys.version_info < (3, 10):
@@ -55,7 +60,8 @@ def doctor(work, cases):
     except importlib.metadata.PackageNotFoundError:
         errors.append("missing PyYAML (install tests/ci/bosc/requirements.txt in a local venv)")
     if cases and tools.get("pkg-config"):
-        for package in ("glib-2.0", "pixman-1", "zlib"):
+        packages = ["glib-2.0", "pixman-1", "zlib"] + (["libzstd"] if checkpoint else [])
+        for package in packages:
             proc = subprocess.run(["pkg-config", "--modversion", package],
                                   capture_output=True, text=True, timeout=10)
             if proc.returncode:
@@ -76,7 +82,7 @@ def doctor(work, cases):
             versions[tool] = (result.stdout or result.stderr).splitlines()[:1]
     report = {"tools": tools, "versions": versions, "errors": errors,
               "free_bytes": shutil.disk_usage(work).free,
-              "docker_required": False, "cross_compiler_required": False}
+              "docker_required": False, "cross_compiler_required": checkpoint}
     write_json(work / "doctor.json", report)
     if errors:
         raise RuntimeError("preflight failed: " + "; ".join(errors))
@@ -106,6 +112,8 @@ def build_profile(work, cases, jobs, profile):
     env.update({"CCACHE_DIR": str(work / "ccache"),
                 "PIP_CACHE_DIR": str(work / "pip-cache")})
     options = LIB_CONFIGURE if library else [*CONFIGURE, "--disable-libqemu"]
+    if any(c["kind"] == "checkpoint" for c in cases):
+        options = [*options, "--enable-zstd"]
     prefix = "libqemu-" if library else ""
     run_logged([SOURCE / "configure", *options], work / (prefix + "configure.log"),
                cwd=build_dir, env=env, timeout=600)
@@ -131,8 +139,13 @@ def build_profile(work, cases, jobs, profile):
         shutil.copy2(SOURCE / "pc-bios" / name, firmware / name)
         files[str((firmware / name).relative_to(bundle))] = sha256(firmware / name)
     if not library:
+        from checkpoint_build import build_fixtures
+        files.update(build_fixtures(work, bundle, cases))
         run_logged([bundle / "qemu-system-riscv64", "--version"],
                    bundle / "qemu-version.log", timeout=30)
+    final_source = source_identity()
+    if any(before[key] != final_source[key] for key in ("revision", "tracked_diff_sha256", "untracked_sources")):
+        raise RuntimeError("source changed while preparing the build bundle")
     write_json(bundle / "build.json", {"status": "PASS", "source": before,
                "profile": profile, "configure": options, "files": files,
                "host": platform.platform(), "jobs": jobs})
@@ -158,5 +171,8 @@ def verify_bundle(work, case):
         if proc.returncode or "not found" in proc.stdout:
             raise RuntimeError(f"missing shared libraries for {target}")
     for name, digest in manifest["files"].items():
-        if name.startswith("share/") and sha256(bundle / name) != digest:
-            raise ValueError(f"firmware bundle hash mismatch: {name}")
+        if name.startswith(("share/", "checkpoint/")) and sha256(bundle / name) != digest:
+            raise ValueError(f"firmware/fixture bundle hash mismatch: {name}")
+    if case["kind"] == "checkpoint":
+        from checkpoint_build import verify_fixtures
+        verify_fixtures(bundle)

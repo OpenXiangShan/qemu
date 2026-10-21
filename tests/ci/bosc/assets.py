@@ -105,6 +105,8 @@ def prepare(work, cases, assets_dir=None, overrides=None, cache_dir=None,
                     verify(source, spec)
                     origin = "cache-verified"
                 else:
+                    if spec.get("publication") == "local-only-not-published":
+                        raise ValueError(f"{name}: asset not published; supply locked input via --asset or --assets-dir")
                     base = os.environ.get("BOSC_CI_JF_BASE_URL")
                     if not base:
                         raise ValueError(f"{name}: no local asset/cache or BOSC_CI_JF_BASE_URL")

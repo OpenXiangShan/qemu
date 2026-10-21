@@ -109,8 +109,10 @@ def source_identity():
     untracked = {}
     for name in git("ls-files", "--others", "--exclude-standard", "-z",
                     "--", "hw", "include", "libqemu", "my-virtio-lib", "tests/libqemu",
-                    "tests/qtest", "tests/ci/bosc").decode().split("\0"):
-        if name and (SOURCE / name).suffix in (".c", ".h", ".py", ".json"):
+                    "tests/qtest", "tests/ci/bosc", "contrib/kmh-checkpoint",
+                    "third_party/kmh-portable-restore").decode().split("\0"):
+        if name and ((SOURCE / name).suffix in (".c", ".h", ".py", ".json", ".S", ".ld", ".sh", ".inc")
+                     or Path(name).name == "Makefile"):
             untracked[name] = sha256(SOURCE / name)
     return {"revision": git("rev-parse", "HEAD").decode().strip(),
             "tracked_diff_sha256": hashlib.sha256(git("diff", "HEAD", "--binary")).hexdigest(),
@@ -142,7 +144,9 @@ def bosc_mapper_address(segment, mode):
 
 def config_hash():
     digest = hashlib.sha256()
-    for path in sorted([*HERE.glob("*.json"), *HERE.glob("*.py")]):
-        digest.update(path.name.encode())
+    paths = [*HERE.glob("*.json"), *HERE.glob("*.py"),
+             *(p for p in (HERE / "checkpoint").rglob("*") if p.is_file() and "__pycache__" not in p.parts)]
+    for path in sorted(paths):
+        digest.update(str(path.relative_to(HERE)).encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()

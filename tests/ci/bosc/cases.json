@@ -862,6 +862,104 @@
         "iommu_kernel",
         "rootfs"
       ]
+    },
+    {
+      "id": "bosc-checkpoint-v2",
+      "kind": "checkpoint",
+      "group": "checkpoint",
+      "owner": "bosc",
+      "tier": "manual",
+      "timeout": 600,
+      "scenario": "legacy",
+      "assets": []
+    },
+    {
+      "id": "bosc-checkpoint-v3",
+      "kind": "checkpoint",
+      "group": "checkpoint",
+      "owner": "bosc",
+      "tier": "manual",
+      "timeout": 600,
+      "scenario": "native",
+      "assets": []
+    },
+    {
+      "id": "bosc-checkpoint-raw",
+      "kind": "checkpoint",
+      "group": "checkpoint",
+      "owner": "bosc",
+      "tier": "manual",
+      "timeout": 300,
+      "scenario": "raw",
+      "assets": []
+    },
+    {
+      "id": "bosc-checkpoint-linux-single",
+      "kind": "checkpoint",
+      "group": "checkpoint",
+      "owner": "bosc",
+      "tier": "manual",
+      "timeout": 900,
+      "scenario": "linux-v2",
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "mode": "single"
+    },
+    {
+      "id": "bosc-checkpoint-linux-multi",
+      "kind": "checkpoint",
+      "group": "checkpoint",
+      "owner": "bosc",
+      "tier": "manual",
+      "timeout": 900,
+      "scenario": "linux-v2",
+      "assets": [
+        "fw_jump",
+        "kernel",
+        "rootfs"
+      ],
+      "mode": "multi"
+    },
+    {
+      "id": "bosc-checkpoint-linux-2die32c",
+      "kind": "checkpoint",
+      "group": "checkpoint",
+      "owner": "bosc",
+      "tier": "manual",
+      "timeout": 1200,
+      "scenario": "linux-litmus",
+      "assets": [
+        "rootfs",
+        "checkpoint_fw_jump",
+        "checkpoint_dtb",
+        "checkpoint_kernel",
+        "checkpoint_workload",
+        "checkpoint_trigger"
+      ],
+      "restore_format": "zstd",
+      "observe_seconds": 10
+    },
+    {
+      "id": "bosc-checkpoint-linux-2die32c-raw",
+      "kind": "checkpoint",
+      "group": "checkpoint",
+      "owner": "bosc",
+      "tier": "manual",
+      "timeout": 1500,
+      "scenario": "linux-litmus",
+      "assets": [
+        "rootfs",
+        "checkpoint_fw_jump",
+        "checkpoint_dtb",
+        "checkpoint_kernel",
+        "checkpoint_workload",
+        "checkpoint_trigger"
+      ],
+      "restore_format": "raw",
+      "observe_seconds": 10
     }
   ]
 }

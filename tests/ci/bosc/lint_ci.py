@@ -28,13 +28,28 @@ def validate_cases(cases, assets):
     for spec in assets.values():
         if (not isinstance(spec.get("size"), int) or spec["size"] <= 0
                 or not re.fullmatch(r"[a-f0-9]{64}", spec.get("sha256", ""))
-                or not spec.get("jf_path")):
+                or not spec.get("jf_path") and spec.get("publication") != "local-only-not-published"):
             raise ValueError("asset must have fixed size, SHA256 and JF path")
     for case in cases:
-        if case.get("tier") not in ("mr", "extended"):
+        if (case.get("tier") not in ("mr", "extended", "manual")
+                or case.get("tier") == "manual" and case["kind"] != "checkpoint"):
             raise ValueError(f"invalid case tier: {case['id']}")
         if not set(case["assets"]).issubset(assets):
             raise ValueError(f"unknown asset in {case['id']}")
+        if case["kind"] == "checkpoint":
+            from checkpoint_checks import EXPECTED
+            scenario = case.get("scenario")
+            required = {"fw_jump", "kernel", "rootfs"} if scenario == "linux-v2" else (
+                {"rootfs", "checkpoint_fw_jump", "checkpoint_dtb", "checkpoint_kernel",
+                 "checkpoint_workload", "checkpoint_trigger"} if scenario == "linux-litmus" else set())
+            if (case["owner"] != "bosc" or case["group"] != "checkpoint"
+                    or scenario not in EXPECTED or set(case["assets"]) != required
+                    or case["timeout"] < 60
+                    or case["tier"] != "manual"
+                    or scenario == "linux-v2" and case.get("mode") not in ("single", "multi")
+                    or scenario == "linux-litmus" and (case.get("restore_format") not in ("zstd", "raw")
+                        or case.get("observe_seconds") != 10)):
+                raise ValueError("invalid checkpoint scenario/assets: " + case["id"])
         if case["kind"].startswith("libqemu"):
             linux = case["kind"] == "libqemu-linux"
             compose = case["kind"] == "libqemu-compose-linux"
@@ -146,6 +161,14 @@ def main():
         raise ValueError("final report must consume libqemu build and results")
     if config["bosc:libqemu"]["dependencies"] != ["bosc:check", "bosc:build-libqemu"]:
         raise ValueError("libqemu job must consume its separate library bundle")
+    checkpoint = config["bosc:checkpoint"]
+    if (checkpoint.get("when") != "manual" or checkpoint.get("dependencies") != []
+            or checkpoint.get("needs") != []
+            or checkpoint.get("extends") or checkpoint.get("script") != [
+                'python3 tests/ci/bosc/ci.py all --work-dir "$BOSC_CI_CHECKPOINT_WORK" --group checkpoint --jobs "$BOSC_CI_JOBS"']):
+        raise ValueError("checkpoint must be an independent manual-only job")
+    if "bosc:checkpoint" in config["bosc:report"]["dependencies"]:
+        raise ValueError("automatic report must not wait for optional checkpoint execution")
     if config["bosc:report"]["when"] != "always":
         raise ValueError("final report must run after failures")
     print("PASS: offline YAML/manifest checks (target GitLab CI Lint still required)")

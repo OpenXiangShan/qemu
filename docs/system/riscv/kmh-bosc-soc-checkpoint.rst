@@ -127,32 +127,19 @@ QEMU 需启用 Zstd。v3 固件以生成的 ``native-resources.inc`` 随源码�
 然后重建 QEMU。固件的 C 代码按整数 ISA 构建，FPR/vector 恢复在专用汇编中。
 主机侧编码和固件共享 ``native-abi.h``，固件不包含 QEMU 头文件或回调。
 
+回归已接入 BOSC CI 的 ``checkpoint`` 组。本地与 GitLab 使用同一个
+``tests/ci/bosc/ci.py`` 入口；全部 checkpoint case 仅手动执行，不参与 MR
+或其他自动选测。GitLab 点击 ``bosc:checkpoint``，本地可以显式选择单个
+case，或使用 ``all --group checkpoint``。用例矩阵、输入锁及执行说明见
+``tests/ci/bosc/CHECKPOINT.md``。
+
 .. code-block:: bash
 
-   python3 tests/checkpoint/run-kmh-bosc-native-checkpoint.py "$QEMU" \
-     --output /path/to/native-results
-   python3 tests/checkpoint/run-kmh-bosc-checkpoint.py "$QEMU" \
-     --output /path/to/legacy-results
-   python3 tests/checkpoint/run-kmh-bosc-2die32c-checkpoint.py "$QEMU" \
-     --output /path/to/empty-linux-results --litmus-seconds 10
+   python3 tests/ci/bosc/ci.py all --case bosc-checkpoint-v3 --jobs 8
 
-原生回归覆盖 single U/S、single 多核、2die 多核、稀疏 die/core、GPR/FP/
-vector/CSR、masked timer pending、APLIC/IMSIC pending 与真实 trap 返回，
-并覆盖再次保存、短 interval、QMP、损坏 frame/入口/固件/CPU 状态和拓扑
-不匹配的拒绝。旧回归覆盖原 M→S→结束等兼容行为。
-
-Linux runner 使用
-``test-artifacts/kmh-bosc-soc-2die32c-litmus-isolcpus16-31-20261015`` 的基准
-五段镜像，保留 Image、workload、trigger，派生 rootfs 与嵌入保留区的
-DTB/fw_jump；原始文件不修改。静态 PID1 在 switch_root 后首先执行 marker，
-恢复后才启动 rootfs bash，执行原命令
-``./litmus -a 32 -st 1 -s 1k -r 1``，stdout/stderr 直接进入串口。
-恢复命令只提供 Zstd。首个 ``Test`` 结果出现后继续运行 10 秒，再由 host
-停止 QEMU，guest 退出码记录为 null；不将短时观察称为整套 litmus 完成。
-``--litmus-seconds 0`` 才等待真实退出码和 poweroff。
-
-结果目录保存完整日志、命令、源码/二进制来源与 hash，以及派生固件内嵌 DT
-的字节校验。必须在实际 Linux 日志中确认保留区，而不只检查外置 DTB。
+此命令构建当前 QEMU 和 checkpoint guest fixture，再创建切片并在新进程
+恢复。Linux 的保留区固件是固定输入；普通 CI 不依赖相邻 OpenSBI 源码树。
+所有测试生成的镜像位于 CI 工作目录的 scratch，完整日志和结果位于 results。
 
 PLDM/RTL 消费约定
 -----------------
@@ -174,7 +161,7 @@ PLDM/RTL 消费约定
 
 .. code-block:: bash
 
-   cd tests/checkpoint/decompress
+   cd contrib/kmh-checkpoint
    make bin zstd=/absolute/path/rootfs-switchroot-before-bash.zst
 
 输出文件与输入同目录，后缀为 ``.bin``。QEMU 的 ``kmh-bosc-soc`` 会按 raw
@@ -191,6 +178,6 @@ PLDM/RTL 消费约定
 
 raw 装载会扫描完整 RAM 文件，启动时间通常比直接读取 Zstd 更长。验证时应
 使用完整 RAM logical size，不能截断 bin；实际占用可用 ``du`` 查看。当前
-v3 raw 测试证据保存在
-``test-artifacts/kmh-bosc-native-v3-20261019/raw-bios-boot-zero-skip.log``，
-其中已观察到 32 hart 从 ``0x80000000`` 恢复并进入 litmus。
+raw 回归 case 为 ``bosc-checkpoint-raw``；64 GiB 五段式恢复对应
+``bosc-checkpoint-linux-2die32c-raw``。结果仅表示实际完成的观察窗口，
+不代表完整 litmus 或真实 RTL 已验证。

@@ -26,6 +26,9 @@ def aggregate(work, group=None):
             if result["status"] not in ("PASS", "FAIL"):
                 raise ValueError("invalid case status")
             if result["status"] == "PASS":
+                if case["kind"] == "checkpoint":
+                    from checkpoint_checks import evidence_assertions
+                    evidence_assertions(case, result.get("evidence", {}), result.get("checks", []))
                 if case["kind"].startswith("libqemu"):
                     libqemu_evidence(case, result.get("evidence", {}))
                 ids = [c["id"] for c in result.get("checks", [])]

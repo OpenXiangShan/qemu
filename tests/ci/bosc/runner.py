@@ -370,6 +370,9 @@ def run_vm(binary, args, directory, timeout, kind, case):
 
 
 def execute(work, case, paths, directory):
+    if case["kind"] == "checkpoint":
+        from checkpoint_runner import execute as execute_checkpoint
+        return execute_checkpoint(work, case, paths, directory)
     if case.get("mapper_test"):
         from did_mapper import execute as execute_mapper
         return execute_mapper(work, case, paths, directory)

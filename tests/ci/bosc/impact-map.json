@@ -12,6 +12,18 @@
   "rules": [
     {
       "patterns": [
+        "tests/ci/bosc/checkpoint*",
+        "tests/ci/bosc/checkpoint/*",
+        "third_party/kmh-portable-restore/*",
+        "contrib/kmh-checkpoint/*"
+      ],
+      "owners": [
+        "bosc"
+      ],
+      "reason": "BOSC checkpoint guest, restore firmware and unpack utility"
+    },
+    {
+      "patterns": [
         "tests/ci/*",
         ".gitlab-ci*",
         "*meson.build",

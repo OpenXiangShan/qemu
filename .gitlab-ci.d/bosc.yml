@@ -16,6 +16,7 @@ workflow:
 variables:
   BOSC_CI_RUNNER_TAG: bosc-ci
   BOSC_CI_WORK: build/ci/pipeline
+  BOSC_CI_CHECKPOINT_WORK: build/ci/checkpoint
   BOSC_CI_JOBS: "8"
   BOSC_CI_LIVE_LOG_KIB: "1024"
   GIT_DEPTH: "0"
@@ -54,6 +55,7 @@ bosc:build:
       - build/ci/pipeline/doctor.json
       - build/ci/pipeline/configure.log*
       - build/ci/pipeline/build.log*
+      - build/ci/pipeline/checkpoint-build/*.log*
       - build/ci/pipeline/native-dependencies.json
       - build/ci/pipeline/asset-evidence/
       - build/ci/pipeline/stage-errors/
@@ -129,6 +131,34 @@ bosc:did-mapper:
   timeout: 90m
   variables:
     BOSC_CI_GROUP: did-mapper
+
+bosc:checkpoint:
+  stage: test
+  when: manual
+  timeout: 90m
+  needs: []
+  dependencies: []
+  variables:
+    BOSC_CI_GROUP: checkpoint
+  script:
+    - python3 tests/ci/bosc/ci.py all --work-dir "$BOSC_CI_CHECKPOINT_WORK" --group checkpoint --jobs "$BOSC_CI_JOBS"
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build/ci/checkpoint/results/
+      - build/ci/checkpoint/reports/
+      - build/ci/checkpoint/asset-evidence/
+      - build/ci/checkpoint/stage-errors/
+      - build/ci/checkpoint/selected-tests.json
+      - build/ci/checkpoint/doctor.json
+      - build/ci/checkpoint/configure.log*
+      - build/ci/checkpoint/build.log*
+      - build/ci/checkpoint/checkpoint-build/*.log*
+      - build/ci/checkpoint/bundle/build.json
+      - build/ci/checkpoint/bundle/checkpoint/fixtures.json
+    reports:
+      junit: build/ci/checkpoint/reports/checkpoint/junit.xml
 
 bosc:libqemu:
   extends: .bosc:test

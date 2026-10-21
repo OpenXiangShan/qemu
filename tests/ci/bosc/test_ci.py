@@ -23,6 +23,124 @@ from dependencies import prepare_dependencies, safe_members
 from live_log import CaseConsole, JobConsole, LINE_CHARS, TAIL_LINES
 
 
+class CheckpointTests(unittest.TestCase):
+    def test_checkpoint_selection_is_always_manual(self):
+        ids = {c["id"] for c in catalog() if c["kind"] == "checkpoint"}
+        self.assertEqual(len(ids), 7)
+        self.assertTrue(all(c["tier"] == "manual" for c in catalog() if c["id"] in ids))
+        for name in ("hw/riscv/kmh_bosc_checkpoint.c",
+                     "third_party/kmh-portable-restore/native.c",
+                     "contrib/kmh-checkpoint/kmh-zstd-unpack.c",
+                     "tests/ci/bosc/checkpoint/guest/kmh-bosc-native-stages.S"):
+            for extended in (False, True):
+                result = choose([name], extended=extended)
+                self.assertFalse(ids.intersection(result["selected"]))
+                self.assertTrue(ids.issubset(result["not_selected"]))
+        for env in ({"CI_PIPELINE_SOURCE": "merge_request_event"},
+                    {"CI_PIPELINE_SOURCE": "schedule"},
+                    {"CI_PIPELINE_SOURCE": "web"},
+                    {"CI_PIPELINE_SOURCE": "push", "CI_COMMIT_BRANCH": "main", "CI_DEFAULT_BRANCH": "main"},
+                    {"BOSC_CI_FULL": "1"}):
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, env, clear=True):
+                self.assertFalse(ids.intersection(select(Path(tmp), full=True)["selected"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            result = select(Path(tmp), case_ids=sorted(ids))
+            self.assertEqual(set(result["selected"]), ids)
+
+    def test_manual_group_selects_only_checkpoint(self):
+        import ci
+        with tempfile.TemporaryDirectory() as tmp, patch.object(sys, "argv", [
+                "ci.py", "select", "--group", "checkpoint", "--work-dir", tmp]):
+            self.assertEqual(ci.main(), 0)
+            selection = __import__("json").loads((Path(tmp) / "selected-tests.json").read_text())
+            self.assertEqual(set(selection["selected"]),
+                             {c["id"] for c in catalog() if c["kind"] == "checkpoint"})
+
+    def test_checkpoint_manifest_contract(self):
+        from lint_ci import validate_cases
+        from common import read_json
+        specs = read_json(HERE / "images.lock.json")["assets"]
+        case = next(c for c in catalog() if c["id"] == "bosc-checkpoint-linux-2die32c")
+        validate_cases([case], specs)
+        for edits in ({"assets": []}, {"observe_seconds": 0}, {"scenario": "other"},
+                      {"restore_format": "other"}, {"tier": "mr"}, {"group": "bosc-ddr"}):
+            with self.subTest(edits=edits), self.assertRaises(ValueError):
+                validate_cases([dict(case, **edits)], specs)
+
+    def test_report_rejects_missing_checkpoint_checks(self):
+        case = next(c for c in catalog() if c["id"] == "bosc-checkpoint-v3")
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            selected = select(work, case_ids=[case["id"]])
+            write_json(work / "results" / case["id"] / "result.json",
+                       {"id": case["id"], "status": "PASS", "checks": [],
+                        "run_id": selected["run_id"], "selection_sha256": selected["config_sha256"],
+                        "evidence": {"scenario": "native", "commands": 1, "check_count": 0}})
+            self.assertEqual(aggregate(work, "checkpoint")["status"], "FAIL")
+
+    def test_litmus_requires_actual_results_and_measured_window(self):
+        from checkpoint_checks import litmus_assertions
+        good = ("KMH_NATIVE_PLATFORM_RESTORED\n"
+                "native firmware returned to all selected harts; no host CSR/device fixups\n"
+                "CHECKPOINT_ROOTFS_RESUMED pid=1 before bash\n"
+                "LITMUS_32CORE_ONLINE=0-31\nLITMUS_32CORE_ISOLATED=16-31\n"
+                "Cpus_allowed_list:\t0-31\nLITMUS_32CORE_BEGIN\n"
+                "Test Example Required\nObservation Example Always 1 0\n")
+        self.assertEqual(litmus_assertions(good, 10.1)["completed_results"], 1)
+        for text, seconds in ((good, 9.9), (good, float("nan")),
+                              (good.replace("Always", "Never"), 10),
+                              (good.replace("Required", "Forbidden"), 10),
+                              (good.replace("Observation Example Always 1 0", ""), 10),
+                              (good + "Kernel panic", 10), (good.replace("0-31", "0-15"), 10)):
+            with self.assertRaises(AssertionError):
+                litmus_assertions(text, seconds)
+
+    def test_unpublished_assets_fail_without_guessing_remote_path(self):
+        spec = {"pending": {"path": "checkpoint/file.bin", "size": 3,
+                            "sha256": hashlib.sha256(b"abc").hexdigest(),
+                            "publication": "local-only-not-published"}}
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ,
+                {"BOSC_CI_JF_BASE_URL": "https://example.invalid"}):
+            with patch("assets.download") as download:
+                with self.assertRaisesRegex(ValueError, "not published"):
+                    assets.prepare(Path(tmp), [{"id": "cpt", "group": "checkpoint", "assets": ["pending"]}], specs=spec)
+                download.assert_not_called()
+
+    def test_readonly_asset_copy_is_private_and_writable(self):
+        helper = HERE / "checkpoint/prepare-rootfs.sh"
+        # Exercise the actual copy/write boundary without requiring a rootfs asset.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = root / "source.ext4"
+            original.write_bytes(b"source bytes")
+            original.chmod(0o444)
+            commands = root / "bin"
+            commands.mkdir()
+            debugfs = commands / "debugfs"
+            debugfs.write_text("#!/bin/sh\ncase \"$*\" in *stat*) echo 'Type: regular';; esac\n")
+            debugfs.chmod(0o755)
+            env = dict(os.environ, PATH=str(commands) + os.pathsep + os.environ["PATH"])
+            subprocess.run([str(helper), str(original), str(root / "copy.ext4"), "/unused"],
+                           env=env, check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+            copied = root / "copy.ext4"
+            self.assertEqual(original.read_bytes(), copied.read_bytes())
+            self.assertFalse(original.stat().st_mode & 0o200)
+            self.assertTrue(copied.stat().st_mode & 0o200)
+            self.assertNotEqual(original.stat().st_ino, copied.stat().st_ino)
+
+    def test_checkpoint_guest_changes_invalidate_selection(self):
+        from common import config_hash
+        path = HERE / "checkpoint/guest/kmh-bosc-native-stages.S"
+        original = Path.read_bytes
+        def changed(p):
+            data = original(p)
+            return data + b"changed" if p == path else data
+        before = config_hash()
+        with patch.object(Path, "read_bytes", changed):
+            self.assertNotEqual(before, config_hash())
+
+
 class DidMapperTests(unittest.TestCase):
     case = next(c for c in catalog() if c["id"] == "bosc-did-mapper-linux-single")
 
@@ -191,7 +309,8 @@ class SelectionTests(unittest.TestCase):
 
     def test_schedule_ignores_path_filter(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"CI_PIPELINE_SOURCE": "schedule"}, clear=True):
-            self.assertEqual(len(select(Path(tmp), "base")["selected"]), len(catalog()))
+            self.assertEqual(len(select(Path(tmp), "base")["selected"]),
+                             len([c for c in catalog() if c["tier"] != "manual"]))
 
 
     def test_iommu_impact_and_tiers(self):
@@ -952,7 +1071,8 @@ class ProcessAndReportTests(unittest.TestCase):
             write_json(work / "selected-tests.json", selected)
             result = aggregate(work)
             self.assertEqual(result["status"], "FAIL")
-            self.assertEqual(len(result["missing_or_invalid"]), len(catalog()))
+            self.assertEqual(len(result["missing_or_invalid"]),
+                             len([c for c in catalog() if c["tier"] != "manual"]))
 
     def test_not_selected_is_not_pass(self):
         with tempfile.TemporaryDirectory() as tmp:

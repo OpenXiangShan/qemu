@@ -52,7 +52,8 @@ def choose(paths=None, full_reason=None, extended=False):
                 owners.update(("bosc", "kmh"))
                 reasons.append({"path": path, "reason": "unknown path: conservative full"})
     cases = catalog()
-    selected = [c["id"] for c in cases if owners.intersection(c.get("owners", [c["owner"]]))
+    selected = [c["id"] for c in cases if c["tier"] != "manual"
+                and owners.intersection(c.get("owners", [c["owner"]]))
                 and (extended or c["tier"] == "mr")]
     return {"schema": 1, "config_sha256": config_hash(),
             "extended": extended, "selected": selected,

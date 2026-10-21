@@ -339,3 +339,12 @@ multi 仅 die0、省略 mode，以及错误 DID/fault/observer/recovery。
 新增 Image 和匹配 NVMe 模块 payload 已发布到锁定的 JF 版本目录，远端
 size/hash 与实际下载验证见 [ASSETS.md](ASSETS.md)。本地可用精确 hash 的
 `--asset` 覆盖。旧 mapper-disabled IOMMU case 保留。
+
+### Checkpoint 回归
+
+切片测试已迁入统一的 `checkpoint` 组，包含 v2 兼容、v3 原生 U/S、多核与
+稀疏拓扑、raw 解压/恢复及 Linux 五段式场景。全部为手动 case，不参与 MR、
+schedule、默认分支或 `--full` 自动选测。GitLab 点击 `bosc:checkpoint` 后独立
+构建和执行；本地运行 `python3 tests/ci/bosc/ci.py all --group checkpoint`。
+详见 [CHECKPOINT.md](CHECKPOINT.md)。新 Linux checkpoint 镜像尚未发布 JF，
+必须提供锁定 hash 的离线输入或在独立发布流程完成后更新路径；缺失时失败。
