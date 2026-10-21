@@ -27,6 +27,7 @@
 #include "exec/helper-proto.h"
 #include "exec/tlb-flags.h"
 #include "trace.h"
+#include "qemu/error-report.h"
 
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
@@ -46,6 +47,15 @@ G_NORETURN void riscv_raise_exception(CPURISCVState *env,
 void helper_raise_exception(CPURISCVState *env, uint32_t exception)
 {
     riscv_raise_exception(env, exception, 0);
+}
+
+void helper_xiangshan_checkpoint_check(CPURISCVState *env, target_ulong pc)
+{
+    RISCVCPU *cpu = env_archcpu(env);
+
+    if (cpu->checkpoint_interval && cpu->checkpoint_interval(cpu, pc)) {
+        cpu_loop_exit(env_cpu(env));
+    }
 }
 
 target_ulong helper_csrr(CPURISCVState *env, int csr)

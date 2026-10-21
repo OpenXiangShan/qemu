@@ -240,6 +240,9 @@ struct CPUArchState {
     target_ulong badaddr;
     target_ulong bins;
 
+    /* Instructions executed while portable checkpoint counting is enabled. */
+    uint64_t profiling_insns;
+
     target_ulong guest_phys_fault_addr;
 
     target_ulong priv_ver;
@@ -538,6 +541,13 @@ struct ArchCPU {
     CPUState parent_obj;
 
     CPURISCVState env;
+
+    /* Board-owned portable checkpoint hooks, absent on ordinary CPUs. */
+    void *checkpoint_opaque;
+    bool checkpoint_count;
+    bool checkpoint_restoring;
+    bool (*checkpoint_marker)(RISCVCPU *cpu);
+    bool (*checkpoint_interval)(RISCVCPU *cpu, target_ulong pc);
 
     GDBFeature dyn_csr_feature;
     GDBFeature dyn_vreg_feature;

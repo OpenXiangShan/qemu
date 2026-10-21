@@ -894,6 +894,34 @@ exit:
     fclose(f);
 }
 
+void qmp_x_xiangshan_checkpoint_save(const char *path, Error **errp)
+{
+    MachineClass *mc = MACHINE_GET_CLASS(current_machine);
+    bool running = runstate_is_running();
+    bool exit_after_save = false;
+    bool ok;
+
+    if (!mc->checkpoint_save) {
+        error_setg(errp, "machine '%s' does not support checkpoint slices",
+                   MACHINE_GET_CLASS(current_machine)->name);
+        return;
+    }
+    if (running) {
+        vm_stop(RUN_STATE_SAVE_VM);
+    }
+    ok = mc->checkpoint_save(current_machine, path, errp);
+    if (object_property_find(OBJECT(current_machine), "checkpoint-exit")) {
+        exit_after_save = object_property_get_bool(OBJECT(current_machine),
+                                                   "checkpoint-exit",
+                                                   &error_abort);
+    }
+    if (ok && exit_after_save) {
+        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+    } else if (running) {
+        vm_start();
+    }
+}
+
 void qmp_inject_nmi(Error **errp)
 {
     nmi_monitor_handle(monitor_get_cpu_index(monitor_cur()), errp);

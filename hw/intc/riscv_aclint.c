@@ -400,15 +400,15 @@ DeviceState *riscv_aclint_mtimer_create(hwaddr addr, hwaddr size,
     return dev;
 }
 
-#ifdef CONFIG_KVM_M_MODE
 void riscv_aclint_mtimer_set_time(DeviceState *dev, uint64_t time)
 {
     RISCVAclintMTimerState *mtimer = RISCV_ACLINT_MTIMER(dev);
 
+#ifdef CONFIG_KVM_M_MODE
     mtimer->time_reset = time;
+#endif
     riscv_aclint_mtimer_write(mtimer, mtimer->time_base, time, 8);
 }
-#endif
 
 /* CPU read [M|S]SWI register */
 static uint64_t riscv_aclint_swi_read(void *opaque, hwaddr addr,

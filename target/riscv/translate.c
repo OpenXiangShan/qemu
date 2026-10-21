@@ -1325,6 +1325,10 @@ static void riscv_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
 
 static void riscv_tr_tb_start(DisasContextBase *db, CPUState *cpu)
 {
+    if (RISCV_CPU(cpu)->checkpoint_interval) {
+        gen_helper_xiangshan_checkpoint_check(
+            tcg_env, tcg_constant_tl(db->pc_first));
+    }
 }
 
 static void riscv_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
@@ -1344,6 +1348,16 @@ static void riscv_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *ctx = container_of(dcbase, DisasContext, base);
     CPURISCVState *env = cpu_env(cpu);
+
+    if (RISCV_CPU(cpu)->checkpoint_count) {
+        TCGv_i64 count = tcg_temp_new_i64();
+
+        tcg_gen_ld_i64(count, tcg_env,
+                       offsetof(CPURISCVState, profiling_insns));
+        tcg_gen_addi_i64(count, count, 1);
+        tcg_gen_st_i64(count, tcg_env,
+                       offsetof(CPURISCVState, profiling_insns));
+    }
 
     decode_opc(env, ctx);
     ctx->base.pc_next += ctx->cur_insn_len;

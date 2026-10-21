@@ -549,6 +549,11 @@ bool riscv_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
     uint32_t mask = CPU_INTERRUPT_HARD | CPU_INTERRUPT_RNMI;
 
+    /* A board's restore stub must finish before guest IRQs can be taken. */
+    if (RISCV_CPU(cs)->checkpoint_restoring) {
+        return false;
+    }
+
     if (interrupt_request & mask) {
         RISCVCPU *cpu = RISCV_CPU(cs);
         CPURISCVState *env = &cpu->env;
@@ -2193,6 +2198,11 @@ void riscv_cpu_do_interrupt(CPUState *cs)
     }
 
     if (!async) {
+        if (cause == RISCV_EXCP_ILLEGAL_INST && env->bins == 0x0000006b &&
+            cpu->checkpoint_marker && cpu->checkpoint_marker(cpu)) {
+            cpu_stop_current();
+            return;
+        }
         if (cause == RISCV_EXCP_ILLEGAL_INST &&
             env->bins == 0x0005006b &&
             riscv_cpu_cfg(env)->bosc_debug_inst) {

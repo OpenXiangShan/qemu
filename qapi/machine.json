@@ -853,6 +853,18 @@
     'filename': 'str' } }
 
 ##
+# @x-xiangshan-checkpoint-save:
+#
+# Save a portable Zstd RAM/CPU/AIA slice on a supported Xiangshan machine.
+#
+# @path: output checkpoint file
+#
+# Since: 10.2
+##
+{ 'command': 'x-xiangshan-checkpoint-save',
+  'data': { 'path': 'str' } }
+
+##
 # @Memdev:
 #
 # Information about memory backend
