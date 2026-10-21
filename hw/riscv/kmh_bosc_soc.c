@@ -34,6 +34,9 @@
 #include "hw/pci/pcie_host.h"
 #include "hw/riscv/boot.h"
 #include "hw/riscv/kmh_bosc_soc.h"
+#include "hw/riscv/kmh_bosc_checkpoint.h"
+#include "../../third_party/kmh-portable-restore/native-abi.h"
+#include "../../third_party/kmh-portable-restore/native-resources.inc"
 #ifdef CONFIG_ACPI
 #include "hw/riscv/kmh_bosc_acpi.h"
 #endif
@@ -324,6 +327,8 @@ struct KmhBoscState {
     KmhBoscBootCtlState bootctl[KMH_BOSC_DIES];
     KmhBoscSysCtrlState sysctrl[KMH_BOSC_DIES];
     DWAxiDMACState dmac[KMH_BOSC_DIES];
+
+    KmhBoscCheckpoint checkpoint;
 
     char *boot_source;
     char *mcu_bios;
@@ -986,10 +991,12 @@ static DeviceState *kmh_bosc_create_aia(KmhBoscState *s, int die,
     int i;
 
     for (i = 0; i < KMH_BOSC_APP_HARTS_PER_DIE; i++) {
-        riscv_imsic_create(imsic_m_base + i * IMSIC_HART_SIZE(0),
+        s->checkpoint.imsic[s->checkpoint.num_imsic++] =
+            riscv_imsic_create(imsic_m_base + i * IMSIC_HART_SIZE(0),
                            hartid_base + i, true, 1,
                            KMH_BOSC_IMSIC_NUM_IDS);
-        riscv_imsic_create(imsic_s_base +
+        s->checkpoint.imsic[s->checkpoint.num_imsic++] =
+            riscv_imsic_create(imsic_s_base +
                            i * IMSIC_HART_SIZE(KMH_BOSC_IMSIC_GUEST_INDEX_BITS),
                            hartid_base + i, false,
                            1U << KMH_BOSC_IMSIC_GUEST_INDEX_BITS,
@@ -1006,6 +1013,8 @@ static DeviceState *kmh_bosc_create_aia(KmhBoscState *s, int die,
     riscv_aplic_set_msi_address_space(RISCV_APLIC(aplic_m), &s->die_as[die]);
     riscv_aplic_set_msi_address_space(RISCV_APLIC(aplic_s), &s->die_as[die]);
 
+    s->checkpoint.aplic[s->checkpoint.num_aplic++] = aplic_m;
+    s->checkpoint.aplic[s->checkpoint.num_aplic++] = aplic_s;
     return aplic_m;
 }
 
@@ -2175,7 +2184,8 @@ static void kmh_bosc_init_per_die_interrupts(KmhBoscState *s)
     }
 
     riscv_aclint_swi_create(clint_base, 0, app_harts, false);
-    riscv_aclint_mtimer_create(clint_base + RISCV_ACLINT_SWI_SIZE,
+    s->checkpoint.mtimer = riscv_aclint_mtimer_create(
+                               clint_base + RISCV_ACLINT_SWI_SIZE,
                                RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
                                0, app_harts,
                                RISCV_ACLINT_DEFAULT_MTIMECMP,
@@ -2210,7 +2220,8 @@ static void kmh_bosc_init_dmac_irqs(KmhBoscState *s)
 static void kmh_bosc_init_uart(KmhBoscState *s)
 {
     for (int die = 0; die < kmh_bosc_die_count(s); die++) {
-        serial_mm_init(get_system_memory(),
+        s->checkpoint.uart[s->checkpoint.num_uart++] =
+            serial_mm_init(get_system_memory(),
                        kmh_bosc_die_memmap_base(s, die, KMH_BOSC_UART0), 2,
                        qdev_get_gpio_in(s->irqchip[die], KMH_BOSC_UART0_IRQ),
                        115200, serial_hd(die), DEVICE_LITTLE_ENDIAN);
@@ -2823,7 +2834,7 @@ static void kmh_bosc_validate(MachineState *machine)
             error_report("boot-source=mcu requires enough per-die DDR for a 128 MiB payload plus sync flag");
             exit(1);
         }
-    } else {
+    } else if (!s->checkpoint.checkpoint_load) {
         if (kmh_bosc_firmware_is_none(machine)) {
             if (!machine->kernel_filename) {
                 error_report("boot-source=ddr with -bios none requires -kernel <elf>");
@@ -2887,6 +2898,23 @@ static void kmh_bosc_load_app_boot(KmhBoscState *s)
     }
 
     kmh_bosc_set_app_hartid_arg(s);
+    if (machine->fdt && (s->checkpoint.checkpoint_path ||
+                         s->checkpoint.checkpoint_interval)) {
+        const uint64_t regions[][2] = {
+            { KMH_NATIVE_WORK, KMH_NATIVE_WORK_SIZE },
+            { s->checkpoint.cpu_state_base, KMH_BOSC_CPT_CPU_SIZE },
+            { KMH_BOSC_CPT_DEVICE_BASE, KMH_BOSC_CPT_DEVICE_SIZE },
+        };
+        kmh_bosc_fdt_ensure_reserved_memory(machine->fdt);
+        for (unsigned int i = 0; i < ARRAY_SIZE(regions); i++) {
+            g_autofree char *name = g_strdup_printf(
+                "/reserved-memory/kmh-checkpoint@%" PRIx64, regions[i][0]);
+            qemu_fdt_add_path(machine->fdt, name);
+            qemu_fdt_setprop_sized_cells(machine->fdt, name, "reg",
+                                         2, regions[i][0], 2, regions[i][1]);
+            qemu_fdt_setprop(machine->fdt, name, "no-map", NULL, 0);
+        }
+    }
     if (machine->fdt) {
         fdt_addr = kmh_bosc_compute_fdt_addr(kmh_bosc_ddr_base(boot_die),
                                              boot_window_size,
@@ -3111,17 +3139,241 @@ static void kmh_bosc_set_dw_pcie(Object *obj, bool value, Error **errp)
     s->dw_pcie = value;
 }
 
+static bool kmh_bosc_checkpoint_enabled(KmhBoscState *s)
+{
+    KmhBoscCheckpoint *c = &s->checkpoint;
+
+    return c->checkpoint_path || c->checkpoint_load || c->checkpoint_interval;
+}
+
+static void kmh_bosc_checkpoint_validate(KmhBoscState *s)
+{
+    KmhBoscCheckpoint *c = &s->checkpoint;
+
+    if (!kmh_bosc_checkpoint_enabled(s)) {
+        return;
+    }
+#ifndef CONFIG_ZSTD
+    error_report("kmh-bosc-soc checkpoint requires --enable-zstd");
+    exit(1);
+#endif
+    if (kmh_bosc_boot_from_mcu(s) || !kmh_bosc_selected_hart_count(s)) {
+        error_report("kmh-bosc-soc checkpoint requires DDR boot and at least one selected application hart");
+        exit(1);
+    }
+    if (s->dw_pcie || kmh_bosc_is_iommu_sys_enabled(s) || s->generated_acpi) {
+        error_report("kmh-bosc-soc checkpoint does not yet support PCIe, "
+                     "system IOMMU or ACPI state");
+        exit(1);
+    }
+    if (kmh_bosc_die_ram_size(MACHINE(s)) <
+        KMH_BOSC_CPT_DEVICE_BASE + KMH_BOSC_CPT_DEVICE_SIZE -
+        KMH_BOSC_DDR_NODE_BASE) {
+        error_report("kmh-bosc-soc checkpoint requires at least 292 MiB "
+                     "in the die0 DDR slot");
+        exit(1);
+    }
+    if (c->checkpoint_interval && !c->checkpoint_path) {
+        error_report("checkpoint-interval requires checkpoint-path");
+        exit(1);
+    }
+    c->single_soc = s->single_soc;
+    c->die_mask = s->die_mask;
+    c->active_hart_mask = 0;
+    c->active_hart_count = 0;
+    c->trigger_hartid = UINT_MAX;
+    for (unsigned int die = 0; die < KMH_BOSC_DIES; die++) {
+        c->core_mask[die] = s->core_mask[die];
+        if (!(s->die_mask & (1U << die))) {
+            continue;
+        }
+        for (unsigned int hart = 0;
+             hart < KMH_BOSC_APP_HARTS_PER_DIE; hart++) {
+            unsigned int hartid = die * KMH_BOSC_APP_HARTS_PER_DIE + hart;
+            if (s->core_mask[die] & (1U << hart)) {
+                c->active_hart_mask |= UINT64_C(1) << hartid;
+                c->active_hart_count++;
+                if (c->trigger_hartid == UINT_MAX) {
+                    c->trigger_hartid = hartid;
+                }
+            }
+        }
+    }
+    if (!c->checkpoint_load && c->save_version == KMH_NATIVE_VERSION &&
+        !(s->die_mask & 1)) {
+        error_report("native v3 reset entry requires die0 DDR");
+        exit(1);
+    }
+    if (!c->checkpoint_load && c->save_version == KMH_NATIVE_VERSION &&
+        kmh_bosc_die_ram_size(MACHINE(s)) < 512 * MiB) {
+        error_report("native checkpoint requires at least 512 MiB per DDR slot");
+        exit(1);
+    }
+    c->format_version = c->save_version;
+    c->cpu_state_base = kmh_bosc_checkpoint_cpu_state_base(c);
+    c->checkpoint_next = c->checkpoint_interval;
+}
+
+static bool kmh_bosc_machine_checkpoint_save(MachineState *machine,
+                                             const char *path, Error **errp)
+{
+    KmhBoscState *s = KMH_BOSC_MACHINE(machine);
+
+    if (!kmh_bosc_checkpoint_enabled(s)) {
+        error_setg(errp, "start kmh-bosc-soc with checkpoint-path to reserve "
+                   "checkpoint memory and enable portable saves");
+        return false;
+    }
+    return kmh_bosc_checkpoint_save(&s->checkpoint, path, errp);
+}
+
+static char *kmh_bosc_get_checkpoint_path(Object *obj, Error **errp)
+{
+    return g_strdup(KMH_BOSC_MACHINE(obj)->checkpoint.checkpoint_path);
+}
+
+static void kmh_bosc_set_checkpoint_path(Object *obj, const char *value,
+                                         Error **errp)
+{
+    KmhBoscCheckpoint *c = &KMH_BOSC_MACHINE(obj)->checkpoint;
+
+    g_free(c->checkpoint_path);
+    c->checkpoint_path = g_strdup(value);
+}
+
+static char *kmh_bosc_get_checkpoint_load(Object *obj, Error **errp)
+{
+    return g_strdup(KMH_BOSC_MACHINE(obj)->checkpoint.checkpoint_load);
+}
+
+static void kmh_bosc_set_checkpoint_load(Object *obj, const char *value,
+                                         Error **errp)
+{
+    KmhBoscCheckpoint *c = &KMH_BOSC_MACHINE(obj)->checkpoint;
+
+    g_free(c->checkpoint_load);
+    c->checkpoint_load = g_strdup(value);
+}
+
+static char *kmh_bosc_get_checkpoint_stub(Object *obj, Error **errp)
+{
+    return g_strdup(KMH_BOSC_MACHINE(obj)->checkpoint.checkpoint_stub);
+}
+
+static void kmh_bosc_set_checkpoint_stub(Object *obj, const char *value,
+                                         Error **errp)
+{
+    KmhBoscCheckpoint *c = &KMH_BOSC_MACHINE(obj)->checkpoint;
+
+    g_free(c->checkpoint_stub);
+    c->checkpoint_stub = g_strdup(value);
+}
+
+static bool kmh_bosc_get_checkpoint_exit(Object *obj, Error **errp)
+{
+    return KMH_BOSC_MACHINE(obj)->checkpoint.checkpoint_exit;
+}
+
+static void kmh_bosc_set_checkpoint_exit(Object *obj, bool value, Error **errp)
+{
+    KMH_BOSC_MACHINE(obj)->checkpoint.checkpoint_exit = value;
+}
+
+static bool kmh_bosc_get_checkpoint_marker(Object *obj, Error **errp)
+{
+    return KMH_BOSC_MACHINE(obj)->checkpoint.checkpoint_marker;
+}
+
+static void kmh_bosc_set_checkpoint_marker(Object *obj, bool value,
+                                           Error **errp)
+{
+    KMH_BOSC_MACHINE(obj)->checkpoint.checkpoint_marker = value;
+}
+
+static char *kmh_bosc_get_checkpoint_format(Object *obj, Error **errp)
+{
+    return g_strdup_printf("v%u", KMH_BOSC_MACHINE(obj)->checkpoint.save_version);
+}
+
+static void kmh_bosc_set_checkpoint_format(Object *obj, const char *value,
+                                          Error **errp)
+{
+    KmhBoscCheckpoint *c = &KMH_BOSC_MACHINE(obj)->checkpoint;
+
+    if (!strcmp(value, "v2")) {
+        c->save_version = 2;
+    } else if (!strcmp(value, "v3")) {
+        c->save_version = KMH_NATIVE_VERSION;
+    } else {
+        error_setg(errp, "checkpoint-format must be v2 or v3");
+    }
+}
+
+static void kmh_bosc_checkpoint_bios(KmhBoscState *s)
+{
+    MachineState *ms = MACHINE(s);
+    uint8_t magic[4], entry[KMH_NATIVE_ENTRY_SIZE];
+    FILE *fp;
+    struct stat st;
+    g_autofree char *path = NULL;
+
+    if (!ms->firmware || !strcmp(ms->firmware, "none") ||
+        !strcmp(ms->firmware, "default")) {
+        return;
+    }
+    path = riscv_find_firmware(ms->firmware, NULL);
+    fp = path ? fopen(path, "rb") : NULL;
+    if (!fp) {
+        return; /* The normal BIOS loader diagnoses file errors. */
+    }
+    bool zstd = fread(magic, 1, sizeof(magic), fp) == sizeof(magic) &&
+                magic[0] == 0x28 && magic[1] == 0xb5 &&
+                magic[2] == 0x2f && magic[3] == 0xfd;
+    bool raw = fstat(fileno(fp), &st) == 0 &&
+               (uint64_t)st.st_size == ms->ram_size &&
+               fseek(fp, 0, SEEK_SET) == 0 &&
+               fread(entry, 1, sizeof(entry), fp) == sizeof(entry) &&
+               !memcmp(entry, kmh_native_entry, sizeof(entry));
+    fclose(fp);
+    if (!zstd && !raw) {
+        return;
+    }
+    if (s->checkpoint.checkpoint_load || s->checkpoint.checkpoint_stub ||
+        ms->kernel_filename || ms->initrd_filename || ms->dtb) {
+        error_report("-bios checkpoint.zst is self-contained; remove "
+                     "checkpoint-load/stub, kernel, initrd and dtb");
+        exit(1);
+    }
+    s->checkpoint.checkpoint_load = g_strdup(path);
+    s->checkpoint.bios_checkpoint = true;
+    s->checkpoint.raw_checkpoint = raw;
+}
+
 static void kmh_bosc_machine_init(MachineState *machine)
 {
     KmhBoscState *s = KMH_BOSC_MACHINE(machine);
 
+    kmh_bosc_checkpoint_bios(s);
     kmh_bosc_validate(machine);
+    kmh_bosc_checkpoint_validate(s);
 
     kmh_bosc_map_ddr(s);
     kmh_bosc_init_die_address_spaces(s);
     kmh_bosc_map_local_memory(s);
     kmh_bosc_realize_hart_arrays(s);
     kmh_bosc_init_per_die_interrupts(s);
+    if (kmh_bosc_checkpoint_enabled(s)) {
+        s->checkpoint.cpu = kmh_bosc_app_cpu(s, s->checkpoint.trigger_hartid);
+        for (unsigned int hartid = 0; hartid < KMH_BOSC_CPT_CPU_RECORDS;
+             hartid++) {
+            if ((s->checkpoint.active_hart_mask & (UINT64_C(1) << hartid)) &&
+                kmh_bosc_app_cpu(s, hartid)->cfg.vlenb != 16) {
+                error_report("BOSC checkpoint requires VLEN=128 on every selected hart");
+                exit(1);
+            }
+        }
+        kmh_bosc_checkpoint_init(&s->checkpoint);
+    }
     kmh_bosc_init_dmac_irqs(s);
     kmh_bosc_init_uart(s);
     if (s->dw_pcie) {
@@ -3132,6 +3384,11 @@ static void kmh_bosc_machine_init(MachineState *machine)
     }
     if (s->dw_pcie) {
         kmh_bosc_init_pcie_dma(s);
+    }
+    if (s->checkpoint.checkpoint_load) {
+        kmh_bosc_checkpoint_load(&s->checkpoint,
+                                 s->checkpoint.checkpoint_load, &error_fatal);
+        return;
     }
     kmh_bosc_load_mcu_bios(s);
     if (kmh_bosc_boot_from_mcu(s)) {
@@ -3176,6 +3433,10 @@ static void kmh_bosc_machine_instance_init(Object *obj)
     MachineState *machine = MACHINE(obj);
     KmhBoscState *s = KMH_BOSC_MACHINE(obj);
 
+    s->checkpoint.machine = machine;
+    s->checkpoint.save_version = KMH_NATIVE_VERSION;
+    s->checkpoint.checkpoint_exit = true;
+    s->checkpoint.checkpoint_marker = true;
     machine->smp.max_cpus = KMH_BOSC_TOTAL_APP_HARTS + KMH_BOSC_DIES;
     s->boot_source = g_strdup("ddr");
     s->mcu_bios = NULL;
@@ -3195,6 +3456,29 @@ static void kmh_bosc_machine_instance_init(Object *obj)
     s->autotest_rootfs_addr = KMH_BOSC_AUTO_TEST_ROOTFS_ADDR_DEFAULT;
     s->autotest_workload_addr = KMH_BOSC_AUTO_TEST_WORKLOAD_ADDR_DEFAULT;
     s->mcu_fdt_addr = 0;
+
+    object_property_add_str(obj, "checkpoint-format",
+                            kmh_bosc_get_checkpoint_format,
+                            kmh_bosc_set_checkpoint_format);
+    object_property_add_str(obj, "checkpoint-path",
+                            kmh_bosc_get_checkpoint_path,
+                            kmh_bosc_set_checkpoint_path);
+    object_property_add_str(obj, "checkpoint-load",
+                            kmh_bosc_get_checkpoint_load,
+                            kmh_bosc_set_checkpoint_load);
+    object_property_add_str(obj, "checkpoint-stub",
+                            kmh_bosc_get_checkpoint_stub,
+                            kmh_bosc_set_checkpoint_stub);
+    object_property_add_bool(obj, "checkpoint-exit",
+                             kmh_bosc_get_checkpoint_exit,
+                             kmh_bosc_set_checkpoint_exit);
+    object_property_add_bool(obj, "checkpoint-marker",
+                             kmh_bosc_get_checkpoint_marker,
+                             kmh_bosc_set_checkpoint_marker);
+    object_property_add_uint64_ptr(obj, "checkpoint-interval",
+                                   &s->checkpoint.checkpoint_interval,
+                                   OBJ_PROP_FLAG_READWRITE);
+
 
     object_property_add_str(obj, "soc-mode",
                             kmh_bosc_get_soc_mode, kmh_bosc_set_soc_mode);
@@ -3298,6 +3582,11 @@ static void kmh_bosc_machine_instance_finalize(Object *obj)
 
     g_free(s->boot_source);
     g_free(s->mcu_bios);
+    g_free(s->checkpoint.checkpoint_path);
+    g_free(s->checkpoint.checkpoint_load);
+    g_free(s->checkpoint.checkpoint_stub);
+    g_free(s->checkpoint.restore_path);
+    g_free(s->checkpoint.save_path);
 }
 
 static void kmh_bosc_machine_class_init(ObjectClass *oc, const void *data)
@@ -3310,6 +3599,7 @@ static void kmh_bosc_machine_class_init(ObjectClass *oc, const void *data)
 
     mc->desc = "BOSC Kunminghu single/four-die RISC-V SoC";
     mc->init = kmh_bosc_machine_init;
+    mc->checkpoint_save = kmh_bosc_machine_checkpoint_save;
     mc->default_cpu_type = TYPE_RISCV_CPU_XIANGSHAN_KMH;
     mc->default_cpus = KMH_BOSC_TOTAL_APP_HARTS;
     mc->min_cpus = KMH_BOSC_APP_HARTS_PER_DIE;
