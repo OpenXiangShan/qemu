@@ -27,8 +27,8 @@
 ## 1. 覆盖范围与计数
 
 当前有 **44 个执行单元**：23 个 Linux 配置、1 个 ITGen 配置、4 个 qtest
-可执行文件、16 个 libqemu 用例。qtest 内部共 **30 个子测试**：die/timebase/DDR
-7 个、AXI traffic 4 个、PCIe 7 个、DID mapper 12 个。普通 MR 最多选择
+可执行文件、16 个 libqemu 用例。qtest 内部共 **32 个子测试**：die/timebase/DDR
+7 个、AXI traffic 4 个、PCIe 9 个、DID mapper 12 个。普通 MR 最多选择
 33 个执行单元，另有 11 个 extended 配置。
 
 | GitLab job | `--group` | 执行单元数 | 主要覆盖 |
@@ -152,7 +152,7 @@ Case ID：`qtest-traffic`；层级 mr；整个可执行文件限时 120 秒。
 | `/riscv64/bosc_axi4_traffic/user_requester_selection` | 非恒等 Sv39 翻译和 AXI user DID/PID/PV | mapper 指定 DID=4，但实际 AW user DID=5 命中另一物理页；PDTV 场景使用 user PID=0x22 而非 mapper PID=0x11；数据、DONE、burst/error 均正确 |
 | `/riscv64/bosc_axi4_traffic/error_dma_has_no_done` | 失败 DMA 不能伪报完成 | 失败写没有 AW_DONE；失败读没有 AR_DONE，读错误数为 1 |
 
-### 2.7 qtest-pcie：7 个子项
+### 2.7 qtest-pcie：9 个子项
 
 Case ID：`qtest-pcie`；层级 mr；整个可执行文件限时 120 秒。
 
@@ -162,6 +162,8 @@ Case ID：`qtest-pcie`；层级 mr；整个可执行文件限时 120 秒。
 
 | 注册路径 | 测试点 | 关键 PASS 断言 |
 | --- | --- | --- |
+| `/kmh-bosc/pcie/outbound-multi` | BOSC multi 的全局 ECAM/MEM 到本地 RC | iATU 使用清除 die-id 的 BASE/LIMIT；全局 ECAM/MEM 经本地窗口访问正确 endpoint，错误全局 iATU base 不命中 |
+| `/kmh-bosc/pcie/outbound-single` | BOSC single 的本地 ECAM/MEM | 本地 iATU base 正常命中；下游配置和 BAR 访问正确 |
 | `/kmh-bosc/pcie/imsi-axi44` | BOSC 四个 p0 root，IOMMU 不启用；44 位 DMA 和 iMSI receiver | 256 vectors 的 bank/status、W1C、mask/enable、die0 IRQ 聚合正确；高位 MSI 匹配先于截断；普通 DMA 截断高位并使用 requester-local SRAM；跨 DDR 槽位复制正确；reset 清 enable |
 | `/kmh-bosc/pcie/imsi-iommu` | 同四 root，IOMMU Off/Bare 与 iMSI receiver 顺序 | Off 阻止普通 DMA 而 iMSI 仍到达；Bare 放行数据；移动/关闭 receiver 后原地址恢复普通 DMA；MSI 地址读仍是 DMA |
 | `/kmh-bosc/pcie/generic-dwc` | KMH 的通用 DWC 行为 | 保持默认 32 个 iMSI vectors 属性；MSI 直接写 system memory，不被 BOSC receiver 行为接管；高地址 DMA 不别名到低 DDR |
