@@ -515,7 +515,7 @@ class IommuTests(unittest.TestCase):
         specs = read_json(HERE / "images.lock.json")["assets"]
         validate_cases(catalog(), specs)
         self.assertEqual(specs["iommu_kernel"]["jf_path"],
-                         "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261015/360ac10968fa/Image")
+                         "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261019/142f576d83ed/Image")
         for edits in ({"assets": ["fw_jump", "kernel", "rootfs"]}, {"disks": 4},
                       {"tier": "xfail"}, {"nvme_buses": ["wrong"]}):
             with self.assertRaises(ValueError):
@@ -671,7 +671,7 @@ class ComposeLinuxTests(unittest.TestCase):
             body += f"T:DISK={name}|{'a'*64}|{'a'*64}|262144|unmounted\n"
         return (f"HOST_ASSEMBLED Kunminghu: devices={device_mode(case)} builder={case['builder']}\n"
                 "OpenSBI\nLinux version\nMachine model: Host-assembled Xiangshan Kunminghu\n"
-                "T:COMPOSE_BEGIN\nT:CPU\n0\nT:KERNEL\n6.18.34-bosc-imsi-rx\n"
+                "T:COMPOSE_BEGIN\nT:CPU\n0\nT:KERNEL\n6.18.34\n"
                 "T:MODEL\nHost-assembled Xiangshan Kunminghu\nT:MOUNTS_BEFORE\nrootfs / rootfs rw 0 0\n"
                 "T:DEVICES\n" + body + "T:MOUNTS_AFTER\nrootfs / rootfs rw 0 0\n"
                 "T:COMPOSE_RC=0\nT:COMPOSE_END\n")

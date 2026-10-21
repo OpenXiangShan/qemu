@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "baseline": "st-v0.9.99-mcu-20260927-itgen-dieid2-20260924",
-  "publication_note": "2026-10-07: initial six files plus iommu_kernel verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen and the Linux IOMMU image were published in independent paths without overwriting existing content. path is offline layout; jf_path is repository-relative remote location. 2026-10-12: clean DID mapper kernel/NVMe modules from 1411c50e0909 published under linux/did-mapper/20261012/1411c50e0909 with source and validation evidence; metadata and fresh CI-reader downloads verified using existing user JF authentication. GitLab read-only token and pipeline not separately verified. 2026-10-15: refresh native-IOMMU Image and the paired DID-mapper Image/NVMe modules to committed Linux 360ac10968fa for forwarded iMSI-RX MSI mapping (CONFIG_IRQ_MSI_IOMMU=y); existing release/firmware/rootfs inputs remain fixed. See ASSETS.md for validation/publication evidence.",
+  "publication_note": "2026-10-07: initial six files plus iommu_kernel verified on 10.13.18.1:8082/artifactory. Release assets reused; MCU/QSPI/ITGen and the Linux IOMMU image were published in independent paths without overwriting existing content. path is offline layout; jf_path is repository-relative remote location. 2026-10-12: clean DID mapper kernel/NVMe modules from 1411c50e0909 published under linux/did-mapper/20261012/1411c50e0909 with source and validation evidence; metadata and fresh CI-reader downloads verified using existing user JF authentication. GitLab read-only token and pipeline not separately verified. 2026-10-15: refresh native-IOMMU Image and the paired DID-mapper Image/NVMe modules to committed Linux 360ac10968fa for forwarded iMSI-RX MSI mapping (CONFIG_IRQ_MSI_IOMMU=y); existing release/firmware/rootfs inputs remain fixed. See ASSETS.md for validation/publication evidence. 2026-10-21: Images built on 2026-10-19 from clean Linux 142f576d83ed published under linux/{iommu,did-mapper}/20261019/142f576d83ed; all three remote sizes/SHA256 verified. CONFIG_PCIE_KMH_BOSC_SOC supports the new QEMU compatible and strips die-id bits [46:44] in outbound iATU. Fresh CI-download/regression evidence is indexed in ASSETS.md; GitLab pipeline and its read-only token are not separately verified.",
   "assets": {
     "fw_jump": {
       "path": "st-release-v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin",
@@ -62,49 +62,49 @@
       "publication": "verified-20260927"
     },
     "iommu_kernel": {
-      "path": "qemu-ci/linux/iommu/20261015/360ac10968fa/Image",
-      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261015/360ac10968fa/Image",
+      "path": "qemu-ci/linux/iommu/20261019/142f576d83ed/Image",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261019/142f576d83ed/Image",
       "size": 29616128,
-      "sha256": "6160fbaadf170cf3d363c65a8e576d12441175dd7e894ecfe652d5edffce638f",
-      "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config",
-      "source_commit": "360ac10968fa950ac07e63c211ca3ec045c62548",
-      "kernel_release": "6.18.34-bosc-imsi-rx",
-      "config_sha256": "b56720886dbbd5098b68e5a1a2364c75d437da4939df00066534ce59d6d7e445",
+      "sha256": "c8191de67f140cddfcb33643bfbe2ecd889b28a98593e3098f5f26c823a1384c",
+      "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config; KMH/BOSC PCIe outbound die-id fixup",
+      "source_commit": "142f576d83ed424471143d9ec9cbc452a198297b",
+      "kernel_release": "6.18.34",
+      "config_sha256": "df83fc3c3b370ca4b28be961253aa9fb2520da020b97844826996f7bdebe8dbc",
       "initramfs_sha256": "718411d17729997a2258f6b1646b564da8be25673bdf59035017f140f1bec547",
       "compiler": "riscv64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
       "license": "GPL-2.0-only WITH Linux-syscall-note",
-      "source_tree": "2fb8cace829ea57fb92351825649c34452f91d8f",
-      "publication": "versioned-20261015"
+      "source_tree": "8200ba4e42c07f72af788a30bf02804dbb5f57b4",
+      "publication": "metadata-verified-20261021"
     },
     "did_mapper_kernel": {
-      "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config; DEBUG_FS=y; NVMe=m",
-      "source_commit": "360ac10968fa950ac07e63c211ca3ec045c62548",
-      "source_tree": "2fb8cace829ea57fb92351825649c34452f91d8f",
+      "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config; DEBUG_FS=y; NVMe=m; KMH/BOSC PCIe outbound die-id fixup",
+      "source_commit": "142f576d83ed424471143d9ec9cbc452a198297b",
+      "source_tree": "8200ba4e42c07f72af788a30bf02804dbb5f57b4",
       "kernel_release": "6.18.34-bosc-did-mapper",
-      "config_sha256": "0896bddcc29e748c94a4d64a13b15bfa1d89899d8e582479f14c7034d5cc8943",
+      "config_sha256": "fae6442322a9d8e2ed867e097a7e184cc7d8030867717bb067c190f7755d19d6",
       "initramfs_sha256": "718411d17729997a2258f6b1646b564da8be25673bdf59035017f140f1bec547",
       "compiler": "riscv64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
       "license": "GPL-2.0-only WITH Linux-syscall-note",
-      "publication": "versioned-20261015",
-      "path": "qemu-ci/linux/did-mapper/20261015/360ac10968fa/Image",
-      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261015/360ac10968fa/Image",
-      "size": 29603328,
-      "sha256": "d98fedc84721b1012fea057349fa15394b99925883fcc1e707a18815e30669a3"
+      "publication": "metadata-verified-20261021",
+      "path": "qemu-ci/linux/did-mapper/20261019/142f576d83ed/Image",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261019/142f576d83ed/Image",
+      "size": 29607424,
+      "sha256": "82b1a138cd713b94c997316f0ab21dad9cbcbde66ff2916a4a01b7d2e39de7a2"
     },
     "did_mapper_modules": {
-      "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config; DEBUG_FS=y; NVMe=m",
-      "source_commit": "360ac10968fa950ac07e63c211ca3ec045c62548",
-      "source_tree": "2fb8cace829ea57fb92351825649c34452f91d8f",
+      "source": "riscv-linux-devel-clean git archive; defconfig xiangshan.config; DEBUG_FS=y; NVMe=m; KMH/BOSC PCIe outbound die-id fixup",
+      "source_commit": "142f576d83ed424471143d9ec9cbc452a198297b",
+      "source_tree": "8200ba4e42c07f72af788a30bf02804dbb5f57b4",
       "kernel_release": "6.18.34-bosc-did-mapper",
-      "config_sha256": "0896bddcc29e748c94a4d64a13b15bfa1d89899d8e582479f14c7034d5cc8943",
+      "config_sha256": "fae6442322a9d8e2ed867e097a7e184cc7d8030867717bb067c190f7755d19d6",
       "initramfs_sha256": "718411d17729997a2258f6b1646b564da8be25673bdf59035017f140f1bec547",
       "compiler": "riscv64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
       "license": "GPL-2.0-only WITH Linux-syscall-note",
-      "publication": "versioned-20261015",
-      "path": "qemu-ci/linux/did-mapper/20261015/360ac10968fa/mapper-modules.ext4",
-      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261015/360ac10968fa/mapper-modules.ext4",
+      "publication": "metadata-verified-20261021",
+      "path": "qemu-ci/linux/did-mapper/20261019/142f576d83ed/mapper-modules.ext4",
+      "jf_path": "hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261019/142f576d83ed/mapper-modules.ext4",
       "size": 16777216,
-      "sha256": "a5587183dcdcd0d4bdd8cc7ee1003ec3952643d560a3c662fa8da9eae4dfb323"
+      "sha256": "4e10f62d21f7f48047ebc0d050ec3728c97c77df616fcb9d6f2c06070914ef2d"
     }
   }
 }

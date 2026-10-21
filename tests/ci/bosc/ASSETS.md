@@ -6,17 +6,31 @@
 CI 本身仍只有读取接口，不执行上传或固件构建。
 当前锁文件包含九项输入，按选中用例取用。
 
-2026-10-15 的 iMSI-RX 配套基线使用干净 Linux 提交 `360ac10968fa`：
-`iommu_kernel` 位于 `linux/iommu/20261015/360ac10968fa/`，
+本轮 PCIe outbound 配套镜像由干净 Linux 提交
+`142f576d83ed424471143d9ec9cbc452a198297b` 构建（2026-10-19），
+于 2026-10-21 发布；三份制品的 JF metadata size/SHA256 均已核验。
+`iommu_kernel` 位于 `linux/iommu/20261019/142f576d83ed/`，
 `did_mapper_kernel` 和 `did_mapper_modules` 位于
-`linux/did-mapper/20261015/360ac10968fa/`（均在上述 qemu-ci 发布前缀下）。
-新内核启用 `CONFIG_IRQ_MSI_IOMMU=y`，通过 endpoint MSI domain 映射转发写。
-mapper Image 和 NVMe 模块必须成对更新，因为该配置改变 `msi_desc` 布局。
-generated DT 由当前 QEMU 提供 `snps,imsi-rx-forward`；无 DT 的 fw_jump、
-rootfs、MCU/QSPI 及普通 minimal Image 继续使用原锁定资产。
-准确大小、SHA256、config 和源码来源以 `images.lock.json` 为准。
-构建、发布和本地回归证据位于 workspace 的
-`test-artifacts/imsi-rx-ci-20261015/`；本地回归不表示 GitLab pipeline 已通过。
+`linux/did-mapper/20261019/142f576d83ed/`（均在下表 qemu-ci 发布前缀下）。
+
+QEMU `e53ae7f5d29f` 将 BOSC ECAM/MEM 路由到 RC 的本地 44-bit 窗口，
+并生成 `bosc,kmh-bosc-soc-pcie` compatible。旧 Linux `360ac10968fa`
+缺少该 platform driver，因此未创建 PCI host/NVMe；即使只退回 generic compatible，
+multi 模式也缺少 iATU BASE/LIMIT 的 die-id 修正。新内核启用
+`CONFIG_PCIE_KMH_BOSC_SOC=y`，仅在 BOSC outbound iATU 比较地址上清除
+`[46:44]`，保留 CPU resource、PCI target 和 inbound DMA 地址。
+`CONFIG_IRQ_MSI_IOMMU=y` 及既有 iMSI-RX 支持继续启用。
+mapper Image 和 NVMe 模块必须使用同一源码/配置成对更新。
+
+qtest 另需在 `cases.json` 登记新增的 `outbound-multi`、`outbound-single`；
+严格 TAP 清单检查会拒绝额外测试，即使 C 测试本身全部成功。
+本轮 4 个 qtest 执行单元共 32 个子测试；另外验收 5 个 native IOMMU、
+9 个 DID mapper 和 4 个消费同一 Image 的 compose Linux 用例。
+正式 CI 命令、完整 UART/DT/结果、空缓存下载来源及发布记录保存在 workspace
+`test-artifacts/pcie-outbound-ci-20261021/`，准确结果以其中最终
+`reports/all/summary.json` 为准。此前旧镜像失败证据在
+`/tmp/qemu-142-preserve/7372-repro-01/`。
+这不表示 GitLab pipeline #7372 或 GitLab 专用只读 token 已验收。
 
 JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 镜像锁的 `jf_path` 为实际远端位置，`path` 保留原离线布局：
@@ -26,8 +40,8 @@ JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 | OpenSBI、Image、rootfs | `xs-sw/st-release/v0.9.99/` 下各原发布目录 |
 | MCU BIN、QSPI payload、源码/构建证据 | `hejian-workspace/guoyaxing/qemu-ci/mcu/20260927/` |
 | ITGen BIN、源码/ELF/原始 log | `hejian-workspace/guoyaxing/qemu-ci/itgen/aplic-cross-die/dieid2-20260924/` |
-| IOMMU/compose Linux Image、配置和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261015/360ac10968fa/` |
-| DID mapper Image、配套 NVMe 模块和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261015/360ac10968fa/` |
+| IOMMU/compose Linux Image、配置和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261019/142f576d83ed/` |
+| DID mapper Image、配套 NVMe 模块和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261019/142f576d83ed/` |
 | 固定构建依赖源码 tar | `hejian-workspace/guoyaxing/qemu-ci/native-deps/` |
 
 发布索引目录为 `hejian-workspace/guoyaxing/qemu-ci/baselines/` 下的
@@ -112,77 +126,37 @@ Python/Meson 使用仓库内 wheels，宿主系统开发包仍由服务器管理
 不可覆盖版本，再通过 MR 更新锁文件/预期行为并运行第一阶段全量。普通 QEMU MR
 不持有发布权限，不会验证 MCU 源码能否重新构建，不会自行修复 MCU_DIE_NUM 缺陷。
 
-## 原生 IOMMU Linux 内核
+## 原生 IOMMU 与 mapper 构建来源
 
-`iommu_kernel` 来自 `riscv-linux-devel-clean` 提交
-`d3e51a02cc629221404c9a871da9aec8ec42767d`（Disable MSI page-table mode），
-修复 IOHGATP Bare 时错误启用 MSIPTP 的问题。QEMU 提交 `65af1cde6c03`
-会拒绝该非法 device context，因此原 v0.9.99 Image 不能作为此门禁的内核。
-
-新 Image 为 29,611,520 bytes，release 为 `6.18.34`，SHA256 为
-`1c75064fa376a4286bad372ce2f4a67154f23aec0c8f8010b20f8867d821798a`。
-远端为上表独立版本目录中的 `Image`，离线路径为
-`riscv-linux-devel-clean/d3e51a02cc62/Image`；旧 release 保留。
-若部署设置了 `BOSC_CI_JF_PATHS`，须同步更新其中的 `iommu_kernel` 映射；
-离线部署也须更新目录，旧缓存无法通过新锁的大小/SHA256 校验。
-
-发布构建使用该提交的干净 `git archive`，不包含 Linux 工作树改动。
-在归档源码目录执行以下命令（`out` 为独立绝对路径，`cross` 为工具链前缀）：
+Linux source tree 为 `8200ba4e42c07f72af788a30bf02804dbb5f57b4`。
+使用该提交的 `git archive`，保留其中的 `initramfs.cpio`，不使用 dirty Linux
+工作树的 Image。工具链为 `riscv64-linux-gnu-gcc 13.3.0`
+（Ubuntu 13.3.0-6ubuntu2~24.04）；原生 Image release 为 `6.18.34`。
 
 ```sh
-make O="$out" ARCH=riscv CROSS_COMPILE="$cross" defconfig xiangshan.config
-make O="$out" ARCH=riscv CROSS_COMPILE="$cross" -j8 Image
+make -C "$src" O="$native_out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- defconfig xiangshan.config
+make -C "$src" O="$native_out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j8 Image
+cp -a "$native_out" "$mapper_out"
+"$src/scripts/config" --file "$mapper_out/.config" --enable DEBUG_FS \
+  --disable LOCALVERSION_AUTO --set-str LOCALVERSION -bosc-did-mapper \
+  --module BLK_DEV_NVME --module NVME_CORE
+make -C "$src" O="$mapper_out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- olddefconfig
+make -C "$src" O="$mapper_out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j8 Image modules
+python3 tests/ci/bosc/package_mapper_modules.py --build "$mapper_out" --output "$publish/mapper-modules.ext4"
 ```
 
-工具链为 GCC 15.0.0 20241107 (ge97179bacd0)。归档构建的 release 不带 Git 后缀，
-准确身份由锁中的源码 commit 和 Image SHA256 标识。`.config`、内嵌
-`initramfs.cpio` 的 SHA256 也记录在锁中；同版本发布 `source-provenance.json`
-和 `source-evidence.tar.gz`，保留配置、initramfs、许可证及完整构建日志。
+两种配置内建 RISC-V IOMMU、DWC、BOSC PCIe、virtio-blk、pmem、ext4 和
+mapper debugfs helper。原生配置内建 NVMe；mapper 配置将 NVMe 编为模块，
+release 为 `6.18.34-bosc-did-mapper`，使测试能在首次 NVMe probe 前配置 mapper。
+包装器检查模块依赖/vermagic，生成只读 pmem1 使用的 16 MiB ext4 payload。
+每项准确大小、SHA256、config/initramfs hash 在 `images.lock.json` 中。
 
-配置内建 RISC-V IOMMU、DWC、NVMe、virtio-blk、pmem 和 ext4。IOMMU 用例复用
-锁定 fw_jump/rootfs；libqemu compose Linux 用例也消费此 Image 的 RAM shell。
-测试盘由 runner 独立创建并清理。普通 CI 仅下载并校验，不编译 Linux。
+原构建使用宿主生成的 build timestamp/user/host，未设置固定 KBUILD 时间；
+发布 provenance 保留实际 `compile.h`、`utsversion.h`、配置、源码归档、
+模块 manifest 和构建命令。原编译 stdout 未单独保存为文件，后续 make 日志
+仅证明增量完成检查，不冒充首次完整编译日志。vmlinux/System.map 同版本归档。
 
-## DID mapper 专用内核与 NVMe 模块（2026-10-12 已发布）
-
-锁中新加 `did_mapper_kernel` 与 `did_mapper_modules`，共九项固定运行输入。
-源码为 Linux 干净归档提交 `1411c50e0909`，release
-`6.18.34-bosc-did-mapper`；GCC `riscv64-linux-gnu-gcc 13.3.0`。
-helper 在归档中，debugfs/IOMMU/DWC/pmem/ext4 内建，NVMe 为模块；这样可以
-在首次驱动 probe 前配置 mapper。两份资产记录同一 source commit/tree、
-release/config/initramfs hash，不使用 dirty Linux 工作树的 Image。
-
-在干净归档目录执行（保留归档内 initramfs，复制到独立 out）：
-
-```sh
-mkdir -p "$out"
-cp initramfs.cpio "$out/initramfs.cpio"
-export KBUILD_BUILD_TIMESTAMP='Mon Oct 12 15:00:00 CST 2026'
-export KBUILD_BUILD_USER=guoyaxing KBUILD_BUILD_HOST=bosc-ci KBUILD_BUILD_VERSION=1
-make O="$out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- defconfig xiangshan.config
-scripts/config --file "$out/.config" --enable DEBUG_FS --disable LOCALVERSION_AUTO \
-  --set-str LOCALVERSION -bosc-did-mapper --module BLK_DEV_NVME --module NVME_CORE
-make O="$out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- olddefconfig
-make O="$out" ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j8 Image modules
-```
-
-用 QEMU 的 `tests/ci/bosc/package_mapper_modules.py --build "$out" --output
-<mapper-modules.ext4>` 生成 16 MiB ext4 payload。脚本检查模块依赖和 vermagic，
-剥离 debug 信息后包装 nvme-core/nvme、顺序文件、各模块 hash。测试装入 pmem1
-并只读挂载，保留模块实际加载失败作为 FAIL。CI 不调用此包装脚本重建资产。
-
-已发布远端目录为
-`hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261012/1411c50e0909/`，
-两份锁中的 publication 为 `verified-20261012`。此次从相同提交与配置重建，
-配置/initramfs hash 与此前记录一致；Image 和 ext4 payload 的新 hash 已进入锁。
-同目录包含模块 manifest、源码/配置/构建日志、SHA256SUMS，以及
-`validation-summary.json` / `validation-evidence.tar.gz` / `acceptance-images.lock.json`。
-
-本地用 fresh QEMU 构建验收 mapper qtest 10/10、Linux NVMe 9/9、框架自测
-69/69；报告为 20 PASS / 34 NOT_SELECTED。上传后逐项检查 JF size/SHA256，
-再通过 `assets.py` 空缓存实际下载两份镜像并验证锁定值。证据保存在工作区
-`test-artifacts/did-mapper-jf-20261012/`。此次使用现有用户 JF 认证；GitLab
-只读 token 的读取权限及 pipeline 尚未单独验收。
-
-CI 按锁中的远端路径消费这两份资产。本地仍可用精确 hash 的 `--asset`
-覆盖；后续重建应发布新版本并校验真实远端对象，不能覆盖旧 IOMMU 资产。
+旧的 20261007、20261012、20261015 版本保留，不原地覆盖。
+新版本附带来源、许可证、SHA256SUMS 和验收索引；远端 metadata 核验与实际
+CI 下载/执行分开记录。使用已有用户 JF 认证不证明 GitLab 专用 token 的权限。
+若部署设置 `BOSC_CI_JF_PATHS`，须同步更新三项路径；CI 本身只读不发布。
