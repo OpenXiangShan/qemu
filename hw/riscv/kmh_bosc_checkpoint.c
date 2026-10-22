@@ -830,6 +830,19 @@ out:
     return ok;
 }
 
+#else
+static bool kmh_zstd_save(KmhBoscCheckpoint *s, const char *path, Error **errp)
+{
+    error_setg(errp, "checkpoint requires a QEMU build with zstd support");
+    return false;
+}
+
+static bool kmh_zstd_load(KmhBoscCheckpoint *s, const char *path, Error **errp)
+{
+    return kmh_zstd_save(s, path, errp);
+}
+#endif
+
 static bool kmh_raw_load(KmhBoscCheckpoint *s, const char *path, Error **errp)
 {
     MachineState *ms = s->machine;
@@ -904,19 +917,6 @@ out:
     g_free(buf);
     return ok;
 }
-
-#else
-static bool kmh_zstd_save(KmhBoscCheckpoint *s, const char *path, Error **errp)
-{
-    error_setg(errp, "checkpoint requires a QEMU build with zstd support");
-    return false;
-}
-
-static bool kmh_zstd_load(KmhBoscCheckpoint *s, const char *path, Error **errp)
-{
-    return kmh_zstd_save(s, path, errp);
-}
-#endif
 
 static bool kmh_load_stub(KmhBoscCheckpoint *s, Error **errp)
 {
