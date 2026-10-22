@@ -1052,6 +1052,33 @@ static void kmh_bosc_fdt_ensure_reserved_memory(void *fdt)
     qemu_fdt_setprop(fdt, "/reserved-memory", "ranges", NULL, 0);
 }
 
+static void kmh_bosc_fdt_add_apei_workspaces(void *fdt)
+{
+    static const struct {
+        const char *name;
+        hwaddr base;
+        hwaddr size;
+    } workspaces[] = {
+        /* Include the complete status clear [0x87001200, 0x87002200). */
+        { "einj",      0x87000000, 0x3000 },
+        { "erst",      0x87003000, 0x1000 },
+        { "error-log", 0x87004000, 0x2000 },
+    };
+
+    kmh_bosc_fdt_ensure_reserved_memory(fdt);
+    for (size_t i = 0; i < ARRAY_SIZE(workspaces); i++) {
+        g_autofree char *path = g_strdup_printf(
+            "/reserved-memory/%s@%" HWADDR_PRIx,
+            workspaces[i].name, workspaces[i].base);
+
+        qemu_fdt_add_subnode(fdt, path);
+        qemu_fdt_setprop_sized_cells(fdt, path, "reg",
+                                     2, workspaces[i].base,
+                                     2, workspaces[i].size);
+        qemu_fdt_setprop(fdt, path, "no-map", NULL, 0);
+    }
+}
+
 static void kmh_bosc_fdt_add_acpi_handoff(KmhBoscState *s)
 {
     void *fdt = MACHINE(s)->fdt;
@@ -1836,6 +1863,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     }
 
     kmh_bosc_add_distance_map(fdt, s);
+    kmh_bosc_fdt_add_apei_workspaces(fdt);
     if (s->generated_acpi) {
         kmh_bosc_fdt_add_acpi_handoff(s);
     }
