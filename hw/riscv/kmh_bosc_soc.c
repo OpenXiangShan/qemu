@@ -1624,7 +1624,9 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                           KMH_BOSC_DIE_SHIFT);
 
     {
-        hwaddr uart_base = kmh_bosc_die_memmap_base(s, 0, KMH_BOSC_UART0);
+        int uart_die = kmh_bosc_first_selected_die(s);
+        hwaddr uart_base = kmh_bosc_die_memmap_base(s, uart_die,
+                                                    KMH_BOSC_UART0);
         g_autofree char *uart_name = g_strdup_printf("/soc/serial@%" HWADDR_PRIx,
                                                      uart_base);
 
@@ -1635,8 +1637,10 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                      2, memmap[KMH_BOSC_UART0].size);
         qemu_fdt_setprop_cell(fdt, uart_name, "reg-shift", 2);
         qemu_fdt_setprop_cell(fdt, uart_name, "clock-frequency", 50000000);
+        qemu_fdt_setprop_cell(fdt, uart_name, "numa-node-id",
+                              kmh_bosc_numa_node_id(s, uart_die));
         qemu_fdt_setprop_cell(fdt, uart_name, "interrupt-parent",
-                              aplic_s_phandles[0]);
+                              aplic_s_phandles[uart_die]);
         qemu_fdt_setprop_cells(fdt, uart_name, "interrupts",
                                KMH_BOSC_UART0_IRQ, KMH_BOSC_IRQ_TYPE_LEVEL_HIGH);
         qemu_fdt_setprop_string(fdt, "/chosen", "stdout-path", uart_name);
@@ -1665,6 +1669,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
 
                 iommu_phandles[die_i][iommu_idx] = qemu_fdt_alloc_phandle(fdt);
                 qemu_fdt_add_subnode(fdt, iommu_name);
+                qemu_fdt_setprop_cell(fdt, iommu_name, "numa-node-id",
+                                      kmh_bosc_numa_node_id(s, die_i));
                 qemu_fdt_setprop_string(fdt, iommu_name, "compatible",
                                         "riscv,iommu");
                 qemu_fdt_setprop_cell(fdt, iommu_name, "#iommu-cells", 1);
@@ -1683,6 +1689,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 qemu_fdt_setprop_string(fdt, iommu_name, "status", "okay");
 
                 qemu_fdt_add_subnode(fdt, mapper_name);
+                qemu_fdt_setprop_cell(fdt, mapper_name, "numa-node-id",
+                                      kmh_bosc_numa_node_id(s, die_i));
                 qemu_fdt_setprop_string(fdt, mapper_name, "compatible",
                                         "bosc,did-mapper");
                 qemu_fdt_setprop_sized_cells(fdt, mapper_name, "reg",
@@ -1691,6 +1699,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 qemu_fdt_setprop_string(fdt, mapper_name, "status", "okay");
 
                 qemu_fdt_add_subnode(fdt, traffic_name);
+                qemu_fdt_setprop_cell(fdt, traffic_name, "numa-node-id",
+                                      kmh_bosc_numa_node_id(s, die_i));
                 qemu_fdt_setprop_string(fdt, traffic_name, "compatible",
                                         "bosc,axi4-traffic");
                 qemu_fdt_setprop_sized_cells(fdt, traffic_name, "reg",
@@ -1714,6 +1724,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         dmac_name = g_strdup_printf("/soc/dma-controller@%" HWADDR_PRIx,
                                     dmac_base);
         qemu_fdt_add_subnode(fdt, dmac_name);
+        qemu_fdt_setprop_cell(fdt, dmac_name, "numa-node-id",
+                              kmh_bosc_numa_node_id(s, die));
         qemu_fdt_setprop_string(fdt, dmac_name, "compatible",
                                 "snps,axi-dma-1.01a");
         qemu_fdt_setprop(fdt, dmac_name, "dma-controller", NULL, 0);
@@ -1748,6 +1760,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                     g_strdup_printf("/soc/pci@%" HWADDR_PRIx, dbi_base);
 
                 qemu_fdt_add_subnode(fdt, pcie_name);
+                qemu_fdt_setprop_cell(fdt, pcie_name, "numa-node-id",
+                                      kmh_bosc_numa_node_id(s, die));
                 qemu_fdt_setprop_string(fdt, pcie_name, "compatible",
                                         "bosc,kmh-bosc-soc-pcie");
                 qemu_fdt_setprop_cell(fdt, pcie_name, "#address-cells", 3);
