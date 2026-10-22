@@ -97,6 +97,7 @@
 #define KMH_BOSC_PCIE_MEM32_BUS_BASE      0x0000000050000000ULL
 #define KMH_BOSC_PCIE_ROOT_BUS_STRIDE     0x0000000004000000ULL
 #define KMH_BOSC_PCIE_WINDOW_SIZE         0x0000000002000000ULL
+#define KMH_BOSC_PCIE_PREFETCH_OFFSET     0x0000000020000000ULL
 #define KMH_BOSC_IOMMU_MMIO_SIZE          0x1000
 #define KMH_BOSC_AXI4_TRAFFIC_COUNT       KMH_BOSC_IOMMU_PER_DIE
 
@@ -1741,7 +1742,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 const hwaddr mem32_bus_base =
                     kmh_bosc_pcie_mem32_bus_base(segment);
                 const hwaddr mem64_cpu_base =
-                    mem_base + KMH_BOSC_PCIE_WINDOW_SIZE;
+                    mem_base + KMH_BOSC_PCIE_PREFETCH_OFFSET;
                 const int ep_irq = kmh_bosc_pcie_ep_irq(port);
                 g_autofree char *pcie_name =
                     g_strdup_printf("/soc/pci@%" HWADDR_PRIx, dbi_base);
@@ -1772,10 +1773,16 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                              2, mem32_bus_base,
                                              2, mem_base,
                                              2, KMH_BOSC_PCIE_WINDOW_SIZE,
-                                             1, FDT_PCI_RANGE_MMIO_64BIT,
+                                             1, FDT_PCI_RANGE_MMIO_64BIT |
+                                                FDT_PCI_RANGE_PREFETCHABLE,
                                              2, KMH_BOSC_PCIE_MEM_BUS_BASE,
                                              2, mem64_cpu_base,
                                              2, KMH_BOSC_PCIE_WINDOW_SIZE);
+                qemu_fdt_setprop_sized_cells(fdt, pcie_name, "dma-ranges",
+                                             1, FDT_PCI_RANGE_MMIO,
+                                             2, 0x80000000ULL,
+                                             2, 0x80000000ULL,
+                                             2, 0x80000000ULL);
                 qemu_fdt_setprop_cell(fdt, pcie_name, "interrupt-parent",
                                       aplic_s_phandles[die]);
                 /* Omit msi-parent to select the DWC integrated receiver. */
@@ -1801,6 +1808,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                                   ARRAY_SIZE(interrupt_names));
                 }
                 qemu_fdt_setprop_cell(fdt, pcie_name, "num-lanes", 1);
+                qemu_fdt_setprop_cell(fdt, pcie_name, "max-link-speed", 1);
                 qemu_fdt_setprop_string(fdt, pcie_name, "status", "okay");
                 kmh_bosc_add_pcie_irq_map(fdt, pcie_name,
                                           aplic_s_phandles[die], ep_irq);
