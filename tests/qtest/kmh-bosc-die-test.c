@@ -5,6 +5,7 @@
 #include "qemu/osdep.h"
 #include "libqtest.h"
 #include "qemu/bswap.h"
+#include "qemu/bitops.h"
 #include "qemu/units.h"
 #include <libfdt.h>
 
@@ -132,6 +133,127 @@ static void test_timebase(gconstpointer opaque)
         }
     }
     g_assert_cmpuint(rhct_count, ==, 1);
+    qtest_quit(qts);
+}
+
+static uint32_t fdt_cell(const void *fdt, int node, const char *name)
+{
+    int len;
+    const fdt32_t *value = fdt_getprop(fdt, node, name, &len);
+
+    g_assert_nonnull(value);
+    g_assert_cmpint(len, ==, sizeof(*value));
+    return fdt32_to_cpu(*value);
+}
+
+/* Validate the DT actually passed in DDR, including sparse-die affinity. */
+static void test_generated_numa_fdt(gconstpointer opaque)
+{
+    unsigned mask = GPOINTER_TO_UINT(opaque);
+    bool single = mask == 0;
+    unsigned dies = single ? 1 : 4;
+    unsigned selected = single ? 1 : ctpop32(mask);
+    uint64_t node_size = (single ? 256 : 64) * MiB;
+    uint64_t dtb_addr = 0x80000000 + node_size - 2 * MiB;
+    QTestState *qts = qtest_initf(
+        "-M kmh-bosc-soc,soc-mode=%s,die-mask=0x%x,core-mask=0x1,"
+        "dw-pcie=on,iommu-sys=on,generated-dtb=on "
+        "-smp %s -m 256M",
+        single ? "single" : "multi", single ? 1 : mask,
+        single ? "16,maxcpus=17" : "64,maxcpus=68");
+    struct fdt_header header;
+    g_autofree uint8_t *fdt = NULL;
+    int len, node;
+    const fdt32_t *cells;
+    static const uint64_t dbi[] = {
+        0x4f00000000, 0x4f00800000, 0x4f01000000,
+    };
+    static const uint64_t workspaces[] = {
+        0x87000000, 0x87003000, 0x87004000,
+    };
+    static const unsigned sizes[] = { 0x3000, 0x1000, 0x2000 };
+    static const char *const names[] = { "einj", "erst", "error-log" };
+
+    qtest_memread(qts, dtb_addr, &header, sizeof(header));
+    g_assert_cmpint(fdt_check_header(&header), ==, 0);
+    g_assert_cmpuint(fdt_totalsize(&header), <, 2 * MiB);
+    fdt = g_malloc(fdt_totalsize(&header));
+    qtest_memread(qts, dtb_addr, fdt, fdt_totalsize(&header));
+    node = fdt_path_offset(fdt, "/distance-map");
+    cells = fdt_getprop(fdt, node, "distance-matrix", &len);
+    g_assert_nonnull(cells);
+    g_assert_cmpuint(len, ==, selected * selected * 3 * sizeof(*cells));
+    for (unsigned entry = 0; entry < selected * selected; entry++) {
+        unsigned a = fdt32_to_cpu(cells[entry * 3]);
+        unsigned b = fdt32_to_cpu(cells[entry * 3 + 1]);
+
+        g_assert_cmpuint(a, <, selected);
+        g_assert_cmpuint(b, <, selected);
+        g_assert_cmpuint(fdt32_to_cpu(cells[entry * 3 + 2]), ==,
+                         a == b ? 10 : 20);
+    }
+    for (unsigned die = 0; die < dies; die++) {
+        bool enabled = single || (mask & (1U << die));
+        unsigned nid = single ? 0 : ctpop32(mask & ((1U << die) - 1));
+        g_autofree char *path = g_strdup_printf(
+            "/memory@%" PRIx64, (uint64_t)(0x80000000 + die * 0x800000000ULL));
+
+        node = fdt_path_offset(fdt, path);
+        if (!enabled) {
+            g_assert_cmpint(node, ==, -FDT_ERR_NOTFOUND);
+            continue;
+        }
+        g_assert_cmpuint(fdt_cell(fdt, node, "numa-node-id"), ==, nid);
+        g_clear_pointer(&path, g_free);
+        path = g_strdup_printf("/cpus/cpu@%u", die * 16);
+        node = fdt_path_offset(fdt, path);
+        g_assert_cmpuint(fdt_cell(fdt, node, "numa-node-id"), ==, nid);
+        for (unsigned port = 0; port < 3; port++) {
+            uint64_t base = single ? dbi[port] : global_addr(die, dbi[port]);
+            g_autofree char *pci = g_strdup_printf("/soc/pci@%" PRIx64, base);
+
+            node = fdt_path_offset(fdt, pci);
+            g_assert_cmpint(node, >=, 0);
+            g_assert_cmpint(fdt_node_check_compatible(
+                fdt, node, "bosc,kmh-bosc-soc-pcie"), ==, 0);
+            g_assert_cmpuint(fdt_cell(fdt, node, "numa-node-id"), ==, nid);
+            g_assert_cmpuint(fdt_cell(fdt, node, "linux,pci-domain"), ==,
+                             die * 3 + port);
+            g_assert_null(fdt_getprop(fdt, node, "msi-parent", NULL));
+            g_assert_null(fdt_getprop(fdt, node, "msi-map", NULL));
+            g_assert_nonnull(fdt_getprop(fdt, node, "snps,imsi-rx-forward",
+                                        NULL));
+            cells = fdt_getprop(fdt, node, "interrupts", &len);
+            g_assert_nonnull(cells);
+            g_assert_cmpint(len, ==, 4 * sizeof(*cells));
+            g_assert_cmpuint(fdt32_to_cpu(cells[0]), ==, 76 + port * 6);
+            g_assert_cmpuint(fdt32_to_cpu(cells[2]), ==, 75 + port * 6);
+            cells = fdt_getprop(fdt, node, "ranges", &len);
+            g_assert_nonnull(cells);
+            g_assert_cmpint(len, ==, 14 * sizeof(*cells));
+            g_assert_cmphex(fdt32_to_cpu(cells[7]), ==, 0x43000000);
+            g_assert_cmphex(fdt32_to_cpu(cells[11]), ==, 0x20000000);
+            cells = fdt_getprop(fdt, node, "dma-ranges", &len);
+            g_assert_nonnull(cells);
+            g_assert_cmpint(len, ==, 7 * sizeof(*cells));
+            g_assert_cmphex(fdt32_to_cpu(cells[2]), ==, 0x80000000);
+            g_assert_cmphex(fdt32_to_cpu(cells[4]), ==, 0x80000000);
+            g_assert_cmphex(fdt32_to_cpu(cells[6]), ==, 0x80000000);
+        }
+    }
+    for (unsigned i = 0; i < ARRAY_SIZE(workspaces); i++) {
+        g_autofree char *path = g_strdup_printf(
+            "/reserved-memory/%s@%" PRIx64, names[i], workspaces[i]);
+
+        node = fdt_path_offset(fdt, path);
+        g_assert_cmpint(node, >=, 0);
+        g_assert_nonnull(fdt_getprop(fdt, node, "no-map", NULL));
+        cells = fdt_getprop(fdt, node, "reg", &len);
+        g_assert_nonnull(cells);
+        g_assert_cmpint(len, ==, 4 * sizeof(*cells));
+        g_assert_cmpuint(fdt32_to_cpu(cells[1]), ==, workspaces[i]);
+        g_assert_cmpuint(fdt32_to_cpu(cells[3]), ==, sizes[i]);
+    }
     qtest_quit(qts);
 }
 
@@ -307,6 +429,14 @@ int main(int argc, char **argv)
     static const DdrLayout sparse = { 16, 0x5 };
 
     g_test_init(&argc, &argv, NULL);
+    qtest_add_data_func("/kmh-bosc/generated-fdt/single", GUINT_TO_POINTER(0),
+                        test_generated_numa_fdt);
+    qtest_add_data_func("/kmh-bosc/generated-fdt/two-die", GUINT_TO_POINTER(3),
+                        test_generated_numa_fdt);
+    qtest_add_data_func("/kmh-bosc/generated-fdt/four-die",
+                        GUINT_TO_POINTER(15), test_generated_numa_fdt);
+    qtest_add_data_func("/kmh-bosc/generated-fdt/sparse-die",
+                        GUINT_TO_POINTER(5), test_generated_numa_fdt);
     qtest_add_func("/kmh-bosc/single/addresses", test_single_soc_addresses);
     qtest_add_data_func("/kmh-bosc/timebase/single", GINT_TO_POINTER(1),
                         test_timebase);

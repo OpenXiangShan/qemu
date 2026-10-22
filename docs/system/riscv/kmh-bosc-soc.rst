@@ -403,8 +403,30 @@ Generated device tree
   ``disabled``。
 * ``/chosen/opensbi-config/cold-boot-harts`` 只指向第一个被选中的
   application hart。
-* ACLINT、IMSIC interrupt properties 和 NUMA distance map 只覆盖当前
-  被选中的 harts/dies。
+* ACLINT 的 parent 列表保留完整的物理 hart 槽位：multi 模式为 64 个，
+  single 模式为 16 个。IMSIC regsets 和 NUMA distance map 则覆盖选中的 dies。
+* CPU、DDR、PCIe、DMAC、UART 和可选 IOMMU/mapper 节点带有
+  ``numa-node-id``。NUMA ID 按选中 die 的顺序从 0 编号，距离为本地 10、
+  远端 20；稀疏 ``die-mask`` 不改变外设硬件 die-ID 或 DDR slot 地址。
+* PCIe compatible 为 ``bosc,kmh-bosc-soc-pcie``，默认使用 iMSI-RX：
+  具有 ``snps,imsi-rx-forward``，没有外部 ``msi-parent`` / ``msi-map``。
+  Linux 公共 DTSI 默认使用 IMSIC，iMSI-RX 板级 profile 才覆盖该选择。
+* PCIe p0/p1/p2 的 EP 中断分别为 76/82/88，SII 分别为 75/81/87；
+  每个 RC 的 MSI 和四个 INTx 共享该 RC 的 EP wire。UART0=32、DMAC=40、
+  IOMMU=70，均属于对应 die 的 APLIC。
+* PCIe 的 ``reg``、``ranges``、``dma-ranges`` 与仓库 DTSI 保持一致：
+  两个 32-MiB BAR 窗口中，预取窗口位于 MEM aperture 起点加 512 MiB；
+  目前板级 DMA aperture 为恒等映射的 ``[0x80000000, 0x100000000)``。
+* 生成的 DT 始终保留带 ``no-map`` 的 APEI 工作区：EINJ
+  ``0x87000000/0x3000``、ERST ``0x87003000/0x1000``、error-log
+  ``0x87004000/0x2000``。
+
+QEMU 的时钟参数描述模型本身：ACLINT 为 13 MHz，UART 为 1843200 Hz、
+115200 baud、reg-shift=2。PLDM 的 100 MHz timebase 及 200 MHz UART /
+12.5 Mbaud 是板级覆盖值，不能直接作为 QEMU 模型的时钟参数。
+仓库 multidie DTSI 默认有四个 NUMA 节点；板级在 include 之前设置
+``KMH_NUMA_NODES=1`` 或 ``2``，保留连续选中 dies 的 CPU/RAM 拓扑。
+内核需启用 ``CONFIG_NUMA`` 才会据此使用 NUMA 内存分配与调度。
 
 可以使用 ``dumpdtb=`` 导出生成的设备树：
 
