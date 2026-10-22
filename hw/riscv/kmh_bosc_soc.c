@@ -98,6 +98,8 @@
 #define KMH_BOSC_PCIE_ROOT_BUS_STRIDE     0x0000000004000000ULL
 #define KMH_BOSC_PCIE_WINDOW_SIZE         0x0000000002000000ULL
 #define KMH_BOSC_PCIE_PREFETCH_OFFSET     0x0000000020000000ULL
+#define KMH_BOSC_UART_BAUD                115200
+#define KMH_BOSC_UART_CLOCK               (16 * KMH_BOSC_UART_BAUD)
 #define KMH_BOSC_IOMMU_MMIO_SIZE          0x1000
 #define KMH_BOSC_AXI4_TRAFFIC_COUNT       KMH_BOSC_IOMMU_PER_DIE
 
@@ -1636,7 +1638,10 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                      2, uart_base,
                                      2, memmap[KMH_BOSC_UART0].size);
         qemu_fdt_setprop_cell(fdt, uart_name, "reg-shift", 2);
-        qemu_fdt_setprop_cell(fdt, uart_name, "clock-frequency", 50000000);
+        qemu_fdt_setprop_cell(fdt, uart_name, "clock-frequency",
+                              KMH_BOSC_UART_CLOCK);
+        qemu_fdt_setprop_cell(fdt, uart_name, "current-speed",
+                              KMH_BOSC_UART_BAUD);
         qemu_fdt_setprop_cell(fdt, uart_name, "numa-node-id",
                               kmh_bosc_numa_node_id(s, uart_die));
         qemu_fdt_setprop_cell(fdt, uart_name, "interrupt-parent",
@@ -2207,7 +2212,8 @@ static void kmh_bosc_init_uart(KmhBoscState *s)
             serial_mm_init(get_system_memory(),
                        kmh_bosc_die_memmap_base(s, die, KMH_BOSC_UART0), 2,
                        qdev_get_gpio_in(s->irqchip[die], KMH_BOSC_UART0_IRQ),
-                       115200, serial_hd(die), DEVICE_LITTLE_ENDIAN);
+                       KMH_BOSC_UART_BAUD, serial_hd(die),
+                       DEVICE_LITTLE_ENDIAN);
     }
 }
 
