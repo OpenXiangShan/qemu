@@ -17,6 +17,12 @@
 #define MASK 0x82c
 #define STATUS 0x830
 
+static bool aplic_input(QTestState *q, uint64_t aplic, unsigned source)
+{
+    return qtest_readl(q, aplic + 0x1d00 + (source / 32) * 4) &
+           (1U << (source % 32));
+}
+
 static uint64_t ga(unsigned die, uint64_t offset)
 {
     return ((uint64_t)(die + 1) << 44) | offset;
@@ -131,6 +137,63 @@ static void send_msi(QTestState *q, unsigned die, uint64_t addr,
     qtest_writew(q, ep + cap + 2, 0x81);
     qtest_writel(q, ga(die, WINDOW) + 0x60, 1);
     qtest_writel(q, ga(die, WINDOW) + 0x64, 1);
+}
+
+static uint64_t imsic_eip0(QTestState *q, unsigned die, bool mmode, bool clear)
+{
+    uint64_t value = 0x80; /* EIP0 */
+    unsigned select = mmode ? 0x350 : 0x150;
+
+    qtest_csr_call(q, "set_csr", die * 16, select, &value);
+    value = 0;
+    qtest_csr_call(q, clear ? "set_csr" : "get_csr", die * 16,
+                   select + 1, &value);
+    return value;
+}
+
+/* PCIe MSI loses the target die ID and must still pass the system IOMMU. */
+static void test_imsic_axi44(void)
+{
+    for (unsigned mode = 0; mode < 3; mode++) {
+        QTestState *q = qtest_initf(
+            "-M kmh-bosc-soc,soc-mode=multi,die-mask=0x3,"
+            "core-mask=0x1:0x1:0:0,dw-pcie=on,generated-dtb=on,"
+            "iommu-sys=%s,iommu-bypass=%s "
+            "-smp 64,maxcpus=68 -m 256M -accel tcg -S "
+            "-device edu,bus=pcie-d0-p0,dma_mask=0xffffffffffffffff "
+            "-device edu,bus=pcie-d1-p0,dma_mask=0xffffffffffffffff",
+            mode ? "on" : "off", mode == 2 ? "off" : "on");
+
+        for (unsigned die = 0; die < 2; die++) {
+            setup_edu(q, die);
+            if (mode == 2) {
+                qtest_writeq(q, ga(die, 0x4f80200000ULL) +
+                             RISCV_IOMMU_REG_DDTP, RISCV_IOMMU_DDTP_MODE_OFF);
+            }
+        }
+        for (unsigned mmode = 0; mmode < 2; mmode++) {
+            uint64_t local = mmode ? 0x1c000000 : 0x1d000000;
+
+            for (unsigned source = 0; source < 2; source++) {
+                for (unsigned target = 0; target < 3; target++) {
+                    uint64_t address = target < 2 ? ga(target, local) : local;
+
+                    for (unsigned die = 0; die < 2; die++) {
+                        imsic_eip0(q, die, mmode, true);
+                    }
+                    send_msi(q, source, address, 33);
+                    for (unsigned die = 0; die < 2; die++) {
+                        uint64_t expected = mode != 2 && die == source ?
+                                            1ULL << 33 : 0;
+
+                        g_assert_cmphex(imsic_eip0(q, die, mmode, false),
+                                        ==, expected);
+                    }
+                }
+            }
+        }
+        qtest_quit(q);
+    }
 }
 
 static void edu_dma(QTestState *q, unsigned die, uint64_t src, uint64_t dst,
@@ -573,13 +636,81 @@ static void test_iommu_msi_mode(const void *opaque)
     }
 }
 
+/* Check the board wires, not just the DWC sysbus outputs. */
+static void test_hardware_irq_table(void)
+{
+    const uint64_t dbis[] = { DBI, 0x4f00800000, 0x4f01000000 };
+    const uint64_t ecams[] = { ECAM, 0x4900000000, 0x4a00000000 };
+    const uint64_t bars[] = { WINDOW, 0x4e000000000, 0x4f000000000 };
+    GString *args = g_string_new(
+        "-M kmh-bosc-soc,die-mask=0xf,core-mask=0x1,dw-pcie=on,"
+        "generated-dtb=on,iommu-sys=on -smp 64,maxcpus=68 -m 256M");
+    QTestState *q;
+
+    for (unsigned die = 0; die < 4; die++) {
+        for (unsigned port = 0; port < 3; port++) {
+            g_string_append_printf(args, " -device edu,bus=pcie-d%u-p%u",
+                                   die, port);
+        }
+    }
+    q = qtest_init(args->str);
+    g_string_free(args, true);
+
+    for (unsigned die = 0; die < 4; die++) {
+        uint64_t aplic = ga(die, 0x1e020000);
+        uint64_t uart = ga(die, 0x04000000);
+
+        qtest_writel(q, aplic + 32 * 4, 6);
+        qtest_writeb(q, uart + 4, 2); /* THRE interrupt enable. */
+        g_assert_true(aplic_input(q, aplic, 32));
+        qtest_writeb(q, uart + 4, 0);
+        g_assert_false(aplic_input(q, aplic, 32));
+
+        for (unsigned port = 0; port < 3; port++) {
+            uint64_t dbi = ga(die, dbis[port]);
+            uint64_t ep = ga(die, ecams[port]) + MiB;
+            uint64_t bar = ga(die, bars[port]);
+            unsigned source = 76 + port * 6;
+            unsigned cap;
+
+            setup_bosc_edu(q, dbi, ep, bar, ecams[port], bars[port]);
+            qtest_writel(q, aplic + source * 4, 6);
+            qtest_writel(q, bar + 0x60, 1);
+            g_assert_true(aplic_input(q, aplic, source));
+            qtest_writel(q, bar + 0x64, 1);
+            g_assert_false(aplic_input(q, aplic, source));
+
+            reg64(q, dbi + 0x820, DOORBELL);
+            qtest_writel(q, dbi + ENABLE, 1);
+            cap = qtest_readb(q, ep + 0x34);
+            reg64(q, ep + cap + 4, DOORBELL);
+            qtest_writew(q, ep + cap + 12, 0);
+            qtest_writew(q, ep + cap + 2, 0x81);
+            qtest_writel(q, bar + 0x60, 1);
+            g_assert_true(aplic_input(q, aplic, source));
+            qtest_writel(q, bar + 0x64, 1);
+            g_assert_true(aplic_input(q, aplic, source));
+            qtest_writel(q, dbi + STATUS, 1);
+            g_assert_false(aplic_input(q, aplic, source));
+        }
+
+        for (unsigned source = 43; source <= 63; source++) {
+            g_assert_false(aplic_input(q, aplic, source));
+        }
+    }
+    qtest_quit(q);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    qtest_add_func("/kmh-bosc/pcie/hardware-irq-table",
+                   test_hardware_irq_table);
     qtest_add_data_func("/kmh-bosc/pcie/outbound-multi", (void *)0,
                         test_outbound_routing);
     qtest_add_data_func("/kmh-bosc/pcie/outbound-single", (void *)1,
                         test_outbound_routing);
+    qtest_add_func("/kmh-bosc/pcie/imsic-axi44", test_imsic_axi44);
     qtest_add_data_func("/kmh-bosc/pcie/imsi-axi44", (void *)0, test_pcie);
     qtest_add_data_func("/kmh-bosc/pcie/imsi-iommu", (void *)1, test_pcie);
     qtest_add_func("/kmh-bosc/pcie/iommu-root-contexts",

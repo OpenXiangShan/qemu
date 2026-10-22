@@ -187,6 +187,7 @@ config KMH_BOSC_SOC
     select SERIAL_MM
     select UNIMP
     select PCI_EXPRESS_DESIGNWARE
+    select OR_IRQ
 
 config XIANGSHAN_NANHUV5
     bool

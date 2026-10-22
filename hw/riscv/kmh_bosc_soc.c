@@ -32,8 +32,10 @@
 #include "hw/pci-host/designware.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pcie_host.h"
+#include "hw/or-irq.h"
 #include "hw/riscv/boot.h"
 #include "hw/riscv/kmh_bosc_soc.h"
+#include "hw/riscv/kmh_bosc_irq.h"
 #include "hw/riscv/kmh_bosc_checkpoint.h"
 #include "../../third_party/kmh-portable-restore/native-abi.h"
 #include "../../third_party/kmh-portable-restore/native-resources.inc"
@@ -74,16 +76,6 @@
     (KMH_BOSC_DIES * KMH_BOSC_DDR_NODE_STRIDE)
 #define KMH_BOSC_MCU_PAYLOAD_ADDR         KMH_BOSC_DDR_NODE_BASE
 #define KMH_BOSC_MCU_SYNC_FLAG_ADDR       0x0000000088000000ULL
-#define KMH_BOSC_UART0_IRQ                10
-#define KMH_BOSC_PCIE_MSI_IRQ             13
-#define KMH_BOSC_PCIE_INTA_IRQ            14
-#define KMH_BOSC_PCIE_INTB_IRQ            15
-#define KMH_BOSC_PCIE_INTC_IRQ            16
-#define KMH_BOSC_PCIE_INTD_IRQ            17
-#define KMH_BOSC_PCIE_HP_IRQ              18
-#define KMH_BOSC_DMAC_IRQ                 40
-#define KMH_BOSC_IOMMU_IRQ_BASE           36
-/* Per-die IOMMU instances: idx0 uses 36-39; idx1/2 skip DMAC(40). */
 #define KMH_BOSC_IOMMU_PER_DIE            KMH_BOSC_PCIE_PER_DIE
 #define KMH_BOSC_IOMMU_IRQS_PER_INST      4
 
@@ -101,7 +93,6 @@
      KMH_BOSC_FDT_APLIC_INT_CELLS)
 
 #define KMH_BOSC_PCIE_ECAM_SIZE           PCIE_MMCFG_SIZE_MAX
-#define KMH_BOSC_PCIE_IRQ_STRIDE          6
 #define KMH_BOSC_PCIE_MEM_BUS_BASE        0x0000000100000000ULL
 #define KMH_BOSC_PCIE_MEM32_BUS_BASE      0x0000000050000000ULL
 #define KMH_BOSC_PCIE_ROOT_BUS_STRIDE     0x0000000004000000ULL
@@ -294,6 +285,8 @@ struct KmhBoscState {
     RISCVHartArrayState app_cpus[KMH_BOSC_DIES];
     RISCVHartArrayState mcu_cpus[KMH_BOSC_DIES];
     DeviceState *irqchip[KMH_BOSC_DIES];
+    OrIRQState pcie_ep_irq[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
+    OrIRQState iommu_irq[KMH_BOSC_DIES];
 
     DesignwarePCIEHost pcie[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
     KmhBoscPcieDma pcie_dma[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
@@ -391,55 +384,9 @@ static uint64_t kmh_bosc_die_ram_size(const MachineState *machine)
            kmh_bosc_die_count(KMH_BOSC_MACHINE(machine));
 }
 
-static inline int kmh_bosc_pcie_irq_base(int port)
-{
-    return KMH_BOSC_PCIE_MSI_IRQ + port * KMH_BOSC_PCIE_IRQ_STRIDE;
-}
-
-static inline int kmh_bosc_pcie_msi_irq(int port)
-{
-    return kmh_bosc_pcie_irq_base(port);
-}
-
-static inline int kmh_bosc_pcie_inta_irq(int port)
-{
-    return kmh_bosc_pcie_irq_base(port) + 1;
-}
-
-static inline int kmh_bosc_pcie_intb_irq(int port)
-{
-    return kmh_bosc_pcie_irq_base(port) + 2;
-}
-
-static inline int kmh_bosc_pcie_intc_irq(int port)
-{
-    return kmh_bosc_pcie_irq_base(port) + 3;
-}
-
-static inline int kmh_bosc_pcie_intd_irq(int port)
-{
-    return kmh_bosc_pcie_irq_base(port) + 4;
-}
-
-static inline int kmh_bosc_pcie_hp_irq(int port)
-{
-    return kmh_bosc_pcie_irq_base(port) + 5;
-}
-
 static inline int kmh_bosc_pcie_domain(int die, int port)
 {
     return die * KMH_BOSC_PCIE_PER_DIE + port;
-}
-
-static inline int kmh_bosc_iommu_irq_base(int idx)
-{
-    /*
-     * Keep legacy IOMMU0 at 36-39. DMAC owns 40, so IOMMU1/2 start at 41.
-     */
-    if (idx == 0) {
-        return KMH_BOSC_IOMMU_IRQ_BASE;
-    }
-    return KMH_BOSC_DMAC_IRQ + 1 + (idx - 1) * KMH_BOSC_IOMMU_IRQS_PER_INST;
 }
 
 static hwaddr kmh_bosc_pcie_mem32_bus_base(int segment)
@@ -1057,7 +1004,7 @@ static void kmh_bosc_add_distance_map(void *fdt, const KmhBoscState *s)
 }
 
 static void kmh_bosc_add_pcie_irq_map(void *fdt, const char *node_path,
-                                      uint32_t intc_phandle, int inta_irq)
+                                      uint32_t intc_phandle, int ep_irq)
 {
     uint32_t full_irq_map[PCI_NUM_PINS * PCI_NUM_PINS *
                           KMH_BOSC_FDT_MAX_INT_MAP_WIDTH] = { 0 };
@@ -1069,7 +1016,8 @@ static void kmh_bosc_add_pcie_irq_map(void *fdt, const char *node_path,
         int devfn = dev * 0x8;
 
         for (pin = 0; pin < PCI_NUM_PINS; pin++) {
-            int irq_nr = inta_irq + ((pin + dev) % PCI_NUM_PINS);
+            /* All legacy endpoint pins share the hardware ep_int wire. */
+            int irq_nr = ep_irq;
             int i = 0;
 
             irq_map[i++] = cpu_to_be32(devfn << 8);
@@ -1326,6 +1274,12 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
     MachineState *machine = MACHINE(s);
     void *fdt = machine->fdt;
     const MemMapEntry *memmap = kmh_bosc_memmap;
+    static const char *const imsic_compat[] = {
+        "bosc,kmh-v2-imsics", "riscv,imsics",
+    };
+    static const char *const aplic_compat[] = {
+        "bosc,kmh-v2-aplic", "riscv,aplic",
+    };
     static const char *const soc_compat[] = {
         "bosc,kmh-bosc-soc",
         "simple-bus",
@@ -1489,7 +1443,9 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                        kmh_bosc_die_memmap_base(s, die,
                                                                 KMH_BOSC_APLIC_S));
         qemu_fdt_add_subnode(fdt, aplic_s_name);
-        qemu_fdt_setprop_string(fdt, aplic_s_name, "compatible", "riscv,aplic");
+        qemu_fdt_setprop_string_array(fdt, aplic_s_name, "compatible",
+                                      (char **)aplic_compat,
+                                      ARRAY_SIZE(aplic_compat));
         qemu_fdt_setprop_cell(fdt, aplic_s_name, "#address-cells", 0);
         qemu_fdt_setprop_cell(fdt, aplic_s_name, "msi-parent", imsic_s_phandle);
         qemu_fdt_setprop_sized_cells(fdt, aplic_s_name, "reg",
@@ -1506,7 +1462,9 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                        kmh_bosc_die_memmap_base(s, die,
                                                                 KMH_BOSC_APLIC_M));
         qemu_fdt_add_subnode(fdt, aplic_m_name);
-        qemu_fdt_setprop_string(fdt, aplic_m_name, "compatible", "riscv,aplic");
+        qemu_fdt_setprop_string_array(fdt, aplic_m_name, "compatible",
+                                      (char **)aplic_compat,
+                                      ARRAY_SIZE(aplic_compat));
         qemu_fdt_setprop_cell(fdt, aplic_m_name, "#address-cells", 0);
         qemu_fdt_setprop_cell(fdt, aplic_m_name, "msi-parent", imsic_m_phandle);
         qemu_fdt_setprop_sized_cells(fdt, aplic_m_name, "reg",
@@ -1597,7 +1555,10 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         reg_idx++;
     }
     qemu_fdt_add_subnode(fdt, "/soc/imsics-m");
-    qemu_fdt_setprop_string(fdt, "/soc/imsics-m", "compatible", "riscv,imsics");
+    qemu_fdt_setprop_string_array(fdt, "/soc/imsics-m", "compatible",
+                                  (char **)imsic_compat,
+                                  ARRAY_SIZE(imsic_compat));
+    qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "#msi-cells", 0);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "phandle", imsic_m_phandle);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "#interrupt-cells", 0);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-m", "riscv,num-ids",
@@ -1636,7 +1597,10 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
         reg_idx++;
     }
     qemu_fdt_add_subnode(fdt, "/soc/imsics-s");
-    qemu_fdt_setprop_string(fdt, "/soc/imsics-s", "compatible", "riscv,imsics");
+    qemu_fdt_setprop_string_array(fdt, "/soc/imsics-s", "compatible",
+                                  (char **)imsic_compat,
+                                  ARRAY_SIZE(imsic_compat));
+    qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "#msi-cells", 0);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "phandle", imsic_s_phandle);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "#interrupt-cells", 0);
     qemu_fdt_setprop_cell(fdt, "/soc/imsics-s", "riscv,num-ids",
@@ -1690,7 +1654,6 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                     kmh_bosc_die_addr(s, die_i, kmh_bosc_iommu_reg_base[iommu_idx]);
                 hwaddr mapper_base =
                     kmh_bosc_die_addr(s, die_i, kmh_bosc_axi4_traffic_base[iommu_idx]);
-                int irq_base = kmh_bosc_iommu_irq_base(iommu_idx);
                 g_autofree char *iommu_name =
                     g_strdup_printf("/soc/iommu@%" HWADDR_PRIx, iommu_base);
                 g_autofree char *mapper_name =
@@ -1712,10 +1675,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 qemu_fdt_setprop_cell(fdt, iommu_name, "interrupt-parent",
                                       aplic_s_phandles[die_i]);
                 qemu_fdt_setprop_cells(fdt, iommu_name, "interrupts",
-                                       irq_base + 0, FDT_IRQ_TYPE_EDGE_LOW,
-                                       irq_base + 1, FDT_IRQ_TYPE_EDGE_LOW,
-                                       irq_base + 2, FDT_IRQ_TYPE_EDGE_LOW,
-                                       irq_base + 3, FDT_IRQ_TYPE_EDGE_LOW);
+                                       KMH_BOSC_IOMMU_IRQ,
+                                       KMH_BOSC_IRQ_TYPE_LEVEL_HIGH);
                 qemu_fdt_setprop_cell(fdt, iommu_name, "msi-parent",
                                       imsic_s_phandle);
                 qemu_fdt_setprop_string(fdt, iommu_name, "status", "okay");
@@ -1781,7 +1742,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                     kmh_bosc_pcie_mem32_bus_base(segment);
                 const hwaddr mem64_cpu_base =
                     mem_base + KMH_BOSC_PCIE_WINDOW_SIZE;
-                const int inta_irq = kmh_bosc_pcie_inta_irq(port);
+                const int ep_irq = kmh_bosc_pcie_ep_irq(port);
                 g_autofree char *pcie_name =
                     g_strdup_printf("/soc/pci@%" HWADDR_PRIx, dbi_base);
 
@@ -1821,9 +1782,9 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 qemu_fdt_setprop(fdt, pcie_name, "snps,imsi-rx-forward",
                                   NULL, 0);
                 qemu_fdt_setprop_cells(fdt, pcie_name, "interrupts",
-                                       kmh_bosc_pcie_msi_irq(port),
+                                       ep_irq,
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH,
-                                       kmh_bosc_pcie_hp_irq(port),
+                                       kmh_bosc_pcie_sii_irq(port),
                                        KMH_BOSC_IRQ_TYPE_LEVEL_HIGH);
                 if (kmh_bosc_is_iommu_sys_enabled(s) &&
                     iommu_phandles[die][port]) {
@@ -1842,7 +1803,7 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 qemu_fdt_setprop_cell(fdt, pcie_name, "num-lanes", 1);
                 qemu_fdt_setprop_string(fdt, pcie_name, "status", "okay");
                 kmh_bosc_add_pcie_irq_map(fdt, pcie_name,
-                                          aplic_s_phandles[die], inta_irq);
+                                          aplic_s_phandles[die], ep_irq);
             }
         }
     }
@@ -2346,6 +2307,17 @@ static const PCIIOMMUOps kmh_bosc_pcie_dma_ops = {
     .get_address_space = kmh_bosc_pcie_dma_as,
 };
 
+static void kmh_bosc_init_irq_or(KmhBoscState *s, OrIRQState *or_irq,
+                                  const char *name, unsigned inputs,
+                                  unsigned die, unsigned source)
+{
+    object_initialize_child(OBJECT(s), name, or_irq, TYPE_OR_IRQ);
+    qdev_prop_set_uint16(DEVICE(or_irq), "num-lines", inputs);
+    qdev_realize(DEVICE(or_irq), NULL, &error_fatal);
+    qdev_connect_gpio_out(DEVICE(or_irq), 0,
+                         qdev_get_gpio_in(s->irqchip[die], source));
+}
+
 static void kmh_bosc_init_pcie(KmhBoscState *s)
 {
     const MemMapEntry *memmap = kmh_bosc_memmap;
@@ -2364,10 +2336,13 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             const hwaddr mctp_base = kmh_bosc_die_addr(s, die, pcie_map->mctp.base);
             const hwaddr iopmp_base = kmh_bosc_die_addr(s, die, pcie_map->iopmp.base);
             DesignwarePCIEHost *host = &s->pcie[die][port];
+            OrIRQState *ep_irq = &s->pcie_ep_irq[die][port];
             MemoryRegion *outbound = &s->pcie_outbound[die][port];
             MemoryRegion *ecam_alias = &s->pcie_ecam_alias[die][port];
             MemoryRegion *mem_alias = &s->pcie_mem_alias[die][port];
             g_autofree char *child_name = g_strdup_printf("pcie-d%d-p%d", die, port);
+            g_autofree char *irq_name =
+                g_strdup_printf("pcie-d%d-p%d-ep-irq", die, port);
             g_autofree char *root_bus_name =
                 g_strdup_printf("pcie-d%d-p%d-root", die, port);
             g_autofree char *sec_bus_name =
@@ -2404,21 +2379,12 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             pcie = SYS_BUS_DEVICE(host);
             sysbus_realize(pcie, &error_fatal);
             sysbus_mmio_map(pcie, 0, dbi_base);
-            sysbus_connect_irq(pcie, 0,
-                               qdev_get_gpio_in(s->irqchip[die],
-                                                kmh_bosc_pcie_inta_irq(port)));
-            sysbus_connect_irq(pcie, 1,
-                               qdev_get_gpio_in(s->irqchip[die],
-                                                kmh_bosc_pcie_intb_irq(port)));
-            sysbus_connect_irq(pcie, 2,
-                               qdev_get_gpio_in(s->irqchip[die],
-                                                kmh_bosc_pcie_intc_irq(port)));
-            sysbus_connect_irq(pcie, 3,
-                               qdev_get_gpio_in(s->irqchip[die],
-                                                kmh_bosc_pcie_intd_irq(port)));
-            sysbus_connect_irq(pcie, 4,
-                               qdev_get_gpio_in(s->irqchip[die],
-                                                kmh_bosc_pcie_msi_irq(port)));
+            kmh_bosc_init_irq_or(s, ep_irq, irq_name, PCI_NUM_PINS + 1,
+                                 die, kmh_bosc_pcie_ep_irq(port));
+            for (unsigned pin = 0; pin < PCI_NUM_PINS + 1; pin++) {
+                sysbus_connect_irq(pcie, pin,
+                                   qdev_get_gpio_in(DEVICE(ep_irq), pin));
+            }
             /*
              * DWC installs an inbound-iATU address space as PCI's default
              * IOMMU. Install the board DMA filter after the optional system
@@ -2475,6 +2441,13 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
             continue;
         }
 
+        g_autofree char *irq_name = g_strdup_printf("iommu-d%d-irq", die);
+        OrIRQState *irq_or = &s->iommu_irq[die];
+
+        kmh_bosc_init_irq_or(s, irq_or, irq_name,
+                             KMH_BOSC_IOMMU_PER_DIE *
+                             KMH_BOSC_IOMMU_IRQS_PER_INST,
+                             die, KMH_BOSC_IOMMU_IRQ);
         for (idx = 0; idx < KMH_BOSC_IOMMU_PER_DIE; idx++) {
             DeviceState *iommu_sys = qdev_new(TYPE_RISCV_IOMMU_SYS);
             Object *iommu_obj;
@@ -2491,10 +2464,10 @@ static void kmh_bosc_init_iommu(KmhBoscState *s)
             object_property_set_uint(OBJECT(iommu_sys), "addr", iommu_base,
                                      &error_fatal);
             object_property_set_uint(OBJECT(iommu_sys), "base-irq",
-                                     kmh_bosc_iommu_irq_base(idx),
+                                     idx * KMH_BOSC_IOMMU_IRQS_PER_INST,
                                      &error_fatal);
             object_property_set_link(OBJECT(iommu_sys), "irqchip",
-                                     OBJECT(s->irqchip[die]),
+                                     OBJECT(irq_or),
                                      &error_fatal);
 
             iommu_obj = object_resolve_path_component(OBJECT(iommu_sys),

@@ -17,6 +17,7 @@
 #include "hw/pci/pcie_host.h"
 #include "hw/riscv/kmh_bosc_acpi.h"
 #include "hw/riscv/kmh_bosc_soc.h"
+#include "hw/riscv/kmh_bosc_irq.h"
 #include "system/address-spaces.h"
 #include "target/riscv/cpu.h"
 
@@ -39,7 +40,6 @@
 
 #define KMH_BOSC_UART0_BASE               0x0000000004000000ULL
 #define KMH_BOSC_UART0_SIZE               0x10000
-#define KMH_BOSC_UART0_IRQ                10
 #define KMH_BOSC_UART_CLK_FREQ            50000000
 #define KMH_BOSC_UART_REG_SHIFT           2
 #define KMH_BOSC_UART_REG_IO_WIDTH        4
@@ -56,8 +56,6 @@
 
 #define KMH_BOSC_PCIE_ECAM_SIZE           PCIE_MMCFG_SIZE_MAX
 #define KMH_BOSC_PCIE_MEM_BUS_BASE        0x0000000100000000ULL
-#define KMH_BOSC_PCIE_IRQ_STRIDE          6
-#define KMH_BOSC_PCIE_INTA_IRQ            14
 #define KMH_BOSC_PCIE_MEM32_BUS_BASE      0x0000000050000000ULL
 #define KMH_BOSC_PCIE_ROOT_BUS_STRIDE     0x0000000004000000ULL
 #define KMH_BOSC_PCIE_WINDOW_SIZE         0x0000000002000000ULL
@@ -190,12 +188,10 @@ static uint64_t kmh_bosc_acpi_pcie_mem_cpu_base(const KmhBoscAcpiState *s,
            (above_4g ? KMH_BOSC_PCIE_WINDOW_SIZE : 0);
 }
 
-static uint32_t kmh_bosc_acpi_pcie_gsi(int die, int port, int pin)
+static uint32_t kmh_bosc_acpi_pcie_gsi(int die, int port)
 {
     return die * KMH_BOSC_APLIC_NUM_SOURCES +
-           KMH_BOSC_PCIE_INTA_IRQ +
-           port * KMH_BOSC_PCIE_IRQ_STRIDE +
-           pin;
+           kmh_bosc_pcie_ep_irq(port);
 }
 
 static void kmh_bosc_acpi_madt_add_rintc(const KmhBoscAcpiState *s,
@@ -346,7 +342,7 @@ static Aml *kmh_bosc_acpi_pcie_prt(int die, int port)
         aml_append(entry, aml_int(0x0000ffff));
         aml_append(entry, aml_int(pin));
         aml_append(entry, aml_int(0));
-        aml_append(entry, aml_int(kmh_bosc_acpi_pcie_gsi(die, port, pin)));
+        aml_append(entry, aml_int(kmh_bosc_acpi_pcie_gsi(die, port)));
         aml_append(prt, entry);
     }
 

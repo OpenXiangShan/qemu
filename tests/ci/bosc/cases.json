@@ -56,8 +56,10 @@
       "timeout": 120,
       "assets": [],
       "tests": [
+        "/kmh-bosc/pcie/hardware-irq-table",
         "/kmh-bosc/pcie/outbound-multi",
         "/kmh-bosc/pcie/outbound-single",
+        "/kmh-bosc/pcie/imsic-axi44",
         "/kmh-bosc/pcie/imsi-axi44",
         "/kmh-bosc/pcie/imsi-iommu",
         "/kmh-bosc/pcie/generic-dwc",

@@ -293,6 +293,33 @@ Machine options
    layout. CPU, APLIC, and DMAC accesses retain their existing address widths;
    other machines using DesignWare PCIe are not truncated.
 
+   Direct PCIe MSI/MSI-X writes to an IMSIC are subject to the same 44-bit
+   truncation. With IOMMU bypass, an encoded remote IMSIC
+   address resolves to the requester's local IMSIC after losing its die ID.
+   Use iMSI-RX and APLIC forwarding for cross-die interrupt delivery. IMSIC
+   destinations do not bypass an enabled system IOMMU.
+
+   The per-die APLIC inputs follow the hardware signal table in ``intr.png``:
+   UART0 uses 32, DMAC uses 40 and the IOMMU summary uses 70. Sources 43--63
+   are reserved. Each PCIe port has six hardware signals in the order MCTP,
+   IOATC HPM, IOATC RAS, AER, SII and endpoint interrupt. These occupy 71--76
+   for p0, 77--82 for p1 and 83--88 for p2. They are not six legacy PCI IRQs.
+
+   Each RC's four INTx pins and integrated MSI receiver are ORed onto its
+   endpoint input (76, 82 or 88). DT interrupt-map entries therefore share
+   that input. The driver's legacy ``hp`` resource name describes the port's
+   SII input (75, 81 or 87), rather than the next port's SII input. The model
+   does not currently generate the separate MCTP, IOATC RAS, AER or SII events.
+   ACPI UART and PCI routing use the same board definitions.
+
+   The three per-root IOMMU model instances retain independent requester
+   state. KMH hardware currently supports IOMMU MSI notifications only;
+   do not use WSI tests as hardware validation. The platform device retains
+   its existing generic per-vector WSI pulse fallback, connected through
+   the die's summary input 70, without a board-specific level-wire mode.
+   IOATS0 event/RAS inputs 68/69 and protection inputs 64--67 are not
+   separate event generators in this model.
+
    Each RC enables 256 integrated MSI receiver (iMSI-RX) vectors, in eight
    banks of 32. A matching PCIe memory write sets the corresponding status
    bit and asserts the RC's summary interrupt into its local APLIC, then
