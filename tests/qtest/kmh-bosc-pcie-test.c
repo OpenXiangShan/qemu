@@ -6,6 +6,7 @@
 #include "libqtest.h"
 #include "qobject/qdict.h"
 #include "qemu/bitops.h"
+#include "qemu/bswap.h"
 #include "qemu/units.h"
 #include "hw/riscv/riscv-iommu-bits.h"
 
@@ -154,15 +155,25 @@ static uint64_t imsic_eip0(QTestState *q, unsigned die, bool mmode, bool clear)
 /* PCIe MSI loses the target die ID and must still pass the system IOMMU. */
 static void test_imsic_axi44(void)
 {
+    g_autofree char *bios = NULL;
+    g_autofree char *bios_arg = NULL;
+    uint32_t code = cpu_to_le32(0x10500073); /* WFI; CPUs remain stopped. */
+    int fd = g_file_open_tmp("kmh-bosc-pcie-test-XXXXXX", &bios, NULL);
+
+    g_assert_cmpint(fd, >=, 0);
+    close(fd);
+    g_assert_true(g_file_set_contents(bios, (const char *)&code,
+                                      sizeof(code), NULL));
+    bios_arg = g_shell_quote(bios);
     for (unsigned mode = 0; mode < 3; mode++) {
         QTestState *q = qtest_initf(
             "-M kmh-bosc-soc,soc-mode=multi,die-mask=0x3,"
             "core-mask=0x1:0x1:0:0,dw-pcie=on,generated-dtb=on,"
             "iommu-sys=%s,iommu-bypass=%s "
-            "-smp 64,maxcpus=68 -m 256M -accel tcg -S "
+            "-smp 64,maxcpus=68 -m 256M -accel tcg -S -bios %s "
             "-device edu,bus=pcie-d0-p0,dma_mask=0xffffffffffffffff "
             "-device edu,bus=pcie-d1-p0,dma_mask=0xffffffffffffffff",
-            mode ? "on" : "off", mode == 2 ? "off" : "on");
+            mode ? "on" : "off", mode == 2 ? "off" : "on", bios_arg);
 
         for (unsigned die = 0; die < 2; die++) {
             setup_edu(q, die);
@@ -194,6 +205,7 @@ static void test_imsic_axi44(void)
         }
         qtest_quit(q);
     }
+    unlink(bios);
 }
 
 static void edu_dma(QTestState *q, unsigned die, uint64_t src, uint64_t dst,
