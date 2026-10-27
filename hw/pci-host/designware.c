@@ -109,7 +109,10 @@ static void designware_pcie_root_update_msi_irq(DesignwarePCIERoot *root)
     for (unsigned i = 0; i < host->num_msi_vectors / 32; i++) {
         DesignwarePCIEMSIBank *bank = &root->msi.intr[i];
 
-        pending |= (bank->status & bank->enable & ~bank->mask) != 0;
+        bool active = (bank->status & bank->enable & ~bank->mask) != 0;
+
+        qemu_set_irq(host->msi_bank_irqs[i], active);
+        pending |= active;
     }
     qemu_set_irq(host->pci.msi, pending);
 }
@@ -792,6 +795,8 @@ static void designware_pcie_host_realize(DeviceState *dev, Error **errp)
         sysbus_init_irq(sbd, &s->pci.irqs[i]);
     }
     sysbus_init_irq(sbd, &s->pci.msi);
+    qdev_init_gpio_out_named(dev, s->msi_bank_irqs, "msi-bank",
+                             DESIGNWARE_PCIE_NUM_MSI_BANKS);
 
     memory_region_init_io(&s->mmio,
                           OBJECT(s),

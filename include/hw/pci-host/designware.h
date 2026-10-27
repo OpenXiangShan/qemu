@@ -93,6 +93,8 @@ struct DesignwarePCIEHost {
     char *sec_bus_name;
     char *root_bus_path;
     uint32_t num_msi_vectors;
+    /* Optional per-bank level outputs for platform interrupt wrappers. */
+    qemu_irq msi_bank_irqs[DESIGNWARE_PCIE_NUM_MSI_BANKS];
 
     struct {
         AddressSpace address_space;

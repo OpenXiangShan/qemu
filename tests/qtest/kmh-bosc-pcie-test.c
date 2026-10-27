@@ -17,6 +17,9 @@
 #define ENABLE 0x828
 #define MASK 0x82c
 #define STATUS 0x830
+#define APP_OFFSET 0x400000
+#define EP_INT_STA_REG0 0x80000
+#define MSI_CTRL_INTSTA 0xff00
 
 static bool aplic_input(QTestState *q, uint64_t aplic, unsigned source)
 {
@@ -246,7 +249,8 @@ static void test_pcie(const void *opaque)
     }
     for (unsigned die = 0; die < 4; die++) {
         uint64_t dbi = ga(die, DBI);
-        g_autofree char *path = g_strdup_printf("/machine/pcie-d%u-p0", die);
+        g_autofree char *path =
+            g_strdup_printf("/machine/kmh-bosc-pcie-d%u-p0-app", die);
 
         setup_edu(q, die);
         if (die == 0) {
@@ -263,9 +267,15 @@ static void test_pcie(const void *opaque)
 
             send_msi(q, die, DOORBELL, v);
             g_assert_cmphex(qtest_readl(q, status), ==, bit);
-            g_assert_true(die != 0 || qtest_get_irq(q, 4));
+            g_assert_true(die != 0 || qtest_get_irq(q, 0));
             qtest_writel(q, status, bit);
-            g_assert_false(die == 0 && qtest_get_irq(q, 4));
+            /* Clearing DWC alone must leave the APP output asserted. */
+            g_assert_true(die != 0 || qtest_get_irq(q, 0));
+            g_assert_cmphex(qtest_readl(q, dbi + APP_OFFSET + EP_INT_STA_REG0) &
+                            MSI_CTRL_INTSTA, ==, 1U << (8 + v / 32));
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0,
+                          1U << (8 + v / 32));
+            g_assert_false(die == 0 && qtest_get_irq(q, 0));
             qtest_writel(q, status, bit); /* W1C is idempotent. */
             g_assert_cmphex(qtest_readl(q, status), ==, 0);
             g_assert_cmphex(qtest_readl(q, DOORBELL), ==,
@@ -275,18 +285,23 @@ static void test_pcie(const void *opaque)
         send_msi(q, die, DOORBELL, 31);
         send_msi(q, die, DOORBELL, 255);
         qtest_writel(q, dbi + STATUS, 1U << 31);
-        g_assert_true(die != 0 || qtest_get_irq(q, 4));
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 8);
+        g_assert_true(die != 0 || qtest_get_irq(q, 0));
         qtest_writel(q, dbi + MASK + 7 * 12, UINT32_MAX);
-        g_assert_false(die == 0 && qtest_get_irq(q, 4));
+        g_assert_true(die != 0 || qtest_get_irq(q, 0));
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
+        g_assert_false(die == 0 && qtest_get_irq(q, 0));
         qtest_writel(q, dbi + MASK + 7 * 12, 0);
-        g_assert_true(die != 0 || qtest_get_irq(q, 4));
+        g_assert_true(die != 0 || qtest_get_irq(q, 0));
         qtest_writel(q, dbi + ENABLE + 7 * 12, 0);
-        g_assert_false(die == 0 && qtest_get_irq(q, 4));
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
+        g_assert_false(die == 0 && qtest_get_irq(q, 0));
         qtest_writel(q, dbi + ENABLE + 7 * 12, UINT32_MAX);
-        g_assert_true(die != 0 || qtest_get_irq(q, 4));
+        g_assert_true(die != 0 || qtest_get_irq(q, 0));
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
         send_msi(q, die, DOORBELL, 256);
-        g_assert_false(die == 0 && qtest_get_irq(q, 4));
+        g_assert_false(die == 0 && qtest_get_irq(q, 0));
 
         /* Bank zero need not be enabled for bank seven to receive MSI. */
         for (unsigned bank = 0; bank < 7; bank++) {
@@ -295,14 +310,16 @@ static void test_pcie(const void *opaque)
         send_msi(q, die, DOORBELL, 255);
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
 
         /* Full-width receiver match precedes truncation and forwarding. */
         reg64(q, dbi + 0x820, DOORBELL | (2ULL << 44));
         send_msi(q, die, DOORBELL | (2ULL << 44), 255);
-        g_assert_true(die != 0 || qtest_get_irq(q, 4));
+        g_assert_true(die != 0 || qtest_get_irq(q, 0));
         g_assert_cmphex(qtest_readl(q, DOORBELL), ==,
                         iommu ? 0x12345678 : 255);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
         reg64(q, dbi + 0x820, DOORBELL);
 
         if (iommu) {
@@ -315,6 +332,7 @@ static void test_pcie(const void *opaque)
                             1U << 31);
             g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 0x12345678);
             qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
             /* No valid context was cached in Off; enable Bare for DMA. */
             qtest_writeq(q, ga(die, 0x4f80200010ULL), 1);
         }
@@ -324,6 +342,7 @@ static void test_pcie(const void *opaque)
         g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 255);
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
 
         /* Reads of the MSI address remain DMA, even while enabled. */
         qtest_writel(q, DOORBELL, 0x12345678);
@@ -340,6 +359,7 @@ static void test_pcie(const void *opaque)
         g_assert_cmphex(qtest_readl(q, DOORBELL + 0x20), ==, 255);
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
 
         /* Disabling all banks releases the current address too. */
         qtest_writel(q, dbi + ENABLE + 7 * 12, 0);
@@ -353,6 +373,7 @@ static void test_pcie(const void *opaque)
         g_assert_cmphex(qtest_readl(q, dbi + STATUS + 7 * 12), ==, 1U << 31);
         g_assert_cmphex(qtest_readl(q, DOORBELL), ==, 255);
         qtest_writel(q, dbi + STATUS + 7 * 12, UINT32_MAX);
+        qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 15);
         qtest_writel(q, DOORBELL, 0x12345678);
 
         /* Nonmatching high address drops bits [63:44] on reads and writes. */
@@ -689,8 +710,18 @@ static void test_hardware_irq_table(void)
             qtest_writel(q, aplic + source * 4, 6);
             qtest_writel(q, bar + 0x60, 1);
             g_assert_true(aplic_input(q, aplic, source));
+            /* Live INTx bits are read-only, event bits are W1C. */
+            g_assert_cmphex(qtest_readl(q, dbi + APP_OFFSET + EP_INT_STA_REG0),
+                            ==, 0x10001);
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, UINT32_MAX);
+            g_assert_cmphex(qtest_readl(q, dbi + APP_OFFSET + EP_INT_STA_REG0),
+                            ==, 0x10000);
+            g_assert_true(aplic_input(q, aplic, source));
             qtest_writel(q, bar + 0x64, 1);
             g_assert_false(aplic_input(q, aplic, source));
+            g_assert_cmphex(qtest_readl(q, dbi + APP_OFFSET + EP_INT_STA_REG0),
+                            ==, 0x10);
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 0xff);
 
             reg64(q, dbi + 0x820, DOORBELL);
             qtest_writel(q, dbi + ENABLE, 1);
@@ -703,6 +734,29 @@ static void test_hardware_irq_table(void)
             qtest_writel(q, bar + 0x64, 1);
             g_assert_true(aplic_input(q, aplic, source));
             qtest_writel(q, dbi + STATUS, 1);
+            g_assert_cmphex(qtest_readl(q, dbi + STATUS), ==, 0);
+            g_assert_true(aplic_input(q, aplic, source));
+            /* The APP latch is at +0x80000, not a nearby address. */
+            qtest_writel(q, dbi + APP_OFFSET + 0x8000, 1U << 8);
+            g_assert_cmphex(qtest_readl(q, dbi + APP_OFFSET + 0x8000), ==, 0);
+            g_assert_true(aplic_input(q, aplic, source));
+            g_assert_cmphex(qtest_readl(q, dbi + APP_OFFSET + 0x80000) &
+                            MSI_CTRL_INTSTA, ==, 1U << 8);
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 9);
+            g_assert_true(aplic_input(q, aplic, source));
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 8);
+            g_assert_false(aplic_input(q, aplic, source));
+
+            /* APP-first cannot hide an active vector, nor its later latch. */
+            qtest_writel(q, bar + 0x60, 1);
+            qtest_writel(q, bar + 0x64, 1);
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 8);
+            g_assert_cmphex(qtest_readl(q, dbi + APP_OFFSET + EP_INT_STA_REG0) &
+                            MSI_CTRL_INTSTA, ==, 1U << 8);
+            g_assert_true(aplic_input(q, aplic, source));
+            qtest_writel(q, dbi + STATUS, 1);
+            g_assert_true(aplic_input(q, aplic, source));
+            qtest_writel(q, dbi + APP_OFFSET + EP_INT_STA_REG0, 1U << 8);
             g_assert_false(aplic_input(q, aplic, source));
         }
 

@@ -19,6 +19,8 @@
 #include "hw/boards.h"
 #include "hw/dma/dw-axi-dmac.h"
 #include "hw/loader.h"
+#include "hw/irq.h"
+#include "migration/vmstate.h"
 #include "hw/qdev-properties.h"
 #include "hw/char/serial-mm.h"
 #include "hw/core/cpu.h"
@@ -58,6 +60,7 @@
 
 #define KMH_BOSC_MACHINE_TYPE             MACHINE_TYPE_NAME("kmh-bosc-soc")
 #define TYPE_KMH_BOSC_PCIE_DMA            "kmh-bosc-pcie-dma"
+#define TYPE_KMH_BOSC_PCIE_APP            "kmh-bosc-pcie-app"
 
 #define KMH_BOSC_DIES                     4
 #define KMH_BOSC_PCIE_PER_DIE             3
@@ -231,6 +234,150 @@ static const KmhBoscPciePortMemMap kmh_bosc_pcie_memmap[] = {
     },
 };
 
+/* SoC APP interrupt status: bank n is latched at bit 8 + n. */
+#define KMH_BOSC_EP_INT_STA_REG0 0x80000
+#define KMH_BOSC_MSI_CTRL_INTSTA 0x0000ff00U
+#define KMH_BOSC_EP_INT_W1C      0x0000ffffU
+
+typedef struct KmhBoscPcieApp {
+    SysBusDevice parent_obj;
+    MemoryRegion mmio;
+    qemu_irq msi_irq;
+    qemu_irq intx_irqs[PCI_NUM_PINS];
+    uint32_t msi_levels;
+    uint32_t int_status;
+} KmhBoscPcieApp;
+
+OBJECT_DECLARE_SIMPLE_TYPE(KmhBoscPcieApp, KMH_BOSC_PCIE_APP)
+
+static void kmh_bosc_pcie_app_update_irq(KmhBoscPcieApp *s)
+{
+    qemu_set_irq(s->msi_irq, s->msi_levels ||
+                 (s->int_status & KMH_BOSC_MSI_CTRL_INTSTA));
+}
+
+static void kmh_bosc_pcie_app_msi(void *opaque, int bank, int level)
+{
+    KmhBoscPcieApp *s = opaque;
+
+    if (level) {
+        s->msi_levels |= 1U << bank;
+        s->int_status |= 1U << (8 + bank);
+    } else {
+        s->msi_levels &= ~(1U << bank);
+    }
+    kmh_bosc_pcie_app_update_irq(s);
+}
+
+static void kmh_bosc_pcie_app_intx(void *opaque, int pin, int level)
+{
+    KmhBoscPcieApp *s = opaque;
+    bool old = s->int_status & (1U << (16 + pin));
+
+    if (level) {
+        s->int_status |= 1U << (16 + pin);
+    } else {
+        s->int_status &= ~(1U << (16 + pin));
+    }
+    if (old != !!level) {
+        s->int_status |= 1U << (pin + (level ? 0 : 4));
+    }
+    /* Preserve the existing level-sensitive INTx wiring. */
+    qemu_set_irq(s->intx_irqs[pin], level);
+}
+
+static uint64_t kmh_bosc_pcie_app_read(void *opaque, hwaddr addr,
+                                       unsigned size)
+{
+    KmhBoscPcieApp *s = opaque;
+
+    return addr == KMH_BOSC_EP_INT_STA_REG0 ? s->int_status : 0;
+}
+
+static void kmh_bosc_pcie_app_write(void *opaque, hwaddr addr,
+                                    uint64_t value, unsigned size)
+{
+    KmhBoscPcieApp *s = opaque;
+
+    if (addr == KMH_BOSC_EP_INT_STA_REG0) {
+        s->int_status &= ~(value & KMH_BOSC_EP_INT_W1C);
+        /* An active DWC bank must not be lost if APP is cleared first. */
+        s->int_status |= s->msi_levels << 8;
+        kmh_bosc_pcie_app_update_irq(s);
+    }
+}
+
+static const MemoryRegionOps kmh_bosc_pcie_app_ops = {
+    .read = kmh_bosc_pcie_app_read,
+    .write = kmh_bosc_pcie_app_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+        .unaligned = false,
+    },
+};
+
+static void kmh_bosc_pcie_app_reset(DeviceState *dev)
+{
+    KmhBoscPcieApp *s = KMH_BOSC_PCIE_APP(dev);
+
+    s->msi_levels = 0;
+    s->int_status = 0;
+    kmh_bosc_pcie_app_update_irq(s);
+    for (int pin = 0; pin < PCI_NUM_PINS; pin++) {
+        qemu_set_irq(s->intx_irqs[pin], 0);
+    }
+}
+
+static int kmh_bosc_pcie_app_post_load(void *opaque, int version_id)
+{
+    KmhBoscPcieApp *s = opaque;
+
+    kmh_bosc_pcie_app_update_irq(s);
+    for (int pin = 0; pin < PCI_NUM_PINS; pin++) {
+        qemu_set_irq(s->intx_irqs[pin],
+                     !!(s->int_status & (1U << (16 + pin))));
+    }
+    return 0;
+}
+
+static const VMStateDescription vmstate_kmh_bosc_pcie_app = {
+    .name = TYPE_KMH_BOSC_PCIE_APP,
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .post_load = kmh_bosc_pcie_app_post_load,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT32(msi_levels, KmhBoscPcieApp),
+        VMSTATE_UINT32(int_status, KmhBoscPcieApp),
+        VMSTATE_END_OF_LIST()
+    },
+};
+
+static void kmh_bosc_pcie_app_init(Object *obj)
+{
+    KmhBoscPcieApp *s = KMH_BOSC_PCIE_APP(obj);
+
+    memory_region_init_io(&s->mmio, obj, &kmh_bosc_pcie_app_ops, s,
+                          TYPE_KMH_BOSC_PCIE_APP, 1 * MiB);
+    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mmio);
+    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->msi_irq);
+    qdev_init_gpio_in_named(DEVICE(obj), kmh_bosc_pcie_app_msi,
+                            "msi-bank", DESIGNWARE_PCIE_NUM_MSI_BANKS);
+    qdev_init_gpio_in_named(DEVICE(obj), kmh_bosc_pcie_app_intx,
+                            "intx", PCI_NUM_PINS);
+    qdev_init_gpio_out_named(DEVICE(obj), s->intx_irqs,
+                             "intx-out", PCI_NUM_PINS);
+}
+
+static void kmh_bosc_pcie_app_class_init(ObjectClass *oc, const void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(oc);
+
+    dc->vmsd = &vmstate_kmh_bosc_pcie_app;
+    device_class_set_legacy_reset(dc, kmh_bosc_pcie_app_reset);
+}
+
 typedef struct KmhBoscState KmhBoscState;
 
 typedef struct KmhBoscPcieDma KmhBoscPcieDma;
@@ -292,6 +439,7 @@ struct KmhBoscState {
     OrIRQState iommu_irq[KMH_BOSC_DIES];
 
     DesignwarePCIEHost pcie[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
+    KmhBoscPcieApp pcie_app[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
     KmhBoscPcieDma pcie_dma[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
     MemoryRegion pcie_outbound[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
     MemoryRegion pcie_ecam_alias[KMH_BOSC_DIES][KMH_BOSC_PCIE_PER_DIE];
@@ -1781,6 +1929,8 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                 const KmhBoscPciePortMemMap *pcie = &kmh_bosc_pcie_memmap[port];
                 const hwaddr dbi_base = kmh_bosc_die_addr(s, die, pcie->dbi.base);
                 const hwaddr ecam_base = kmh_bosc_die_addr(s, die, pcie->ecam.base);
+                const hwaddr app_base =
+                    kmh_bosc_die_addr(s, die, pcie->app.base);
                 const hwaddr mem_base = kmh_bosc_die_addr(s, die, pcie->mem.base);
                 const int segment = kmh_bosc_pcie_domain(die, port);
                 const hwaddr mem32_bus_base =
@@ -1807,9 +1957,13 @@ static void kmh_bosc_create_fdt(KmhBoscState *s)
                                              2, dbi_base,
                                              2, pcie->dbi.size,
                                              2, ecam_base,
-                                             2, pcie->ecam.size);
+                                             2, pcie->ecam.size,
+                                             2, app_base,
+                                             2, pcie->app.size);
                 {
-                    static const char *const reg_names[] = { "dbi", "config" };
+                    static const char *const reg_names[] = {
+                        "dbi", "config", "app"
+                    };
                     qemu_fdt_setprop_string_array(fdt, pcie_name, "reg-names",
                                                   (char **)&reg_names,
                                                   ARRAY_SIZE(reg_names));
@@ -2392,6 +2546,7 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             const hwaddr mctp_base = kmh_bosc_die_addr(s, die, pcie_map->mctp.base);
             const hwaddr iopmp_base = kmh_bosc_die_addr(s, die, pcie_map->iopmp.base);
             DesignwarePCIEHost *host = &s->pcie[die][port];
+            KmhBoscPcieApp *app = &s->pcie_app[die][port];
             OrIRQState *ep_irq = &s->pcie_ep_irq[die][port];
             MemoryRegion *outbound = &s->pcie_outbound[die][port];
             MemoryRegion *ecam_alias = &s->pcie_ecam_alias[die][port];
@@ -2437,9 +2592,26 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
             sysbus_mmio_map(pcie, 0, dbi_base);
             kmh_bosc_init_irq_or(s, ep_irq, irq_name, PCI_NUM_PINS + 1,
                                  die, kmh_bosc_pcie_ep_irq(port));
-            for (unsigned pin = 0; pin < PCI_NUM_PINS + 1; pin++) {
+            object_initialize_child(OBJECT(MACHINE(s)), app_name, app,
+                                    TYPE_KMH_BOSC_PCIE_APP);
+            sysbus_realize(SYS_BUS_DEVICE(app), &error_fatal);
+            sysbus_mmio_map(SYS_BUS_DEVICE(app), 0, app_base);
+            sysbus_connect_irq(SYS_BUS_DEVICE(app), 0,
+                                qdev_get_gpio_in(DEVICE(ep_irq), PCI_NUM_PINS));
+            for (unsigned pin = 0; pin < PCI_NUM_PINS; pin++) {
                 sysbus_connect_irq(pcie, pin,
-                                   qdev_get_gpio_in(DEVICE(ep_irq), pin));
+                                   qdev_get_gpio_in_named(DEVICE(app),
+                                                          "intx", pin));
+                qdev_connect_gpio_out_named(DEVICE(app), "intx-out", pin,
+                                            qdev_get_gpio_in(DEVICE(ep_irq),
+                                                             pin));
+            }
+            for (unsigned bank = 0;
+                 bank < DESIGNWARE_PCIE_NUM_MSI_BANKS; bank++) {
+                qdev_connect_gpio_out_named(DEVICE(host), "msi-bank", bank,
+                                            qdev_get_gpio_in_named(DEVICE(app),
+                                                                   "msi-bank",
+                                                                   bank));
             }
             /*
              * DWC installs an inbound-iATU address space as PCI's default
@@ -2468,7 +2640,6 @@ static void kmh_bosc_init_pcie(KmhBoscState *s)
 
             create_unimplemented_device(dbi_rest_name, dbi_base + 0x1000,
                                         pcie_map->dbi.size - 0x1000);
-            create_unimplemented_device(app_name, app_base, pcie_map->app.size);
             create_unimplemented_device(mctp_name, mctp_base,
                                         pcie_map->mctp.size);
             create_unimplemented_device(iopmp_name, iopmp_base,
@@ -3657,6 +3828,15 @@ static void kmh_bosc_machine_register_types(void)
         .class_init = kmh_bosc_pcie_dma_class_init,
     };
 
+    static const TypeInfo app_type = {
+        .name = TYPE_KMH_BOSC_PCIE_APP,
+        .parent = TYPE_SYS_BUS_DEVICE,
+        .instance_size = sizeof(KmhBoscPcieApp),
+        .instance_init = kmh_bosc_pcie_app_init,
+        .class_init = kmh_bosc_pcie_app_class_init,
+    };
+
+    type_register_static(&app_type);
     type_register_static(&dma_type);
     type_register_static(&kmh_bosc_machine_typeinfo);
 }
