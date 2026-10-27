@@ -634,7 +634,7 @@ class IommuTests(unittest.TestCase):
         specs = read_json(HERE / "images.lock.json")["assets"]
         validate_cases(catalog(), specs)
         self.assertEqual(specs["iommu_kernel"]["jf_path"],
-                         "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261019/142f576d83ed/Image")
+                         "hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261027/867b35c450d2/Image")
         for edits in ({"assets": ["fw_jump", "kernel", "rootfs"]}, {"disks": 4},
                       {"tier": "xfail"}, {"nvme_buses": ["wrong"]}):
             with self.assertRaises(ValueError):

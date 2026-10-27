@@ -298,9 +298,9 @@ qtest 子结果、MCU 计数断言、IOMMU endpoint serial 集合。构建来源
 | --- | --- | ---: | --- |
 | `fw_jump` | `st-release-v0.9.99/fw_jump/fw_jump-kmh-v2-no-dtb.bin` | 274704 | 无内嵌 DTB 的 OpenSBI；DDR/IOMMU 启动及 MCU DT 导出 |
 | `kernel` | `st-release-v0.9.99/minimal/Image` | 8321912 | 普通 Linux；MCU QSPI 内嵌同一 Image |
-| `iommu_kernel` | `qemu-ci/linux/iommu/20261019/142f576d83ed/Image` | 29616128 | 含原生 IOMMU MSI 修复、DWC/NVMe 和 compose RAM shell 的内核 |
-| `did_mapper_kernel` | `qemu-ci/linux/did-mapper/20261019/142f576d83ed/Image` | 29607424 | mapper helper/debugfs 内建、NVMe 模块化的专用内核 |
-| `did_mapper_modules` | `qemu-ci/linux/did-mapper/20261019/142f576d83ed/mapper-modules.ext4` | 16777216 | 与专用内核同构建的 NVMe 模块、加载顺序及 hash |
+| `iommu_kernel` | `qemu-ci/linux/iommu/20261027/867b35c450d2/Image` | 29608448 | 含 APP MSI 锁存清除、原生 IOMMU MSI、DWC/NVMe 和 compose RAM shell 的内核 |
+| `did_mapper_kernel` | `qemu-ci/linux/did-mapper/20261027/867b35c450d2/Image` | 29599744 | mapper helper/debugfs 内建、NVMe 模块化及 APP 中断支持的专用内核 |
+| `did_mapper_modules` | `qemu-ci/linux/did-mapper/20261027/867b35c450d2/mapper-modules.ext4` | 16777216 | 与专用内核同构建的 NVMe 模块、加载顺序及 hash |
 | `rootfs` | `st-release-v0.9.99/openEuler-minimal-rootfs/openEuler-minimal-rootfs-24.03-SP3-RVA23.ext4` | 536870912 | pmem0 根文件系统输入 |
 | `mcu` | `qemu-ci/mcu/20260927/kmh-bosc-mcu.bin` | 1058 | MCU boot ROM 固定 BIN |
 | `qspi` | `qemu-ci/mcu/20260927/fw_payload.bin` | 12516216 | QSPI payload，含 fw_jump 和 minimal Image |
@@ -310,9 +310,9 @@ qtest 子结果、MCU 计数断言、IOMMU endpoint serial 集合。构建来源
 | --- | --- |
 | `fw_jump` | `d8da253945e544c284b0757a9ddc9cb799c13912e34616a33279bc288dbf4bd2` |
 | `kernel` | `55afc258b442384edd1a0a789eda747b715cda4f9401a170b209ff334e4985e9` |
-| `iommu_kernel` | `c8191de67f140cddfcb33643bfbe2ecd889b28a98593e3098f5f26c823a1384c` |
-| `did_mapper_kernel` | `82b1a138cd713b94c997316f0ab21dad9cbcbde66ff2916a4a01b7d2e39de7a2` |
-| `did_mapper_modules` | `4e10f62d21f7f48047ebc0d050ec3728c97c77df616fcb9d6f2c06070914ef2d` |
+| `iommu_kernel` | `04e9250315db58a707f8dc244cfc5d043e7dcfb07c94f65a1863d0609821c009` |
+| `did_mapper_kernel` | `e6af0907e7d7fbd1f475a53692037ecdc32991c3ba8a2048c770e3cc2f617dd9` |
+| `did_mapper_modules` | `800d37fd0c69dfd5fc830c2c2bc3d8a5d6f5ca7a393db23a3982e3b8f829aa45` |
 | `rootfs` | `4b0ddf5b06eb26369f5c2df1f87c63d94fb47d249e9c99d7d0291cf80a720ee5` |
 | `mcu` | `d50f8728880707d3f529bd0bcd032701113b5b560fb89237faf854b36068563c` |
 | `qspi` | `cee4dcbfbd773a4456ff01cf650181c72ae6d16654b9846ce4bb6fc2bef413b9` |
@@ -320,16 +320,17 @@ qtest 子结果、MCU 计数断言、IOMMU endpoint serial 集合。构建来源
 
 kernel release 分别为 `20260824_6.18_g3520522921abc-minimal`、
 `6.18.34`（IOMMU/compose）和 `6.18.34-bosc-did-mapper`（mapper）。
-后两者由干净 Linux `142f576d83ed424471143d9ec9cbc452a198297b` 构建，
-包含 BOSC 专用 PCIe compatible 和 outbound iATU die-id 修正；mapper 模块与
-专用 Image 来自同一配置。发布和本地验收证据见 [ASSETS.md](ASSETS.md)。
+后两者由干净 Linux `867b35c450d24d5cde20bcf9f1cc0b135fc872d9` 构建，
+包含 BOSC 专用 PCIe compatible、outbound iATU die-id 修正和 APP MSI
+锁存清除；mapper 模块与专用 Image 来自同一配置。发布和本地验收证据见
+[ASSETS.md](ASSETS.md)。
 QSPI 中 fw_jump 位于偏移 0，kernel 位于偏移 `0x400000`；启动时搬运到
 `0x80000000`、`0x80400000`。资产准备还校验 payload 内这两个组件的 hash。
 
 JF 路径规则以锁文件 `jf_path` 为准：三个 release 输入将上述
 `st-release-v0.9.99/` 前缀替换为 `xs-sw/st-release/v0.9.99/`；MCU/QSPI/ITGen
 路径前加 `hejian-workspace/guoyaxing/`。`iommu_kernel` 位于
-`hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261019/142f576d83ed/Image`。
+`hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261027/867b35c450d2/Image`。
 来源和发布说明见 [ASSETS.md](ASSETS.md)。
 
 CI 不编译这些 guest 软件、不运行 st-downloader、不上传或修改 JF 镜像。

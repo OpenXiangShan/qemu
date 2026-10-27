@@ -209,9 +209,10 @@ my-virtio；组装存储用例从 RAM shell 执行真实 I/O、完全卸载、fd
 
 ## 原生 system IOMMU Linux 门禁
 
-`bosc:iommu` 使用 Linux `142f576d83ed` 的固定 Image（release `6.18.34`），
+`bosc:iommu` 使用 Linux `867b35c450d2` 的固定 Image（release `6.18.34`），
 包含 IOHGATP Bare 下关闭 MSI page-table mode、iMSI-RX MSI 映射及 BOSC
-专用 PCIe outbound iATU die-id 修正，适配 QEMU `e53ae7f5d29f`。来源、JF 和离线路径见 [ASSETS.md](ASSETS.md)；所有输入逐次校验
+专用 PCIe outbound iATU die-id 修正和 APP `+0x80000` MSI 锁存清除。
+来源、JF 和离线路径见 [ASSETS.md](ASSETS.md)；所有输入逐次校验
 大小/SHA256。设置了 `BOSC_CI_JF_PATHS` 的部署须更新旧 `iommu_kernel` 路径映射。
 
 | 用例 | 拓扑 | 层级 |

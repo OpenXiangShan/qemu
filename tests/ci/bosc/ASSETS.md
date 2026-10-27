@@ -6,10 +6,21 @@
 CI 本身仍只有读取接口，不执行上传或固件构建。
 当前锁文件包含十四项输入，按选中用例取用；其中五项 checkpoint 输入仅在手动运行时使用。
 
-本轮 PCIe outbound 配套镜像由干净 Linux 提交
+2026-10-27 的 APP 中断修复镜像由干净 Linux 提交
+`867b35c450d24d5cde20bcf9f1cc0b135fc872d9` 构建，工具链仍为
+`riscv64-linux-gnu-gcc 13.3.0`。QEMU 新增的 APP 锁存在 `APP + 0x80000`，
+只清 DWC 的 `MSI_INTRn_STATUS` 会保持父中断；新内核分发 vector 后清除 APP
+bits 15:8，再完成父中断 EOI。`iommu_kernel` 位于
+`linux/iommu/20261027/867b35c450d2/`，DID mapper Image 与模块位于
+`linux/did-mapper/20261027/867b35c450d2/`。三者已从 JF 重新下载并核对大小、
+SHA256，随后使用空 CI work 目录验证下载器来源为 `jf-verified`。本地正式
+harness 中 DID mapper 9/9、IOMMU 5/5 PASS；其中 BOSC all-roots 验证 12 个
+NVMe 的 direct DMA 和 MSI。GitLab pipeline 重跑仍需包含本锁文件的新提交。
+
+上一轮 PCIe outbound 配套镜像由干净 Linux 提交
 `142f576d83ed424471143d9ec9cbc452a198297b` 构建（2026-10-19），
 于 2026-10-21 发布；三份制品的 JF metadata size/SHA256 均已核验。
-`iommu_kernel` 位于 `linux/iommu/20261019/142f576d83ed/`，
+历史 `iommu_kernel` 位于 `linux/iommu/20261019/142f576d83ed/`，
 `did_mapper_kernel` 和 `did_mapper_modules` 位于
 `linux/did-mapper/20261019/142f576d83ed/`（均在下表 qemu-ci 发布前缀下）。
 
@@ -40,8 +51,8 @@ JF 根地址：`http://10.13.18.1:8082/artifactory/`。
 | OpenSBI、Image、rootfs | `xs-sw/st-release/v0.9.99/` 下各原发布目录 |
 | MCU BIN、QSPI payload、源码/构建证据 | `hejian-workspace/guoyaxing/qemu-ci/mcu/20260927/` |
 | ITGen BIN、源码/ELF/原始 log | `hejian-workspace/guoyaxing/qemu-ci/itgen/aplic-cross-die/dieid2-20260924/` |
-| IOMMU/compose Linux Image、配置和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261019/142f576d83ed/` |
-| DID mapper Image、配套 NVMe 模块和构建证据 | `hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261019/142f576d83ed/` |
+| IOMMU/compose Linux Image | `hejian-workspace/guoyaxing/qemu-ci/linux/iommu/20261027/867b35c450d2/` |
+| DID mapper Image 与配套 NVMe 模块 | `hejian-workspace/guoyaxing/qemu-ci/linux/did-mapper/20261027/867b35c450d2/` |
 | Checkpoint 五项输入、源码和验证记录 | `hejian-workspace/guoyaxing/qemu-ci/checkpoint/2die32c-20261019/` |
 | 固定构建依赖源码 tar | `hejian-workspace/guoyaxing/qemu-ci/native-deps/` |
 
@@ -129,7 +140,7 @@ Python/Meson 使用仓库内 wheels，宿主系统开发包仍由服务器管理
 
 ## 原生 IOMMU 与 mapper 构建来源
 
-Linux source tree 为 `8200ba4e42c07f72af788a30bf02804dbb5f57b4`。
+当前 Linux source tree 为 `e653527d43357a779da5c3352c0c640d9532fa73`。
 使用该提交的 `git archive`，保留其中的 `initramfs.cpio`，不使用 dirty Linux
 工作树的 Image。工具链为 `riscv64-linux-gnu-gcc 13.3.0`
 （Ubuntu 13.3.0-6ubuntu2~24.04）；原生 Image release 为 `6.18.34`。
