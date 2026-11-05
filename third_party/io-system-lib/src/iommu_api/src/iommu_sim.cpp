@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -2296,6 +2297,15 @@ void IommuRuntime::WorkerLoop()
     InitializeDutImpl();
     ResetDutImpl();
 
+    // Initial SV blocks can start dumping at time zero; pause after reset.
+    const char *waveform = std::getenv("IO_SYSTEM_IOMMU_RTL_WAVEFORM");
+    if (waveform != nullptr && *waveform != '\0') {
+        dut_->SetWaveform(waveform);
+    }
+    const char *no_wave = std::getenv("IO_SYSTEM_IOMMU_RTL_NO_WAVE");
+    if (no_wave != nullptr && std::string(no_wave) == "1") {
+        dut_->PauseWaveformDump();
+    }
     while (true) {
         std::function<void()> task;
 
