@@ -57,6 +57,9 @@ option('io_system', type : 'feature', value : 'disabled',
        description: 'io-system C-model library')
 option('io_system_iommu_rtl', type : 'boolean', value : false,
        description: 'build picker-backed RTL IOMMU API')
+option('io_system_iommu_simulator', type : 'combo',
+       choices : ['vcs', 'verilator'], value : 'vcs',
+       description: 'simulator used by the picker RTL IOMMU package')
 option('io_system_iommu_picker_out', type : 'string', value : '',
        description: 'picker output used by the RTL IOMMU API build')
 option('io_system_rtl_system', type : 'boolean', value : false,

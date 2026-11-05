@@ -3895,6 +3895,7 @@ if get_option('io_system').enabled()
       'IO_SYSTEM_RTL_WAVE_FILE=' + io_system_rtl_wave_file,
       'RTL_SYSTEM_PICKER_OUT=' + io_system_rtl_system_picker_out,
       'IO_SYSTEM_IOMMU_RTL=' + io_system_iommu_rtl_arg,
+      'IOMMU_RTL_SIMULATOR=' + get_option('io_system_iommu_simulator'),
       'IOMMU_RTL_PICKER_OUT=' + io_system_iommu_picker_out,
       'PICKER=' + io_system_picker,
       'PICKER_TEMPLATE=' + io_system_picker_template,

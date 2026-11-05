@@ -73,6 +73,9 @@ meson_options_help() {
   printf "%s\n" '                           cpu name [/usr/gnemul/qemu-%M]'
   printf "%s\n" '  --io-system-iommu-picker-out=VALUE'
   printf "%s\n" '                           picker output used by the RTL IOMMU API build'
+  printf "%s\n" '  --io-system-iommu-simulator=CHOICE'
+  printf "%s\n" '                           simulator used by the picker RTL IOMMU package'
+  printf "%s\n" '                           [vcs] (choices: vcs/verilator)'
   printf "%s\n" '  --io-system-picker=VALUE Picker executable used by io-system RTL builds'
   printf "%s\n" '  --io-system-picker-template=VALUE'
   printf "%s\n" '                           Picker template directory used by io-system RTL'
@@ -390,6 +393,7 @@ _meson_option_parse() {
     --io-system-iommu-picker-out=*) quote_sh "-Dio_system_iommu_picker_out=$2" ;;
     --enable-io-system-iommu-rtl) printf "%s" -Dio_system_iommu_rtl=true ;;
     --disable-io-system-iommu-rtl) printf "%s" -Dio_system_iommu_rtl=false ;;
+    --io-system-iommu-simulator=*) quote_sh "-Dio_system_iommu_simulator=$2" ;;
     --io-system-picker=*) quote_sh "-Dio_system_picker=$2" ;;
     --io-system-picker-template=*) quote_sh "-Dio_system_picker_template=$2" ;;
     --io-system-picker-xspcomm-include=*) quote_sh "-Dio_system_picker_xspcomm_include=$2" ;;

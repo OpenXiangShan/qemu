@@ -9,6 +9,8 @@ IO_SYSTEM_QEMU_BACKEND ?= 0
 IO_SYSTEM_RTL_SYSTEM ?= 0
 IO_SYSTEM_RTL_ARENA ?= 0
 IO_SYSTEM_IOMMU_RTL ?= 0
+IOMMU_RTL_SIMULATOR ?= vcs
+VERILATOR ?= verilator
 BUILD_DIR ?= build
 OUTPUT_DIR ?= output
 ifeq ($(IO_SYSTEM_RTL_ARENA),1)
@@ -45,21 +47,32 @@ IOMMU_RTL_API_OBJS := $(patsubst $(IOMMU_RTL_API_DIR)/src/%.cpp, \
 IOMMU_RTL_API_SO := $(BUILD_DIR)/iommu-api/libiommu_api.so
 IOMMU_RTL_STAGE_DIR := $(OUTPUT_DIR)/iommu-rtl
 IOMMU_RTL_STAGE_STAMP := $(IOMMU_RTL_STAGE_DIR)/.iommu-rtl-api.ready.stamp
-IOMMU_RTL_PICKER_LIBS := \
-	$(IOMMU_RTL_PICKER_OUT)/libUTiommu_wrap.so \
-	$(IOMMU_RTL_PICKER_OUT)/libDPIiommu_wrap.so
-IOMMU_RTL_RUNTIME_LIBS := \
-	$(IOMMU_RTL_PICKER_LIBS) \
-	$(PICKER_XSPCOMM_LIB)
-IOMMU_RTL_PICKER_DAIDIR := \
-	$(IOMMU_RTL_PICKER_OUT)/libDPIiommu_wrap.so.daidir
+IOMMU_RTL_CONFIG_STAMP := $(BUILD_DIR)/iommu-api/.build-config
+IOMMU_RTL_PICKER_LIBS := $(IOMMU_RTL_PICKER_OUT)/libUTiommu_wrap.so
+IOMMU_RTL_LDLIBS := -lUTiommu_wrap -lxspcomm
 IOMMU_RTL_PICKER_GENERATED := \
 	$(IOMMU_RTL_PICKER_OUT)/UT_iommu_wrap.cpp \
 	$(IOMMU_RTL_PICKER_OUT)/UT_iommu_wrap.hpp \
 	$(IOMMU_RTL_PICKER_OUT)/UT_iommu_wrap_dpi.hpp \
 	$(IOMMU_RTL_PICKER_OUT)/dut_base.hpp \
-	$(IOMMU_RTL_PICKER_OUT)/dut_type.hpp \
-	$(IOMMU_RTL_PICKER_OUT)/vc_hdrs.h
+	$(IOMMU_RTL_PICKER_OUT)/dut_type.hpp
+ifeq ($(IOMMU_RTL_SIMULATOR),vcs)
+IOMMU_RTL_PICKER_LIBS += $(IOMMU_RTL_PICKER_OUT)/libDPIiommu_wrap.so
+IOMMU_RTL_LDLIBS += -lDPIiommu_wrap
+IOMMU_RTL_PICKER_GENERATED += $(IOMMU_RTL_PICKER_OUT)/vc_hdrs.h
+IOMMU_RTL_CPPFLAGS = -DUSE_VCS -I$(VCS_INCLUDE)
+IOMMU_RTL_PICKER_DAIDIR := $(IOMMU_RTL_PICKER_OUT)/libDPIiommu_wrap.so.daidir
+IOMMU_RTL_PICKER_VDB := $(IOMMU_RTL_PICKER_OUT)/iommu_wrap.vdb
+IOMMU_RTL_RUNTIME_DIRS := $(IOMMU_RTL_PICKER_DAIDIR) $(wildcard $(IOMMU_RTL_PICKER_VDB))
+else ifeq ($(IOMMU_RTL_SIMULATOR),verilator)
+IOMMU_RTL_VERILATOR_ROOT ?= $(shell $(VERILATOR) --getenv VERILATOR_ROOT)
+IOMMU_RTL_CPPFLAGS = -DUSE_VERILATOR \
+	-I$(IOMMU_RTL_VERILATOR_ROOT)/include \
+	-I$(IOMMU_RTL_VERILATOR_ROOT)/include/vltstd
+else
+$(error Unsupported IOMMU_RTL_SIMULATOR: $(IOMMU_RTL_SIMULATOR))
+endif
+IOMMU_RTL_RUNTIME_LIBS := $(IOMMU_RTL_PICKER_LIBS) $(PICKER_XSPCOMM_LIB)
 MY_VIRTIO_SOURCE_BUILD_DIR := $(abspath $(MY_VIRTIO_LIB_DIR)/build)
 MY_VIRTIO_SOURCE_OUTPUT_DIR := $(abspath $(MY_VIRTIO_LIB_DIR)/output)
 MY_VIRTIO_OUTPUT_DIR := $(abspath $(BUILD_DIR)/my-virtio-lib/output)
@@ -226,16 +239,27 @@ $(BUILD_DIR)/%.o: %.c $(wildcard include/*.h) $(wildcard src/core/*.h) \
 $(BUILD_DIR)/src/cmodel/iommu_refmodel/%.o: CFLAGS += \
 	-Wno-unused-parameter -Wno-implicit-fallthrough -Wno-uninitialized
 
+# A content stamp also invalidates API objects when switching a built tree.
+.PHONY: iommu-api-config-force
+iommu-api-config-force:
+
+$(IOMMU_RTL_CONFIG_STAMP): iommu-api-config-force
+	@mkdir -p $(dir $@)
+	@printf '%s\n' '$(IOMMU_RTL_SIMULATOR)' '$(CXX)' '$(CXXFLAGS)' \
+		'$(IOMMU_RTL_CPPFLAGS)' '$(IOMMU_RTL_PICKER_OUT)' \
+		'$(PICKER_XSPCOMM_INCLUDE)' '$(PICKER_XSPCOMM_LIB)' > $@.tmp
+	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
+
 $(BUILD_DIR)/iommu-api/%.o: $(IOMMU_RTL_API_DIR)/src/%.cpp \
 		$(IOMMU_RTL_API_HEADERS) $(IOMMU_RTL_PICKER_GENERATED) \
-		$(IOMMU_RTL_PICKER_LIBS) Makefile
+		$(IOMMU_RTL_PICKER_LIBS) $(IOMMU_RTL_CONFIG_STAMP) \
+		$(BUILD_PATHS_FILE) Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -std=c++20 -fcoroutines -ftls-model=global-dynamic \
-		-DUSE_VCS -DENABLE_XCOROUTINE=true \
+		$(IOMMU_RTL_CPPFLAGS) -DENABLE_XCOROUTINE=true \
 		-I$(IOMMU_RTL_API_DIR)/include \
 		-I$(IOMMU_RTL_PICKER_OUT) \
 		-I$(PICKER_XSPCOMM_INCLUDE) \
-		-I$(VCS_INCLUDE) \
 		-c $< -o $@
 
 $(IOMMU_RTL_API_SO): $(IOMMU_RTL_API_OBJS) $(IOMMU_RTL_RUNTIME_LIBS)
@@ -243,17 +267,19 @@ $(IOMMU_RTL_API_SO): $(IOMMU_RTL_API_OBJS) $(IOMMU_RTL_RUNTIME_LIBS)
 	$(CXX) -shared -o $@ $(IOMMU_RTL_API_OBJS) \
 		-Wl,-rpath,'$$ORIGIN' -Wl,--no-as-needed -rdynamic \
 		-L$(IOMMU_RTL_PICKER_OUT) -L$(dir $(PICKER_XSPCOMM_LIB)) \
-		-lUTiommu_wrap -lDPIiommu_wrap -lxspcomm \
+		$(IOMMU_RTL_LDLIBS) \
 		-lm -lc -lpthread -lnuma -ldl
 
 $(IOMMU_RTL_STAGE_STAMP): $(IOMMU_RTL_API_SO) \
-		$(IOMMU_RTL_RUNTIME_LIBS) $(IOMMU_RTL_PICKER_DAIDIR) \
+		$(IOMMU_RTL_RUNTIME_LIBS) $(IOMMU_RTL_RUNTIME_DIRS) \
+		$(IOMMU_RTL_CONFIG_STAMP) \
 		$(BUILD_PATHS_FILE) Makefile
 	@rm -rf $(IOMMU_RTL_STAGE_DIR)
 	@mkdir -p $(IOMMU_RTL_STAGE_DIR)
 	cp -f $(IOMMU_RTL_API_SO) $(IOMMU_RTL_STAGE_DIR)/
 	cp -f $(IOMMU_RTL_RUNTIME_LIBS) $(IOMMU_RTL_STAGE_DIR)/
-	cp -a $(IOMMU_RTL_PICKER_DAIDIR) $(IOMMU_RTL_STAGE_DIR)/
+	$(if $(strip $(IOMMU_RTL_RUNTIME_DIRS)),cp -a $(IOMMU_RTL_RUNTIME_DIRS) $(IOMMU_RTL_STAGE_DIR)/)
+	@printf '%s\n' '$(IOMMU_RTL_SIMULATOR)' > $(IOMMU_RTL_STAGE_DIR)/.simulator
 	@touch $@
 
 .PHONY: rtl-system-config-force
