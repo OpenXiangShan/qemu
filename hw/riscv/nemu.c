@@ -24,6 +24,8 @@
 
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
+#include "qemu/cutils.h"
+#include "qobject/qlist.h"
 #include "qapi/error.h"
 #include "hw/core/boards.h"
 #include "hw/core/loader.h"
@@ -493,6 +495,56 @@ static DeviceState *nemu_create_plic(const MemMapEntry *memmap, int socket,
     return ret;
 }
 
+static const CPUArchIdList *nemu_possible_cpu_arch_ids(MachineState *ms)
+{
+    NEMUState *s = NEMU_MACHINE(ms);
+    bool initialized = ms->possible_cpus != NULL;
+    const CPUArchIdList *cpus = riscv_numa_possible_cpu_arch_ids(ms);
+    g_auto(GStrv) ids = NULL;
+    uint32_t hart_ids[NEMU_CPUS_MAX];
+    bool seen[RISCV_ACLINT_MAX_HARTS] = { false };
+    unsigned int count, zero = 0;
+
+    if (initialized || !s->hart_ids) {
+        return cpus;
+    }
+    ids = g_strsplit(s->hart_ids, ":", -1);
+    count = g_strv_length(ids);
+    if (count != ms->smp.cpus) {
+        error_report("hart-ids count must match -smp cpus");
+        exit(EXIT_FAILURE);
+    }
+    for (unsigned int i = 0; i < count; i++) {
+        uint32_t id;
+
+        if (qemu_strtoui(ids[i], NULL, 0, &id) ||
+            id >= RISCV_ACLINT_MAX_HARTS) {
+            error_report("hart-ids must be integers in the range 0..%u",
+                         RISCV_ACLINT_MAX_HARTS - 1);
+            exit(EXIT_FAILURE);
+        }
+        if (seen[id]) {
+            error_report("hart-ids must be unique");
+            exit(EXIT_FAILURE);
+        }
+        seen[id] = true;
+        hart_ids[i] = id;
+        if (!id) {
+            zero = i;
+        }
+    }
+    if (!seen[0]) {
+        error_report("hart-ids must include 0");
+        exit(EXIT_FAILURE);
+    }
+    memmove(hart_ids + 1, hart_ids, zero * sizeof(*hart_ids));
+    hart_ids[0] = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        ms->possible_cpus->cpus[i].arch_id = hart_ids[i];
+    }
+    return cpus;
+}
+
 static void nemu_machine_init(MachineState *machine)
 {
     const MemMapEntry *memmap = nemu_memmap;
@@ -505,7 +557,17 @@ static void nemu_machine_init(MachineState *machine)
     char *soc_name;
     int i, base_hartid, hart_count;
 
+    if (s->hart_ids) {
+        if (riscv_socket_count(machine) != 1) {
+            error_report("hart-ids requires a single NUMA node");
+            exit(EXIT_FAILURE);
+        }
+        nemu_possible_cpu_arch_ids(machine);
+    }
+
     for (i = 0; i < riscv_socket_count(machine); i++) {
+        uint32_t clint_harts;
+
         if (!riscv_socket_check_hartids(machine, i)) {
             error_report("discontinuous hartids in socket%d", i);
             exit(1);
@@ -533,18 +595,32 @@ static void nemu_machine_init(MachineState *machine)
                                 &error_abort);
         object_property_set_int(OBJECT(&s->soc[i]), "num-harts", hart_count,
                                 &error_abort);
+        clint_harts = hart_count;
+
+        if (s->hart_ids) {
+            QList *ids = qlist_new();
+
+            clint_harts = 0;
+            for (int j = 0; j < hart_count; j++) {
+                uint32_t id = machine->possible_cpus->cpus[j].arch_id;
+
+                qlist_append_int(ids, id);
+                clint_harts = MAX(clint_harts, id + 1);
+            }
+            qdev_prop_set_array(DEVICE(&s->soc[i]), "hart-ids", ids);
+        }
         sysbus_realize(SYS_BUS_DEVICE(&s->soc[i]), &error_fatal);
 
         /* Core Local Interruptor (timer and IPI) for each socket */
         /* Per-socket SiFive CLINT */
         riscv_aclint_swi_create(memmap[NEMU_CLINT].base +
                                     i * memmap[NEMU_CLINT].size,
-                                base_hartid, hart_count, false);
+                                base_hartid, clint_harts, false);
 
         riscv_aclint_mtimer_create(
             memmap[NEMU_CLINT].base + i * memmap[NEMU_CLINT].size +
                 RISCV_ACLINT_SWI_SIZE,
-            RISCV_ACLINT_DEFAULT_MTIMER_SIZE, base_hartid, hart_count,
+            RISCV_ACLINT_DEFAULT_MTIMER_SIZE, base_hartid, clint_harts,
             RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
             NEMU_CLINT_TIMEBASE_FREQ, false);
 
@@ -602,6 +678,20 @@ static void nemu_machine_init(MachineState *machine)
 }
 
 static void nemu_machine_instance_init(Object *obj) {}
+
+static void nemu_machine_finalize(Object *obj)
+{
+    g_free(NEMU_MACHINE(obj)->hart_ids);
+}
+
+static void nemu_machine_set_hart_ids(Object *obj, const char *value,
+                                     Error **errp)
+{
+    NEMUState *s = NEMU_MACHINE(obj);
+
+    g_free(s->hart_ids);
+    s->hart_ids = g_strdup(value);
+}
 
 
 static void nemu_machine_set_checkpoint_path(Object *obj, const char *value,
@@ -711,7 +801,7 @@ static void nemu_machine_class_init(ObjectClass *oc, const void *data)
     mc->max_cpus = NEMU_CPUS_MAX;
     mc->min_cpus = NEMU_CPUS_MIN;
     mc->default_cpu_type = TYPE_RISCV_CPU_BASE;
-    mc->possible_cpu_arch_ids = riscv_numa_possible_cpu_arch_ids;
+    mc->possible_cpu_arch_ids = nemu_possible_cpu_arch_ids;
     mc->cpu_index_to_instance_props = riscv_numa_cpu_index_to_props;
     mc->get_default_cpu_node_id = riscv_numa_get_default_cpu_node_id;
     mc->numa_mem_supported = true;
@@ -720,6 +810,10 @@ static void nemu_machine_class_init(ObjectClass *oc, const void *data)
     mc->cpu_cluster_has_numa_boundary = true;
     mc->default_ram_id = "riscv.nemu.ram";
 
+    object_class_property_add_str(oc, "hart-ids", NULL,
+                                  nemu_machine_set_hart_ids);
+    object_class_property_set_description(oc, "hart-ids",
+        "Colon-separated physical hart IDs (0..4094), including 0; single NUMA node");
     object_class_property_add_str(oc, "checkpoint", NULL,
                                   nemu_machine_set_checkpoint_path);
     object_class_property_add_str(oc, "gcpt-restore", NULL,
@@ -751,6 +845,7 @@ static const TypeInfo nemu_machine_typeinfo = {
     .parent = TYPE_MACHINE,
     .class_init = nemu_machine_class_init,
     .instance_init = nemu_machine_instance_init,
+    .instance_finalize = nemu_machine_finalize,
     .instance_size = sizeof(NEMUState),
     .interfaces = riscv32_64_machine_interfaces,
 };

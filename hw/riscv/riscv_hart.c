@@ -33,6 +33,8 @@
 static const Property riscv_harts_props[] = {
     DEFINE_PROP_UINT32("num-harts", RISCVHartArrayState, num_harts, 1),
     DEFINE_PROP_UINT32("hartid-base", RISCVHartArrayState, hartid_base, 0),
+    DEFINE_PROP_ARRAY("hart-ids", RISCVHartArrayState, num_hart_ids,
+                      hart_ids, qdev_prop_uint32, uint32_t),
     DEFINE_PROP_STRING("cpu-type", RISCVHartArrayState, cpu_type),
     DEFINE_PROP_UINT64("resetvec", RISCVHartArrayState, resetvec,
                        DEFAULT_RSTVEC),
@@ -139,7 +141,8 @@ static bool riscv_hart_realize(RISCVHartArrayState *s, int idx,
         }
     }
 
-    s->harts[idx].env.mhartid = s->hartid_base + idx;
+    s->harts[idx].env.mhartid = s->num_hart_ids ? s->hart_ids[idx] :
+                                              s->hartid_base + idx;
     qemu_register_reset(riscv_harts_cpu_reset, &s->harts[idx]);
     return qdev_realize(DEVICE(&s->harts[idx]), NULL, errp);
 }
@@ -149,6 +152,10 @@ static void riscv_harts_realize(DeviceState *dev, Error **errp)
     RISCVHartArrayState *s = RISCV_HART_ARRAY(dev);
     int n;
 
+    if (s->num_hart_ids && s->num_hart_ids != s->num_harts) {
+        error_setg(errp, "hart-ids count must match num-harts");
+        return;
+    }
     s->harts = g_new0(RISCVCPU, s->num_harts);
 
 #if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)

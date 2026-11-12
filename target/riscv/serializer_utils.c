@@ -314,11 +314,13 @@ __attribute_maybe_unused__ void serializeRegs(int cpu_index, char *buffer, singl
     info_report("Writting priv mode to checkpoint memory: %x", env->priv);
 
     uint64_t tmp_mtime_cmp;
-    physical_memory_read(CLINT_MMIO + CLINT_MTIMECMP + cpu_index * 8,
-                         &tmp_mtime_cmp, 8);
-    buffer_offset=cpt_percpu_layout->mtime_cmp_cpt_addr+(cpu_index*8);
-    memcpy(buffer+buffer_offset,&tmp_mtime_cmp,8);
-    info_report("Writting mtime_cmp registers to checkpoint memory: %lx %x",tmp_mtime_cmp,CLINT_MMIO+CLINT_MTIMECMP+(cpu_index*8));
+    uint64_t mtimecmp_addr = CLINT_MMIO + CLINT_MTIMECMP + env->mhartid * 8;
+
+    physical_memory_read(mtimecmp_addr, &tmp_mtime_cmp, 8);
+    buffer_offset = cpt_percpu_layout->mtime_cmp_cpt_addr + cpu_index * 8;
+    memcpy(buffer + buffer_offset, &tmp_mtime_cmp, 8);
+    info_report("Writing mtimecmp %" PRIx64 " from MMIO %" PRIx64,
+                tmp_mtime_cmp, mtimecmp_addr);
 
     // multicore will use global time
     uint64_t tmp_mtime;

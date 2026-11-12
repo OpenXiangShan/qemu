@@ -136,6 +136,7 @@ struct NEMUState{
 
     /*< public >*/
     RISCVHartArrayState soc[NEMU_CPUS_MAX];
+    char *hart_ids;
 
     Checkpoint_t checkpoint_info;
     PathManager_t path_manager;

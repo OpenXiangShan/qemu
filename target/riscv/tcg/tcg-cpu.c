@@ -1023,7 +1023,7 @@ static void cpu_enable_implied_rule(RISCVCPU *cpu,
     int i;
 
 #ifndef CONFIG_USER_ONLY
-    enabled = test_bit(cpu->env.mhartid, rule->enabled);
+    enabled = test_bit(CPU(cpu)->cpu_index, rule->enabled);
 #endif
 
     if (!enabled) {
@@ -1066,7 +1066,7 @@ static void cpu_enable_implied_rule(RISCVCPU *cpu,
         }
 
 #ifndef CONFIG_USER_ONLY
-        bitmap_set(rule->enabled, cpu->env.mhartid, 1);
+        bitmap_set(rule->enabled, CPU(cpu)->cpu_index, 1);
 #endif
     }
 }

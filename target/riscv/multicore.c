@@ -211,6 +211,7 @@ serialize(uint64_t memory_addr, int cpu_idx, int cpus, uint64_t inst_count)
     bool using_gcpt_mmio = false;
     char *hardware_status_buffer = (char *)ns->gcpt_memory;
 
+    cpt_header.cpu_num = cpus;
 #ifdef USING_PROTOBUF
 
 
@@ -219,6 +220,7 @@ serialize(uint64_t memory_addr, int cpu_idx, int cpus, uint64_t inst_count)
 
     cpt_header_encode(hardware_status_buffer, &cpt_header, &cpt_percpu_layout);
 #else
+    cpt_header.cpt_offset = 0;
     serialize_reg_base_addr = (uint64_t)hardware_status_buffer;
 
 #endif
