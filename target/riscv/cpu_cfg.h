@@ -128,6 +128,9 @@ struct RISCVCPUConfig {
     bool rvv_ta_all_1s;
     bool rvv_ma_all_1s;
     bool ext_matrix;
+    bool ext_mxfp_convert_load;
+    bool ext_mxfp_dynamic_quant;
+    bool ext_mxfp4_vector_encode;
 
     uint32_t mvendorid;
     uint64_t marchid;

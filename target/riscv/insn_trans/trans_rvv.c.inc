@@ -2278,6 +2278,39 @@ static bool trans_##NAME(DisasContext *s, arg_rmrr *a)             \
 GEN_OPFVV_TRANS(vfadd_vv, opfvv_check)
 GEN_OPFVV_TRANS(vfsub_vv, opfvv_check)
 
+static bool xsai_mxfp4_vv_check(DisasContext *s, arg_rmrr *a)
+{
+    return s->cfg_ptr->ext_mxfp4_vector_encode &&
+           require_rvv(s) &&
+           require_rvf(s) &&
+           vext_check_isa_ill(s) &&
+           s->sew == MO_32 &&
+           s->vstart_eq_zero &&
+           vext_check_sss(s, a->rd, a->rs1, a->rs2, a->vm);
+}
+
+static bool trans_xsai_mxfp4_encode_vv(DisasContext *s, arg_rmrr *a)
+{
+    uint32_t data = 0;
+
+    if (!xsai_mxfp4_vv_check(s, a)) {
+        return false;
+    }
+
+    gen_set_rm(s, RISCV_FRM_DYN);
+    data = FIELD_DP32(data, VDATA, VM, a->vm);
+    data = FIELD_DP32(data, VDATA, LMUL, s->lmul);
+    data = FIELD_DP32(data, VDATA, VTA, s->vta);
+    data = FIELD_DP32(data, VDATA, VTA_ALL_1S, s->cfg_vta_all_1s);
+    data = FIELD_DP32(data, VDATA, VMA, s->vma);
+    tcg_gen_gvec_4_ptr(vreg_ofs(s, a->rd), vreg_ofs(s, 0),
+                       vreg_ofs(s, a->rs1), vreg_ofs(s, a->rs2),
+                       tcg_env, s->cfg_ptr->vlenb, s->cfg_ptr->vlenb,
+                       data, gen_helper_xsai_mxfp4_encode_vv_w);
+    finalize_rvv_inst(s);
+    return true;
+}
+
 typedef void gen_helper_opfvf(TCGv_ptr, TCGv_ptr, TCGv_i64, TCGv_ptr,
                               TCGv_env, TCGv_i32);
 

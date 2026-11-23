@@ -84,6 +84,13 @@ enum {
     RISCV_FRM_ROD = 8,  /* Round to Odd */
 };
 
+/*
+ * Experimental supplied-scale F32 -> E2M1 lane encoder.
+ * Returns a zero-extended 4-bit code and reports NV separately.
+ */
+uint32_t xsai_mxfp4_encode_f32_lane(uint32_t value, uint32_t e,
+                                    bool *invalid);
+
 static inline uint64_t nanbox_s(CPURISCVState *env, float32 f)
 {
     /* the value is sign-extended instead of NaN-boxing for zfinx */

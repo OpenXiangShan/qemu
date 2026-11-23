@@ -2907,6 +2907,24 @@ GEN_VEXT_VV_ENV(vfadd_vv_h, 2)
 GEN_VEXT_VV_ENV(vfadd_vv_w, 4)
 GEN_VEXT_VV_ENV(vfadd_vv_d, 8)
 
+static uint32_t xsai_mxfp4_encode_lane(uint32_t value, uint32_t scale,
+                                       float_status *status)
+{
+    bool invalid;
+    const uint32_t code =
+        xsai_mxfp4_encode_f32_lane(value, scale, &invalid);
+
+    if (invalid) {
+        set_float_exception_flags(
+            get_float_exception_flags(status) | float_flag_invalid, status);
+    }
+    return code;
+}
+
+RVVCALL(OPFVV2, xsai_mxfp4_encode_vv_w, OP_UUU_W, H4, H4, H4,
+        xsai_mxfp4_encode_lane)
+GEN_VEXT_VV_ENV(xsai_mxfp4_encode_vv_w, 4)
+
 #define OPFVF2(NAME, TD, T1, T2, TX1, TX2, HD, HS2, OP)        \
 static void do_##NAME(void *vd, uint64_t s1, void *vs2, int i, \
                       CPURISCVState *env)                      \

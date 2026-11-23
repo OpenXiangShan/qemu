@@ -24,9 +24,8 @@
 #include "fpu/softfloat.h"
 #include "internals.h"
 
-target_ulong riscv_cpu_get_fflags(CPURISCVState *env)
+target_ulong riscv_cpu_get_fflags_from_softfloat(int soft)
 {
-    int soft = get_float_exception_flags(&env->fp_status);
     target_ulong hard = 0;
 
     hard |= (soft & float_flag_inexact) ? FPEXC_NX : 0;
@@ -36,6 +35,12 @@ target_ulong riscv_cpu_get_fflags(CPURISCVState *env)
     hard |= (soft & float_flag_invalid) ? FPEXC_NV : 0;
 
     return hard;
+}
+
+target_ulong riscv_cpu_get_fflags(CPURISCVState *env)
+{
+    return riscv_cpu_get_fflags_from_softfloat(
+        get_float_exception_flags(&env->fp_status));
 }
 
 void riscv_cpu_set_fflags(CPURISCVState *env, target_ulong hard)

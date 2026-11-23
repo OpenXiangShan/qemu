@@ -1024,6 +1024,12 @@ static void riscv_cpu_reset_hold(Object *obj, ResetType type)
             env->xtrlenb = cpu->cfg.mrowlen >> 3;
             env->xtlenb = cpu->cfg.mreglen >> 3;
             env->xalenb = (cpu->cfg.mreglen / cpu->cfg.mrowlen) * (cpu->cfg.mreglen / cpu->cfg.mrowlen) * cpu->cfg.melen/8;
+            memset(env->mscale_valid, 0, sizeof(env->mscale_valid));
+            memset(env->mscale_rows, 0, sizeof(env->mscale_rows));
+            memset(env->mscale_blocks, 0, sizeof(env->mscale_blocks));
+            memset(env->mscale_mode, 0, sizeof(env->mscale_mode));
+            memset(env->mscale_reg_generation, 0,
+                   sizeof(env->mscale_reg_generation));
         // printf("============= ext_matrix open! =============\n");
     }
     env->xl = riscv_cpu_mxl(env);
@@ -2708,6 +2714,12 @@ static Property riscv_cpu_properties[] = {
     DEFINE_PROP_BOOL("x-misa-w", RISCVCPU, cfg.misa_w, false),
     /* matrix extension as experimental */
     DEFINE_PROP_BOOL("x-matrix", RISCVCPU, cfg.ext_matrix, false),
+    DEFINE_PROP_BOOL("x-mxfp-convert-load", RISCVCPU,
+                     cfg.ext_mxfp_convert_load, false),
+    DEFINE_PROP_BOOL("x-mxfp-dynamic-quant", RISCVCPU,
+                     cfg.ext_mxfp_dynamic_quant, false),
+    DEFINE_PROP_BOOL("x-mxfp4-vector-encode", RISCVCPU,
+                     cfg.ext_mxfp4_vector_encode, false),
     DEFINE_PROP_UINT32("rlen", RISCVCPU, cfg.mrowlen, 512),
     DEFINE_PROP_UINT32("mlen", RISCVCPU, cfg.mreglen, 65536),
     DEFINE_PROP_UINT16("melen", RISCVCPU, cfg.melen, 32),

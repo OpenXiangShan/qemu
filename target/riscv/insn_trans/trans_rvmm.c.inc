@@ -249,6 +249,95 @@ static bool trans_##NAME(DisasContext *s, arg_mm_st *a)              \
 GEN_MMEXT_LD_TRANS(mla, mmext_check_mldsta)
 GEN_MMEXT_LD_TRANS(mlb, mmext_check_mldstb)
 GEN_MMEXT_LD_TRANS(mlc, mmext_check_mldstc)
+
+static bool trans_mlascale(DisasContext *s, arg_mm_ld *a)
+{
+    if (!require_matrix(s)) {
+        return false;
+    }
+    gen_helper_mlascale(tcg_env, get_gpr(s, a->rs1, EXT_ZERO),
+                        get_gpr(s, a->rs2, EXT_ZERO),
+                        tcg_constant_tl(a->md));
+    return true;
+}
+
+static bool trans_mlbscale(DisasContext *s, arg_mm_ld *a)
+{
+    if (!require_matrix(s)) {
+        return false;
+    }
+    gen_helper_mlbscale(tcg_env, get_gpr(s, a->rs1, EXT_ZERO),
+                        get_gpr(s, a->rs2, EXT_ZERO),
+                        tcg_constant_tl(a->md));
+    return true;
+}
+
+static bool mmext_convert_load_enabled(DisasContext *s)
+{
+    return s->cfg_ptr->ext_matrix && s->cfg_ptr->ext_mxfp_convert_load
+#ifndef CONFIG_USER_ONLY
+        && s->priv == PRV_M
+#endif
+        ;
+}
+
+static bool mm_convert_ld_op(uint32_t md, TCGv rs1, TCGv rs2,
+                             gen_helper_ldst *fn, DisasContext *s)
+{
+    TCGv_ptr dest = tcg_temp_new_ptr();
+    tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
+    /* Unlike the legacy helper wrapper, never replace this real conversion
+     * with sync_skip: a skipped conversion is not a successful experiment. */
+    fn(dest, rs1, rs2, tcg_constant_tl(md), tcg_env);
+    return true;
+}
+
+static bool trans_mxfp_convert_a(DisasContext *s, arg_mm_ld *a)
+{
+    if (!mmext_convert_load_enabled(s) ||
+        !mmext_check_mk(s) || !mmext_check_tile_reg(a->md)) {
+        return false;
+    }
+    return mm_convert_ld_op(a->md, get_gpr(s, a->rs1, EXT_ZERO),
+                            get_gpr(s, a->rs2, EXT_ZERO),
+                            gen_helper_mxfp_convert_a, s);
+}
+
+static bool trans_mxfp_convert_b(DisasContext *s, arg_mm_ld *a)
+{
+    if (!mmext_convert_load_enabled(s) ||
+        !mmext_check_nk(s) || !mmext_check_tile_reg(a->md)) {
+        return false;
+    }
+    return mm_convert_ld_op(a->md, get_gpr(s, a->rs1, EXT_ZERO),
+                            get_gpr(s, a->rs2, EXT_ZERO),
+                            gen_helper_mxfp_convert_b, s);
+}
+
+static bool trans_mxfp_dynamic_a(DisasContext *s, arg_mm_ld *a)
+{
+    if (!s->cfg_ptr->ext_mxfp_dynamic_quant ||
+        !mmext_convert_load_enabled(s) ||
+        !mmext_check_mk(s) || !mmext_check_tile_reg(a->md)) {
+        return false;
+    }
+    return mm_convert_ld_op(a->md, get_gpr(s, a->rs1, EXT_ZERO),
+                            get_gpr(s, a->rs2, EXT_ZERO),
+                            gen_helper_mxfp_dynamic_a, s);
+}
+
+static bool trans_mxfp_dynamic_b(DisasContext *s, arg_mm_ld *a)
+{
+    if (!s->cfg_ptr->ext_mxfp_dynamic_quant ||
+        !mmext_convert_load_enabled(s) ||
+        !mmext_check_nk(s) || !mmext_check_tile_reg(a->md)) {
+        return false;
+    }
+    return mm_convert_ld_op(a->md, get_gpr(s, a->rs1, EXT_ZERO),
+                            get_gpr(s, a->rs2, EXT_ZERO),
+                            gen_helper_mxfp_dynamic_b, s);
+}
+
 GEN_MMEXT_ST_TRANS(msa, mmext_check_mldsta)
 GEN_MMEXT_ST_TRANS(msb, mmext_check_mldstb)
 GEN_MMEXT_ST_TRANS(msc, mmext_check_mldstc)
@@ -404,10 +493,9 @@ static bool trans_minit(DisasContext *s, arg_empty *a)
         return false;
     }
 
+    gen_helper_minit(tcg_env);
+
 #ifndef CONFIG_USER_ONLY
-    if (s->xmstatus_ms == 1) {
-        return true;
-    }
     s->xmstatus_ms = 1;
     // TCGv tmp = tcg_temp_new();
     // Mrelease Instruction sets MS to Initial state

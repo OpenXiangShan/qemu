@@ -862,6 +862,11 @@ static RISCVException write_xmfflags(CPURISCVState *env, int csrno,
                                  target_ulong val)
 {
     env->xmfflags = val;
+    if (riscv_cpu_cfg(env)->ext_mxfp_convert_load) {
+        env->xmfflags &= 0x1f;
+        env->mcsr = (env->mcsr & ~(target_ulong)MCSR_FFLAGS) |
+            ((env->xmfflags << 3) & MCSR_FFLAGS);
+    }
     return RISCV_EXCP_NONE;
 }
 

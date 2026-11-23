@@ -162,6 +162,9 @@ extern RISCVCPUImpliedExtsRule *riscv_multi_ext_implied_rules[];
 
 #define RV_TRLEN_MAX   4096
 #define RV_TROWNUM_MAX 128
+#define RV_MX_BLOCK_SIZE 32
+#define RV_MX_MAX_SCALE_BLOCKS \
+    ((RV_TRLEN_MAX / 8 + RV_MX_BLOCK_SIZE - 1) / RV_MX_BLOCK_SIZE)
 
 FIELD(VTYPE, VLMUL, 0, 3)
 FIELD(VTYPE, VSEW, 3, 3)
@@ -214,6 +217,12 @@ struct CPUArchState {
     /* matrix state */
     uint64_t mreg[8 * RV_TRLEN_MAX * RV_TROWNUM_MAX / 64] QEMU_ALIGNED(16);
     target_ulong mcfg[8];
+    uint8_t mscale[8][RV_TROWNUM_MAX][RV_MX_MAX_SCALE_BLOCKS];
+    uint8_t mscale_valid[8];
+    uint8_t mscale_rows[8];
+    uint8_t mscale_blocks[8];
+    uint8_t mscale_mode[8];
+    uint32_t mscale_reg_generation[8];
     target_ulong mtilem;
     target_ulong mtilen;
     target_ulong mtilek;
@@ -620,6 +629,7 @@ G_NORETURN void riscv_raise_exception(CPURISCVState *env,
                                       uint32_t exception, uintptr_t pc);
 
 target_ulong riscv_cpu_get_fflags(CPURISCVState *env);
+target_ulong riscv_cpu_get_fflags_from_softfloat(int soft);
 void riscv_cpu_set_fflags(CPURISCVState *env, target_ulong);
 
 #include "exec/cpu-all.h"
