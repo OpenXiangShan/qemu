@@ -322,6 +322,9 @@ static void mmext_mload_tile(void *md, target_ulong rs1, target_ulong stride,
         cols_phys = (uint32_t)(get_rlenb(env) >> esz);
     }
     target_ulong addr;
+    if (kind != MAT_C && cols_lim > cols_phys) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, ra);
+    }
 
     /*
      * Probe pages conservatively for the actually-touched memory region.
@@ -391,8 +394,14 @@ static void mmext_mstore_tile(void *ms3, target_ulong rs1, target_ulong stride,
     uint32_t i, j;
     uint32_t rows_lim = mmext_rows(env, kind);
     uint32_t cols_lim = mmext_cols(env, kind);
+    uint32_t cols_phys = kind == MAT_C ? get_mrows(env) :
+        (esz == UINT8_MAX ? (uint32_t)get_rlenb(env) * 2 :
+         (uint32_t)(get_rlenb(env) >> esz));
     target_ulong addr;
 
+    if (kind != MAT_C && cols_lim > cols_phys) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, ra);
+    }
     if (!transposed) {
         for (i = 0; i < rows_lim; i++) {
             probe_pages(env, rs1 + (target_ulong)i * stride,
@@ -1439,7 +1448,6 @@ static void mmext_mxfp_convert_load(void *md, target_ulong base,
 #endif
         mreg_idx > 3 || rows == 0 || rows > 64 ||
         rows > get_mrows(env) || env->mtilek != 64 ||
-        (!dynamic && (base & 3) != 0) ||
         stride < 256 || (stride & 3) != 0) {
         riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, ra);
     }
@@ -1457,14 +1465,14 @@ static void mmext_mxfp_convert_load(void *md, target_ulong base,
             env->mscale_reg_generation[side + mreg_idx] == UINT32_MAX) {
             riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, ra);
         }
-        if ((base & 3) != 0) {
+    }
+    if ((base & 3) != 0) {
 #ifdef CONFIG_USER_ONLY
-            cpu_loop_exit_sigbus(env_cpu(env), base, MMU_DATA_LOAD, ra);
+        cpu_loop_exit_sigbus(env_cpu(env), base, MMU_DATA_LOAD, ra);
 #else
-            riscv_cpu_do_unaligned_access(env_cpu(env), base, MMU_DATA_LOAD,
-                                         riscv_env_mmu_index(env, false), ra);
+        riscv_cpu_do_unaligned_access(env_cpu(env), base, MMU_DATA_LOAD,
+                                     riscv_env_mmu_index(env, false), ra);
 #endif
-        }
     }
 
     if (!dynamic && !mxfp_convert_scale_ready(env, mreg_idx, is_b_side, rows,
@@ -1726,7 +1734,14 @@ void helper_mmacc(void *md, void *ms1, void *ms2,
             env->mtilem > RV_TROWNUM_MAX ||
             env->mtilen > RV_TROWNUM_MAX ||
             !env->mscale_valid[a_scale_reg] ||
-            !env->mscale_valid[b_scale_reg]) {
+            !env->mscale_valid[b_scale_reg] ||
+            env->mtilem > env->mscale_rows[a_scale_reg] ||
+            env->mtilen > env->mscale_rows[b_scale_reg] ||
+            blocks > env->mscale_blocks[a_scale_reg] ||
+            blocks > env->mscale_blocks[b_scale_reg] ||
+            env->mtilek >
+                (type_a == MCFG_TC_MXFP4 ? 2 * get_rlenb(env) :
+                 get_rlenb(env))) {
             riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
         }
 
@@ -1743,6 +1758,33 @@ void helper_mmacc(void *md, void *ms1, void *ms2,
     }
 
     if (table_a != 0 || table_b != 0 || table_c != 0) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+    }
+
+    uint32_t k_capacity;
+    switch (type_a) {
+    case MCFG_TC_INT4:
+    case MCFG_TC_UINT4:
+    case MCFG_TC_NVFP4:
+        k_capacity = 2 * get_rlenb(env);
+        break;
+    case MCFG_TC_INT8:
+    case MCFG_TC_UINT8:
+        k_capacity = get_rlenb(env);
+        break;
+    case MCFG_TC_FP16:
+    case MCFG_TC_BF16:
+        k_capacity = get_rlenb(env) / 2;
+        break;
+    case MCFG_TC_INT32:
+    case MCFG_TC_FP32:
+    case MCFG_TC_TF32:
+        k_capacity = get_rlenb(env) / 4;
+        break;
+    default:
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+    }
+    if (env->mtilek == 0 || env->mtilek > k_capacity) {
         riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
     }
 

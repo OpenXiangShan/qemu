@@ -122,8 +122,12 @@ void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
                          env->mtilem > get_mrows(env) || env->mtilem == 0);
         DP_TBFLAGS_MATRIX(flags, NILL,
                          env->mtilen > get_mrows(env) || env->mtilen == 0);
+        /* Four-bit payloads use two logical K elements per physical row byte.
+         * Keep only the widest architectural bound here; each load/store/MMACC
+         * helper performs the exact type-aware capacity check.
+         */
         DP_TBFLAGS_MATRIX(flags, KILL,
-                         env->mtilek > get_rlenb(env) || env->mtilek == 0);
+                         env->mtilek > 2 * get_rlenb(env) || env->mtilek == 0);
     }
 
 #ifdef CONFIG_USER_ONLY

@@ -285,6 +285,19 @@ static bool mm_convert_ld_op(uint32_t md, TCGv rs1, TCGv rs2,
                              gen_helper_ldst *fn, DisasContext *s)
 {
     TCGv_ptr dest = tcg_temp_new_ptr();
+#ifndef CONFIG_USER_ONLY
+    TCGLabel *aligned = gen_new_label();
+    TCGv misaligned = tcg_temp_new();
+
+    /* Raise misalignment at the instruction PC before entering the helper.
+     * A helper-originated exception otherwise reports the containing TB start
+     * as mepc, which makes a normal guest trap handler replay the TB.
+     */
+    tcg_gen_andi_tl(misaligned, rs1, 3);
+    tcg_gen_brcondi_tl(TCG_COND_EQ, misaligned, 0, aligned);
+    gen_raise_load_addr_mis(s, rs1);
+    gen_set_label(aligned);
+#endif
     tcg_gen_addi_ptr(dest, tcg_env, mregs_ofs(s, md));
     /* Unlike the legacy helper wrapper, never replace this real conversion
      * with sync_skip: a skipped conversion is not a successful experiment. */

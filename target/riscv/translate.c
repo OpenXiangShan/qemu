@@ -293,6 +293,16 @@ static void gen_exception_inst_addr_mis(DisasContext *ctx, TCGv target)
     generate_exception(ctx, RISCV_EXCP_INST_ADDR_MIS);
 }
 
+#ifndef CONFIG_USER_ONLY
+static void gen_raise_load_addr_mis(DisasContext *ctx, TCGv addr)
+{
+    tcg_gen_st_tl(addr, tcg_env, offsetof(CPURISCVState, badaddr));
+    gen_update_pc(ctx, 0);
+    gen_helper_raise_exception(tcg_env,
+                               tcg_constant_i32(RISCV_EXCP_LOAD_ADDR_MIS));
+}
+#endif
+
 static void lookup_and_goto_ptr(DisasContext *ctx)
 {
 #ifndef CONFIG_USER_ONLY
