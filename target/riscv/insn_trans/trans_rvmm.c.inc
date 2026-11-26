@@ -364,13 +364,6 @@ GEN_MMEXT_ST_TRANS(msct, mmext_check_mldstc)
 
 
 /* whole matrix load & store */
-/* Decode uses @mm_ld/@mm_st but rs2 is hard-wired to 0; helper only needs rs1. */
-/* Mainly for context save and restore, so no need refer to mcfg type, now all use e64 ld/st */
-/* TODO: actually not differ MAT_A/B/C, I think proposal-12 is a bad design for whole ld/st */
-static bool mmext_check_ldstm(DisasContext *s, uint32_t mreg)
-{
-    return require_matrix(s) && (mreg < 8);
-}
 
 typedef void gen_helper_ldstm(TCGv_ptr, TCGv, TCGv_env);
 
@@ -392,34 +385,34 @@ static bool mm_ldstm_op(uint32_t md, TCGv rs1,
     }
 }
 
-#define GEN_MMEXT_LDM_TRANS(NAME, CHECK)                    \
+#define GEN_MMEXT_LDM_TRANS(NAME, CHECK, LOAD)              \
 static bool trans_##NAME(DisasContext *s, arg_mm_ld *a)     \
 {                                                           \
-    if (CHECK(s, a->md)) {                                  \
+    if (require_matrix(s) && CHECK(a->md)) {                 \
         return mm_ldstm_op(a->md,                           \
                            get_gpr(s, a->rs1, EXT_ZERO),    \
-                           gen_helper_mlme64, s);           \
+                           gen_helper_##LOAD, s);           \
     }                                                       \
     return false;                                           \
 }
 
-#define GEN_MMEXT_STM_TRANS(NAME, CHECK)                    \
+#define GEN_MMEXT_STM_TRANS(NAME, CHECK, STORE)             \
 static bool trans_##NAME(DisasContext *s, arg_mm_st *a)     \
 {                                                           \
-    if (CHECK(s, a->ms3)) {                                 \
+    if (require_matrix(s) && CHECK(a->ms3)) {                \
         return mm_ldstm_op(a->ms3,                          \
                            get_gpr(s, a->rs1, EXT_ZERO),    \
-                           gen_helper_msme64, s);           \
+                           gen_helper_##STORE, s);          \
     }                                                       \
     return false;                                           \
 }
 
-GEN_MMEXT_LDM_TRANS(mla_whole, mmext_check_ldstm)
-GEN_MMEXT_LDM_TRANS(mlb_whole, mmext_check_ldstm)
-GEN_MMEXT_LDM_TRANS(mlc_whole, mmext_check_ldstm)
-GEN_MMEXT_STM_TRANS(msa_whole, mmext_check_ldstm)
-GEN_MMEXT_STM_TRANS(msb_whole, mmext_check_ldstm)
-GEN_MMEXT_STM_TRANS(msc_whole, mmext_check_ldstm)
+GEN_MMEXT_LDM_TRANS(mla_whole, mmext_check_tile_reg, mlme64)
+GEN_MMEXT_LDM_TRANS(mlb_whole, mmext_check_tile_reg, mlme64)
+GEN_MMEXT_LDM_TRANS(mlc_whole, mmext_check_acc_reg, mlme32)
+GEN_MMEXT_STM_TRANS(msa_whole, mmext_check_tile_reg, msme64)
+GEN_MMEXT_STM_TRANS(msb_whole, mmext_check_tile_reg, msme64)
+GEN_MMEXT_STM_TRANS(msc_whole, mmext_check_acc_reg, msme32)
 
 
 /* Matrix Multiplication translation */

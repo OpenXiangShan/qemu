@@ -104,8 +104,8 @@ void HELPER(minit)(CPURISCVState *env)
  *   - B tile  : mtilen x mtilek
  *   - C tile  : mtilem x mtilen
  *
- * rs1 base address, rs2 row byte stride. Whole-matrix load/store ignores tile
- * sizes and uses the full physical register shape (get_mrows x get_rlenb).
+ * rs1 is the base address. Non-whole transfers use rs2 as the row byte stride.
+ * Whole transfers use the full physical extent of the selected register class.
  */
 
 static void probe_pages(CPURISCVState *env, target_ulong addr,
@@ -636,21 +636,22 @@ GEN_UNIFIED_LDST_HELPER(msct, mscte8, mscte8, mscte16, mscte32, mscte64)
 /* Whole Matrix load/store */
 static void mmext_mload_whole(void *md, target_ulong rs1,
                              mmext_ld_fn *ld_elem, mmext_set_elem *set_elem,
-                             CPURISCVState *env, uint8_t esz, uintptr_t ra)
+                             CPURISCVState *env, uint32_t row_bytes,
+                             uint8_t esz, uintptr_t ra)
 {
     uint32_t i, j;
     uint32_t rows = get_mrows(env);
-    uint32_t cols = (uint32_t)(get_rlenb(env) >> esz);
+    uint32_t cols = row_bytes >> esz;
     target_ulong addr;
 
     for (i = 0; i < rows; i++) {
-        probe_pages(env, rs1 + (target_ulong)i * get_rlenb(env),
-                    get_rlenb(env), ra, MMU_DATA_LOAD);
+        probe_pages(env, rs1 + (target_ulong)i * row_bytes,
+                    row_bytes, ra, MMU_DATA_LOAD);
     }
 
     for (i = 0; i < rows; i++) {
         for (j = 0; j < cols; j++) {
-            addr = rs1 + (target_ulong)i * get_rlenb(env) + ((target_ulong)j << esz);
+            addr = rs1 + (target_ulong)i * row_bytes + ((target_ulong)j << esz);
             set_elem(md, i, j, env, ld_elem(env, addr, ra));
         }
     }
@@ -658,47 +659,52 @@ static void mmext_mload_whole(void *md, target_ulong rs1,
 
 static void mmext_mstore_whole(void *ms3, target_ulong rs1,
                               mmext_st_fn *st_elem, mmext_get_elem *get_elem,
-                              CPURISCVState *env, uint8_t esz, uintptr_t ra)
+                              CPURISCVState *env, uint32_t row_bytes,
+                              uint8_t esz, uintptr_t ra)
 {
     uint32_t i, j;
     uint32_t rows = get_mrows(env);
-    uint32_t cols = (uint32_t)(get_rlenb(env) >> esz);
+    uint32_t cols = row_bytes >> esz;
     target_ulong addr;
 
     for (i = 0; i < rows; i++) {
-        probe_pages(env, rs1 + (target_ulong)i * get_rlenb(env),
-                    get_rlenb(env), ra, MMU_DATA_STORE);
+        probe_pages(env, rs1 + (target_ulong)i * row_bytes,
+                    row_bytes, ra, MMU_DATA_STORE);
     }
 
     for (i = 0; i < rows; i++) {
         for (j = 0; j < cols; j++) {
-            addr = rs1 + (target_ulong)i * get_rlenb(env) + ((target_ulong)j << esz);
+            addr = rs1 + (target_ulong)i * row_bytes + ((target_ulong)j << esz);
             st_elem(env, addr, (uint64_t)get_elem(ms3, i, j, env), ra);
         }
     }
 }
 
-#define GEN_MMEXT_LD_WHOLE(insn, ld_elem, set_elem, ESZ)               \
-void HELPER(insn)(void *md, target_ulong rs1, CPURISCVState *env)      \
-{                                                                      \
-    mmext_mload_whole(md, rs1, ld_elem, set_elem, env, ESZ, GETPC());  \
+#define GEN_MMEXT_LD_WHOLE(insn, ld_elem, set_elem, ESZ, ROW_BYTES)        \
+void HELPER(insn)(void *md, target_ulong rs1, CPURISCVState *env)          \
+{                                                                       \
+    mmext_mload_whole(md, rs1, ld_elem, set_elem, env, ROW_BYTES, ESZ,     \
+                      GETPC());                                         \
 }
 
-#define GEN_MMEXT_ST_WHOLE(insn, st_elem, get_elem, ESZ)               \
-void HELPER(insn)(void *ms3, target_ulong rs1, CPURISCVState *env)     \
-{                                                                      \
-    mmext_mstore_whole(ms3, rs1, st_elem, get_elem, env, ESZ, GETPC());\
+#define GEN_MMEXT_ST_WHOLE(insn, st_elem, get_elem, ESZ, ROW_BYTES)        \
+void HELPER(insn)(void *ms3, target_ulong rs1, CPURISCVState *env)         \
+{                                                                       \
+    mmext_mstore_whole(ms3, rs1, st_elem, get_elem, env, ROW_BYTES, ESZ,   \
+                       GETPC());                                        \
 }
 
-GEN_MMEXT_LD_WHOLE(mlme8,  ld_b, set_elem_b, 0)
-GEN_MMEXT_LD_WHOLE(mlme16, ld_h, set_elem_h, 1)
-GEN_MMEXT_LD_WHOLE(mlme32, ld_w, set_elem_s, 2)
-GEN_MMEXT_LD_WHOLE(mlme64, ld_d, set_elem_d, 3)
+GEN_MMEXT_LD_WHOLE(mlme8,  ld_b, set_elem_b, 0, get_rlenb(env))
+GEN_MMEXT_LD_WHOLE(mlme16, ld_h, set_elem_h, 1, get_rlenb(env))
+GEN_MMEXT_LD_WHOLE(mlme32, ld_w, set_elem_s, 2,
+                  get_mrows(env) * sizeof(uint32_t))
+GEN_MMEXT_LD_WHOLE(mlme64, ld_d, set_elem_d, 3, get_rlenb(env))
 
-GEN_MMEXT_ST_WHOLE(msme8,  st_b, get_elem_b, 0)
-GEN_MMEXT_ST_WHOLE(msme16, st_h, get_elem_h, 1)
-GEN_MMEXT_ST_WHOLE(msme32, st_w, get_elem_s, 2)
-GEN_MMEXT_ST_WHOLE(msme64, st_d, get_elem_d, 3)
+GEN_MMEXT_ST_WHOLE(msme8,  st_b, get_elem_b, 0, get_rlenb(env))
+GEN_MMEXT_ST_WHOLE(msme16, st_h, get_elem_h, 1, get_rlenb(env))
+GEN_MMEXT_ST_WHOLE(msme32, st_w, get_elem_s, 2,
+                  get_mrows(env) * sizeof(uint32_t))
+GEN_MMEXT_ST_WHOLE(msme64, st_d, get_elem_d, 3, get_rlenb(env))
 
 
 /* Matrix Multiplication helpers */
